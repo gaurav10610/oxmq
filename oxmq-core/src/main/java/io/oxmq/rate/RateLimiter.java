@@ -1,0 +1,51 @@
+package io.oxmq.rate;
+
+import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.api.StatefulRedisConnection;
+import io.oxmq.lua.LuaScript;
+import io.oxmq.lua.LuaScriptManager;
+import java.time.Duration;
+
+/**
+ * Sliding window token bucket rate limiter backed by Redis Lua script.
+ */
+public class RateLimiter {
+
+    private final StatefulRedisConnection<String, String> connection;
+    private final LuaScriptManager scriptManager;
+    private final String limiterKey;
+    private final int max;
+    private final long durationMs;
+
+    public RateLimiter(StatefulRedisConnection<String, String> connection, LuaScriptManager scriptManager,
+                       String queuePrefix, int max, Duration duration) {
+        this.connection = connection;
+        this.scriptManager = scriptManager;
+        this.limiterKey = queuePrefix + ":limiter";
+        this.max = max;
+        this.durationMs = duration.toMillis();
+    }
+
+    /**
+     * Checks and consumes a token within the sliding window.
+     *
+     * @return true if token was acquired and job execution is allowed, false if rate limited
+     */
+    public boolean tryAcquire() {
+        Long result = scriptManager.eval(connection, LuaScript.RATE_LIMIT, ScriptOutputType.INTEGER,
+                new String[]{limiterKey},
+                String.valueOf(max),
+                String.valueOf(durationMs),
+                String.valueOf(System.currentTimeMillis())
+        );
+        return result != null && result == 1L;
+    }
+
+    public int getMax() {
+        return max;
+    }
+
+    public long getDurationMs() {
+        return durationMs;
+    }
+}
