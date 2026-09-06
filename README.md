@@ -53,108 +53,51 @@ OxMQ combines the battle-tested, wire-compatible Redis data model of BullMQ with
 
 ## 🔄 How OxMQ Processes Jobs (Job Lifecycle)
 
-The diagram below illustrates the end-to-end lifecycle of a job—from enqueueing, sliding-window rate limit checks, atomic lock acquisition, Java 21 Virtual Thread dispatching, real-time progress streaming, to completion or exponential backoff retries:
+At a glance, here is how jobs move through OxMQ—from enqueueing, Virtual Thread dispatching, real-time progress streaming, to completion or automatic retries:
 
 ```mermaid
-flowchart TD
-    subgraph Ingestion["1. Enqueue &amp; Scheduling"]
-        Producer["OxmqQueue.add() / FlowProducer"] -->|Atomic EVALSHA| AddLua["addJob.lua"]
-        AddLua -->|Immediate Job| WaitList[("bull:&lt;q&gt;:wait<br/>(Ready List)")]
-        AddLua -->|Delayed / Retry| DelayedZSet[("bull:&lt;q&gt;:delayed<br/>(Timestamp Sorted Set)")]
-        DelayedZSet -.->|Timestamp Matured| WaitList
-    end
-
-    subgraph Acquisition["2. Acquisition &amp; Rate Limiting"]
-        Poller["OxmqWorker Poller Loop"] --> RateCheck{"RateLimiter<br/>Token Bucket OK?"}
-        RateCheck -->|Within Limit| PopLua["moveToActive.lua<br/>(Atomic Pop &amp; Lock Lease)"]
-        RateCheck -->|Rate Limited| ThrottleSleep["Backoff &amp; Wait (ms)"]
-        WaitList --> PopLua
-        PopLua --> ActiveZSet[("bull:&lt;q&gt;:active<br/>(Leased Job Lock)")]
-    end
-
-    subgraph Dispatch["3. Java 21 Loom Execution"]
-        PopLua --> Dispatcher["VirtualThreadPerTaskExecutor<br/>(Thread.ofVirtual())"]
-        Dispatcher --> WorkerThread["Worker Virtual Thread<br/>(JobProcessor.process)"]
-        
-        WorkerThread -.->|job.updateProgress(%)| PubSub[("bull:&lt;q&gt;:events<br/>(Redis Pub/Sub)")]
-        WorkerThread -.->|job.log(msg)| JobLogs[("bull:&lt;q&gt;:&lt;id&gt;:logs")]
-        
-        Heartbeat["LockExtender (Heartbeat)"] -.->|Renew Lock Lease| ActiveZSet
-        Watchdog["StalledJobSentinel"] -.->|Rescue Crashed/Orphaned| WaitList
-    end
-
-    subgraph Completion["4. Completion, Retries &amp; DLQ"]
-        WorkerThread --> ResultCheck{"Execution Result?"}
-        
-        ResultCheck -->|Success| FinishLua["moveToFinished.lua<br/>(State: COMPLETED)"]
-        FinishLua --> CompletedZSet[("bull:&lt;q&gt;:completed")]
-        FinishLua -.->|Propagate Child Results| ParentDAG["Parent DAG Flow"]
-        
-        ResultCheck -->|Failure &amp; Retries Left| RetryLua["retryJob.lua<br/>(Exponential Backoff + Jitter)"]
-        RetryLua --> DelayedZSet
-        
-        ResultCheck -->|Failure &amp; Max Attempts| FailLua["moveToFinished.lua<br/>(State: FAILED / DLQ)"]
-        FailLua --> FailedZSet[("bull:&lt;q&gt;:failed<br/>(Dead-Letter Queue)")]
-    end
-
-    subgraph Observability["5. Telemetry &amp; Monitoring"]
-        FinishLua --> Metrics["OxmqMetrics (Micrometer)"]
-        FailLua --> Metrics
-        PubSub --> BullBoard["Bull-Board UI / WebSockets"]
-    end
+flowchart LR
+    A["📤 <b>1. Enqueue</b><br/><code>OxmqQueue.add()</code>"] --> B[("🗄️ <b>2. Redis Queue</b><br/><code>bull:&lt;name&gt;:wait</code>")]
+    
+    B --> C["⚡ <b>3. Virtual Thread Worker</b><br/><code>OxmqWorker</code> (Project Loom)"]
+    
+    C -->|Success| D["✅ <b>4a. Completed</b><br/>Result Saved &amp; DAG Notified"]
+    C -->|Transient Failure| E["🔄 <b>4b. Auto-Retry</b><br/>Exponential Backoff"]
+    C -->|Max Retries Exceeded| F["💀 <b>4c. Dead-Letter Queue</b><br/><code>bull:&lt;name&gt;:failed</code>"]
+    
+    E -->|Delay Matures| B
+    
+    C -.->|Progress &amp; Logs| G["📊 <b>Live Dashboards</b><br/>Bull-Board &amp; Prometheus"]
 ```
 
 ---
 
 ## 🏛️ System Architecture
 
+OxMQ is built on a clean 3-tier architecture separating producers, consumers, atomic Redis storage, and observability sinks:
+
 ```mermaid
-graph TB
-    subgraph Clients["Producer &amp; Dispatcher Layer"]
-        Producer["OxmqQueue&lt;T&gt;<br/>(Producer API)"]
-        Flow["FlowProducer<br/>(Parent-Child DAGs)"]
-        SpringListener["@OxmqListener<br/>(Spring Boot 3)"]
-        BatchWorker["OxmqBatchWorker&lt;T&gt;<br/>(Bulk Ingestion)"]
-        LoomWorker["OxmqWorker&lt;T&gt;<br/>(Java 21 Loom)"]
+flowchart TD
+    subgraph App["1. Java 21 Application Layer"]
+        Producer["📤 <b>Producers &amp; DAG Workflows</b><br/><code>OxmqQueue</code> • <code>FlowProducer</code>"]
+        Worker["⚡ <b>Virtual Thread Workers</b><br/><code>OxmqWorker</code> • <code>@OxmqListener</code>"]
     end
 
-    subgraph Engine["OxMQ Core Engine"]
-        LoomPerTask["VirtualThreadPerTaskExecutor<br/>(10,000+ Lightweight Workers)"]
-        Watchdog["LockExtender &amp; StalledSentinel<br/>(Zero-Leak Watchdog)"]
-        RateLimiter["RateLimiter<br/>(Token Bucket / Sliding Window)"]
-        Metrics["OxmqMetrics<br/>(Micrometer Telemetry)"]
-        LuaEngine["LuaScriptManager<br/>(Atomic EVALSHA Execution)"]
+    subgraph Redis["2. Redis Storage (BullMQ Wire-Compatible)"]
+        Queues[("📋 <b>Queues &amp; Sorted Sets</b><br/>wait • active • delayed • completed • failed")]
+        Lua["🔒 <b>Atomic Lua Scripts</b><br/>Atomic Pop • Complete • Locks • Rate Limits"]
     end
 
-    subgraph Redis["Redis Storage (BullMQ Wire-Compatible)"]
-        WaitQueue[("bull:&lt;q&gt;:wait")]
-        ActiveQueue[("bull:&lt;q&gt;:active")]
-        DelayedZSet[("bull:&lt;q&gt;:delayed")]
-        CompletedZSet[("bull:&lt;q&gt;:completed")]
-        FailedZSet[("bull:&lt;q&gt;:failed")]
-        JobData[("bull:&lt;q&gt;:&lt;id&gt;")]
-        EventsPubSub[("bull:&lt;q&gt;:events")]
+    subgraph Monitoring["3. Observability &amp; Dashboards"]
+        BullBoard["🖥️ <b>Bull-Board Web UI</b><br/>Real-Time Queue Dashboard"]
+        Prometheus["📈 <b>Micrometer Telemetry</b><br/>Prometheus &amp; Grafana (p99 Timers)"]
     end
 
-    subgraph Monitoring["Observability Sinks"]
-        Prometheus["Prometheus / Grafana"]
-        BullBoard["Bull-Board UI (Web GUI)"]
-    end
-
-    Producer --> LuaEngine
-    Flow --> LuaEngine
-    SpringListener --> LoomPerTask
-    BatchWorker --> LoomPerTask
-    LoomWorker --> LoomPerTask
-
-    LoomPerTask --> LuaEngine
-    Watchdog --> LuaEngine
-    RateLimiter --> LuaEngine
-
-    LuaEngine --> Redis
-    Metrics --> Prometheus
-    EventsPubSub --> BullBoard
-    JobData --> BullBoard
+    Producer -->|Enqueue Jobs| Queues
+    Worker <-->|Lock, Pop &amp; Complete| Queues
+    Queues <-->|Atomic State Changes| Lua
+    Queues -.->|Pub/Sub Events| BullBoard
+    Worker -.->|Metrics Export| Prometheus
 ```
 
 ---
