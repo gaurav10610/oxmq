@@ -40,16 +40,18 @@ In the Java ecosystem today, background job processing is fragmented:
 
 OxMQ combines the battle-tested, wire-compatible Redis data model of BullMQ with the massive concurrency of Java 21 Virtual Threads:
 
-* **🚀 Java 21 Virtual Thread Concurrency (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** on a single JVM node with near-zero memory overhead (< 2KB stack per task) without thread starvation or carrier thread blocking.
-* **🌲 Parent-Child DAG Workflows (`FlowProducer`):** Native multi-stage dependency trees where parent tasks await parallel child completion, propagating child outputs upstream with zero paid paywalls.
-* **⚡ High-Throughput Batch Dequeue (`OxmqBatchWorker`):** Bulk pop up to $N$ jobs atomically in 1 Redis roundtrip for high-performance database ingestion into ClickHouse, Elasticsearch, PostgreSQL, or Snowflake.
-* **⏱️ Sliding-Window Rate Limiting & Throttling:** Built-in token-bucket rate limiting to safeguard external APIs (OpenAI, Stripe, SendGrid) without dropping jobs.
-* **🔄 Exponential Backoff Retries & Dead-Letter Queue (DLQ):** Configurable retry attempts with exponential backoff & jitter calculations, automatically routing permanently failed jobs to a dead-letter state with full stack traces.
-* **🎯 Sub-Second Scheduled Delays & Deduplication:** Millisecond-accurate delayed execution and custom `jobId` debounce windows to prevent duplicate processing.
-* **📡 Real-Time Progress Updates & Event Streaming (`QueueEvents`):** Live percentage progress reporting (`job.updateProgress(n)`), step logs (`job.log(msg)`), and Redis Pub/Sub lifecycle streaming.
-* **🌐 100% BullMQ Wire-Compatibility & Polyglot Interop:** Identical Redis schema to BullMQ v5, allowing seamless interop with Node.js and Python microservices, plus zero-config support for the **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** dashboard.
-* **📊 Native Micrometer Performance Telemetry:** Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`), counters, and gauges for Prometheus, Grafana, and Datadog out-of-the-box.
-* **🍃 Zero-Config Spring Boot 3 Integration:** Declarative `@EnableOxmq` and `@OxmqListener` annotations with Spring Boot Actuator health checks and auto-configuration.
+| Feature | Capability & Architecture | Key Developer Value |
+| :--- | :--- | :--- |
+| **🚀 Virtual Thread Concurrency** | Java 21 Project Loom native dispatcher (`OxmqWorker`) | **1,000+ to 10,000+ concurrent I/O workers** on a single node with $< 2\text{KB}$ stack and zero OS carrier thread blocking. |
+| **🌲 Parent-Child DAG Workflows** | Atomic dependency tree resolution via `FlowProducer` | **100% Free & Open Source**: Parent tasks await parallel child completion with automatic result propagation and no commercial paywalls. |
+| **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **$\ge 50,000\text{ ops/s}$ bulk ingestion** for ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake in 1 Redis roundtrip. |
+| **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster worker instances. |
+| **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
+| **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling & custom `jobId` hashing | Millisecond-accurate delayed job triggers and debounced deduplication windows to prevent duplicate task execution. |
+| **📡 Progress & Pub/Sub Events** | Real-time percentage progress & `QueueEvents` listener | Live percentage updates (`job.updateProgress(n)`), step logs, and Redis Pub/Sub event streaming for real-time WebSocket UIs. |
+| **🌐 BullMQ Wire-Compatibility** | 100% identical BullMQ v5 Redis schema and data model | Seamless polyglot interop with Node.js and Python services, plus zero-config support for the **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)**. |
+| **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
+| **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic worker lifecycle binding and `/actuator/health` indicator integration. |
 
 ---
 
