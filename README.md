@@ -221,15 +221,16 @@ public class NotificationWorker {
 
 ## 📚 Real-World Recipes & Examples (`oxmq-examples/`)
 
-Runnable recipes covering production-grade patterns are located in [`oxmq-examples/`](oxmq-examples/):
+Runnable recipes covering production-grade patterns are organized into dedicated sub-projects in [`oxmq-examples/`](oxmq-examples/):
 
-1. **[Rate Limiting & Throttling](oxmq-examples/src/main/java/io/oxmq/examples/RateLimitingExample.java):** Enforces sliding-window token-bucket limits to protect third-party APIs (e.g. OpenAI / Stripe rate limits).
-2. **[Retries, Exponential Backoff & DLQ](oxmq-examples/src/main/java/io/oxmq/examples/RetriesAndDlqExample.java):** Automatic retry calculation with jitter and permanent dead-letter queue routing.
-3. **[Parent-Child DAG Workflows](oxmq-examples/src/main/java/io/oxmq/examples/DagWorkflowExample.java):** Multi-stage media / ETL pipeline using `FlowProducer` where parent tasks await parallel child completion.
-4. **[Batch Dequeue & Bulk Ingestion](oxmq-examples/src/main/java/io/oxmq/examples/BatchDatabaseIngestionExample.java):** Bulk popping up to 100 jobs at once for fast ClickHouse, Elasticsearch, or PostgreSQL ingestion.
-5. **[Scheduled Delays & Deduplication](oxmq-examples/src/main/java/io/oxmq/examples/ScheduledAndDedupExample.java):** Millisecond-accurate scheduling and custom `jobId` deduplication.
-6. **[Real-Time Progress & Event Streaming](oxmq-examples/src/main/java/io/oxmq/examples/ProgressAndEventsExample.java):** `QueueEvents` Pub/Sub listener for real-time lifecycle tracking.
-7. **[Spring Boot 3 App](oxmq-examples/src/main/java/io/oxmq/examples/spring/SpringBootExampleApplication.java):** REST webhook dispatcher with `@OxmqListener` and Actuator health metrics.
+1. **[Standalone Quickstart](oxmq-examples/oxmq-example-standalone/src/main/java/io/oxmq/example/standalone/StandaloneQuickstartApplication.java):** 5-line pure Java 21 producer and Virtual Thread consumer quickstart.
+2. **[Rate Limiting & Throttling](oxmq-examples/oxmq-example-rate-limiting/src/main/java/io/oxmq/example/ratelimit/RateLimitingExample.java):** Enforces sliding-window token-bucket limits to protect third-party APIs (e.g. OpenAI / Stripe rate limits).
+3. **[Retries, Exponential Backoff & DLQ](oxmq-examples/oxmq-example-retries-dlq/src/main/java/io/oxmq/example/retries/RetriesAndDlqExample.java):** Automatic retry calculation with jitter and permanent dead-letter queue routing.
+4. **[Parent-Child DAG Workflows](oxmq-examples/oxmq-example-dag-workflows/src/main/java/io/oxmq/example/dag/DagWorkflowExample.java):** Multi-stage media / ETL pipeline using `FlowProducer` where parent tasks await parallel child completion.
+5. **[Batch Dequeue & Bulk Ingestion](oxmq-examples/oxmq-example-batch-ingestion/src/main/java/io/oxmq/example/batch/BatchDatabaseIngestionExample.java):** Bulk popping up to 100 jobs at once for fast ClickHouse, Elasticsearch, or PostgreSQL ingestion.
+6. **[Scheduled Delays & Deduplication](oxmq-examples/oxmq-example-scheduled-dedup/src/main/java/io/oxmq/example/scheduled/ScheduledAndDedupExample.java):** Millisecond-accurate scheduling and custom `jobId` deduplication.
+7. **[Real-Time Progress & Event Streaming](oxmq-examples/oxmq-example-progress-events/src/main/java/io/oxmq/example/progress/ProgressAndEventsExample.java):** `QueueEvents` Pub/Sub listener for real-time lifecycle tracking.
+8. **[Spring Boot 3 Webhook Service](oxmq-examples/oxmq-example-spring-boot/src/main/java/io/oxmq/example/spring/SpringBootExampleApplication.java):** REST webhook dispatcher with `@OxmqListener` and Actuator health metrics.
 
 ---
 

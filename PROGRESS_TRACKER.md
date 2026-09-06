@@ -10,13 +10,13 @@
 ## 1. Milestone Progress Overview
 
 | Milestone | Target Scope | Status | Progress | Target Version |
-| :--- | :--- | :---: | :---: | :---: |
+| :--- | :--- | :--- | :---: | :---: |
 | **M1: Foundation & Wire-Compatibility** | Multi-module Maven setup, Lettuce Redis transport, BullMQ v5 Lua scripts, Jackson serialization | 🟢 Done | `100%` | `v0.1.0` |
 | **M2: Concurrency & Virtual Threads** | Java 21 Loom dispatcher, Stalled Job Sentinel, Lock Extender, Exponential Backoff, Progress API | 🟢 Done | `100%` | `v0.2.0` |
 | **M3: DAG Workflows & Rate Limiting** | `FlowProducer` parent-child trees, sliding-window rate limiter, pause/resume/clean | 🟢 Done | `100%` | `v0.3.0` |
 | **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
-| **M5: Real-World Examples & Recipes** | Dedicated `oxmq-examples` module covering Rate Limiting, Retries, DAGs, Batch Ingestion, Spring Boot 3 | 🟢 Done | `100%` | `v0.5.0` |
-| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, CI/CD, Documentation & SEO optimization, Maven Central readiness | 🟡 Active | `85%` | `v1.0.0` |
+| **M5: Real-World Examples & Recipes** | 8 modular sub-projects in `oxmq-examples` covering Standalone, Rate Limiting, Retries, DAGs, Batch Ingestion, Scheduled, Progress, Spring Boot 3 | 🟢 Done | `100%` | `v0.5.0` |
+| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, CI/CD, Documentation & SEO optimization, Maven Central readiness, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
 
 ---
 
@@ -24,10 +24,10 @@
 
 | Module | Core Purpose | Dependencies | Test Coverage | Status |
 | :--- | :--- | :--- | :---: | :---: |
-| **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration | 🟢 Operational |
+| **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration (100% Passing) | 🟢 Operational |
 | **`oxmq-spring-boot-starter`** | Spring Boot 3.x Auto-configuration, `@OxmqListener`, Actuator | Spring Boot 3.x, Spring Context, `oxmq-core` | Unit & Smoke | 🟢 Operational |
 | **`oxmq-benchmarks`** | JMH performance microbenchmarks for enqueue, dequeue, latency | JMH Core & Annotations, `oxmq-core` | Benchmark Suite | 🟢 Operational |
-| **`oxmq-examples`** | Real-world production recipes (Rate Limiting, Retries, DAGs, Batch Ingestion, Scheduled, Spring Boot) | Spring Web, Spring Actuator, `oxmq-core` | 7 Runnable Demos | 🟢 Operational |
+| **`oxmq-examples`** | 8 modular showcase projects (Standalone, Rate Limiting, Retries, DAGs, Batch, Scheduled, Progress, Spring Boot) | Spring Web, Spring Actuator, `oxmq-core` | 8 Runnable Demos + End-to-End Tests | 🟢 Operational |
 
 ---
 
@@ -90,14 +90,15 @@
 - [x] `[SPRG-003]` `OxmqListenerAnnotationBeanPostProcessor` for declarative worker lifecycle management.
 - [x] `[SPRG-004]` Spring Boot Actuator `OxmqHealthIndicator`.
 
-### Phase 8: Real-World Examples & Recipes
-- [x] `[EXMP-001]` `RateLimitingExample.java` (Token bucket rate limiter).
-- [x] `[EXMP-002]` `RetriesAndDlqExample.java` (Exponential backoff & DLQ).
-- [x] `[EXMP-003]` `DagWorkflowExample.java` (Media chunking & assembly DAG).
-- [x] `[EXMP-004]` `BatchDatabaseIngestionExample.java` (ClickHouse / Elasticsearch batch popping).
-- [x] `[EXMP-005]` `ScheduledAndDedupExample.java` (Delays & custom jobId deduplication).
-- [x] `[EXMP-006]` `ProgressAndEventsExample.java` (Live progress & QueueEvents).
-- [x] `[EXMP-007]` `SpringBootExampleApplication.java` (REST Webhooks & Actuator).
+### Phase 8: Real-World Examples & Recipes (`oxmq-examples/`)
+- [x] `[EXMP-001]` `oxmq-example-standalone`: Minimal 5-line pure Java 21 quickstart.
+- [x] `[EXMP-002]` `oxmq-example-rate-limiting`: Token-bucket sliding window rate limiter (OpenAI / Stripe).
+- [x] `[EXMP-003]` `oxmq-example-retries-dlq`: Webhook retries with exponential backoff & dead-letter queue.
+- [x] `[EXMP-004]` `oxmq-example-dag-workflows`: Multi-stage media / ETL parent-child DAG pipeline (`FlowProducer`).
+- [x] `[EXMP-005]` `oxmq-example-batch-ingestion`: Bulk popping for ClickHouse / Elasticsearch / PostgreSQL (`OxmqBatchWorker`).
+- [x] `[EXMP-006]` `oxmq-example-scheduled-dedup`: Scheduled reminders & custom `jobId` deduplication.
+- [x] `[EXMP-007]` `oxmq-example-progress-events`: Real-time progress updates & `QueueEvents` Pub/Sub listener.
+- [x] `[EXMP-008]` `oxmq-example-spring-boot`: Spring Boot 3 REST webhook microservice with `@OxmqListener` and Actuator.
 
 ---
 

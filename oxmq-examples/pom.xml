@@ -11,35 +11,19 @@
     </parent>
 
     <artifactId>oxmq-examples</artifactId>
-    <packaging>jar</packaging>
+    <packaging>pom</packaging>
 
-    <name>OxMQ :: Real-World Examples &amp; Recipes</name>
-    <description>Production-grade examples covering rate limiting, retries/DLQ, DAG workflows, batch database ingestion, scheduling, and Spring Boot</description>
+    <name>OxMQ :: Examples Parent</name>
+    <description>Showcase of real-world production projects built on OxMQ</description>
 
-    <dependencies>
-        <dependency>
-            <groupId>io.oxmq</groupId>
-            <artifactId>oxmq-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.oxmq</groupId>
-            <artifactId>oxmq-spring-boot-starter</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
-        </dependency>
-    </dependencies>
+    <modules>
+        <module>oxmq-example-standalone</module>
+        <module>oxmq-example-rate-limiting</module>
+        <module>oxmq-example-dag-workflows</module>
+        <module>oxmq-example-batch-ingestion</module>
+        <module>oxmq-example-retries-dlq</module>
+        <module>oxmq-example-scheduled-dedup</module>
+        <module>oxmq-example-progress-events</module>
+        <module>oxmq-example-spring-boot</module>
+    </modules>
 </project>

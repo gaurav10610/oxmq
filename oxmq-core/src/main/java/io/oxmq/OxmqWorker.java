@@ -220,7 +220,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
             failJob(job, t, duration, conn);
             metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
-            log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.getMessage());
+            log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.getMessage(), t);
         } finally {
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();

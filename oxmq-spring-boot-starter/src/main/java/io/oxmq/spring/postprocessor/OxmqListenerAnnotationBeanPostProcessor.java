@@ -11,6 +11,8 @@ import io.oxmq.serializer.JobSerializer;
 import io.oxmq.spring.OxmqProperties;
 import io.oxmq.spring.annotation.OxmqListener;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,6 +74,21 @@ public class OxmqListenerAnnotationBeanPostProcessor implements BeanPostProcesso
 
         method.setAccessible(true);
         Class<?>[] paramTypes = method.getParameterTypes();
+        Class<?> payloadClass = null;
+
+        if (paramTypes.length == 1) {
+            if (Job.class.isAssignableFrom(paramTypes[0])) {
+                Type genericType = method.getGenericParameterTypes()[0];
+                if (genericType instanceof ParameterizedType pt) {
+                    Type[] typeArgs = pt.getActualTypeArguments();
+                    if (typeArgs.length > 0 && typeArgs[0] instanceof Class<?> clazz) {
+                        payloadClass = clazz;
+                    }
+                }
+            } else {
+                payloadClass = paramTypes[0];
+            }
+        }
 
         var builder = OxmqWorker.builder()
                 .queueName(queueName)
@@ -84,23 +101,34 @@ public class OxmqListenerAnnotationBeanPostProcessor implements BeanPostProcesso
                 .lockDurationMs(lockDurationMs)
                 .pollIntervalMs(pollIntervalMs);
 
+        if (payloadClass != null) {
+            builder.payloadClass((Class) payloadClass);
+        }
+
         if (listener.rateLimitMax() > 0 && listener.rateLimitDurationMs() > 0) {
             builder.rateLimit(listener.rateLimitMax(), Duration.ofMillis(listener.rateLimitDurationMs()));
         }
 
         builder.processor(job -> {
-            if (paramTypes.length == 0) {
-                return method.invoke(bean);
-            } else if (paramTypes.length == 1 && Job.class.isAssignableFrom(paramTypes[0])) {
-                return method.invoke(bean, job);
-            } else if (paramTypes.length == 1) {
-                Object data = job.getData();
-                if (data instanceof String str && !String.class.isAssignableFrom(paramTypes[0])) {
-                    data = serializer.deserialize(str, paramTypes[0]);
+            try {
+                if (paramTypes.length == 0) {
+                    return method.invoke(bean);
+                } else if (paramTypes.length == 1 && Job.class.isAssignableFrom(paramTypes[0])) {
+                    return method.invoke(bean, job);
+                } else if (paramTypes.length == 1) {
+                    Object data = job.getData();
+                    if (data instanceof String str && !String.class.isAssignableFrom(paramTypes[0])) {
+                        data = serializer.deserialize(str, paramTypes[0]);
+                    }
+                    return method.invoke(bean, data);
+                } else {
+                    throw new IllegalArgumentException("@OxmqListener method must have 0 or 1 parameter: " + method);
                 }
-                return method.invoke(bean, data);
-            } else {
-                throw new IllegalArgumentException("@OxmqListener method must have 0 or 1 parameter: " + method);
+            } catch (java.lang.reflect.InvocationTargetException ite) {
+                Throwable target = ite.getTargetException();
+                if (target instanceof Exception ex) throw ex;
+                if (target instanceof Error err) throw err;
+                throw ite;
             }
         });
 
