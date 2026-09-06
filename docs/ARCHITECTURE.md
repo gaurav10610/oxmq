@@ -1,16 +1,17 @@
 # 🏛️ OxMQ Architecture & Internals
 
-This document details the architectural design, Redis data structures, concurrency model, DAG execution engine, and performance telemetry pipeline of **OxMQ**.
+This document details the architectural design, Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and performance telemetry in **OxMQ**.
 
 ---
 
 ## 1. High-Level System Architecture
 
-OxMQ is engineered around 4 core principles:
-1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) are executed via single-roundtrip Lua scripts.
+OxMQ is engineered around 5 core pillars:
+1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via single-roundtrip Lua scripts.
 2. **Virtual Thread Native (Project Loom):** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread, enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
-3. **BullMQ v5 Wire-Compatibility:** Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
-4. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
+3. **High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis call for fast database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
+4. **BullMQ v5 Wire-Compatibility:** Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
+5. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
 
 ```mermaid
 graph TB
@@ -18,7 +19,9 @@ graph TB
         Producer["OxmqQueue&lt;T&gt;<br/>(Producer)"]
         Flow["FlowProducer<br/>(DAG Workflows)"]
         SpringWorker["@OxmqListener<br/>(Spring Boot 3)"]
-        CoreWorker["OxmqWorker&lt;T&gt;<br/>(Standalone Java 21)"]
+        CoreWorker["OxmqWorker&lt;T&gt;<br/>(1-by-1 Loom Worker)"]
+        BatchWorker["OxmqBatchWorker&lt;T&gt;<br/>(Bulk Ingestion Worker)"]
+        Events["QueueEvents<br/>(Pub/Sub Listener)"]
     end
 
     subgraph OxmqCore["OxMQ Core Engine"]
@@ -49,6 +52,7 @@ graph TB
     Flow -->|add DAG tree| LuaManager
     SpringWorker --> LoomDispatcher
     CoreWorker --> LoomDispatcher
+    BatchWorker --> LoomDispatcher
 
     LoomDispatcher --> LuaManager
     LockWatchdog --> LuaManager
@@ -56,6 +60,7 @@ graph TB
 
     LuaManager --> RedisStorage
     MetricsEngine --> Prometheus
+    EventsPubSub --> Events
     EventsPubSub --> BullBoardUI
     JobHashes --> BullBoardUI
 ```
@@ -75,7 +80,7 @@ stateDiagram-v2
     DELAYED --> WAITING: Maturity timestamp reached (now >= score)
     WAITING_CHILDREN --> WAITING: All children completed (unresolved == 0)
 
-    WAITING --> ACTIVE: moveToActive.lua (Worker acquires job & lock)
+    WAITING --> ACTIVE: moveToActive.lua / moveToActiveBatch.lua (Worker acquires job & lock)
     
     state ACTIVE {
         [*] --> Executing
@@ -85,7 +90,7 @@ stateDiagram-v2
         LockExtended --> Executing
     }
 
-    ACTIVE --> COMPLETED: Success (moveToFinished.lua)
+    ACTIVE --> COMPLETED: Success (moveToFinished.lua / moveToFinishedBatch.lua)
     ACTIVE --> DELAYED: Failed & retries remain (retryJob.lua with backoff)
     ACTIVE --> FAILED: Failed & max attempts exhausted
     ACTIVE --> WAITING: Lock expired (StalledJobSentinel recovers job)
@@ -98,7 +103,31 @@ stateDiagram-v2
 
 ---
 
-## 3. Concurrency & Virtual Thread Execution Model
+## 3. High-Throughput Batch Dequeue Architecture
+
+For high-volume data pipelines (e.g. audit logs, clickstream events, metrics ingestion into ClickHouse, Elasticsearch, or PostgreSQL), OxMQ provides **Batch Dequeue**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Redis as Redis Storage
+    participant BatchPoller as OxmqBatchWorker
+    participant Loom as VirtualThreadPerTaskExecutor
+    participant TargetDB as ClickHouse / Elasticsearch / Postgres
+
+    BatchPoller->>Redis: moveToActiveBatch.lua (Pop up to 100 jobs atomically)
+    Redis-->>BatchPoller: List<Job<T>> [100 items]
+    BatchPoller->>Loom: submit(() -> processor.process(batch))
+    activate Loom
+    Loom->>TargetDB: 1 Bulk INSERT / _bulk API call (100 items)
+    TargetDB-->>Loom: Batch Write Confirmed (200 OK)
+    Loom->>Redis: moveToFinishedBatch.lua (Atomically complete all 100 jobs)
+    deactivate Loom
+```
+
+---
+
+## 4. Virtual Thread Concurrency Model
 
 Unlike traditional thread pools that exhaust operating system carrier threads when tasks perform blocking I/O (HTTP calls, DB queries, LLM inferences), OxMQ leverages Java 21 **Virtual Threads (Project Loom)**:
 
@@ -131,7 +160,7 @@ sequenceDiagram
 
 ---
 
-## 4. Parent-Child DAG Workflow Engine (`FlowProducer`)
+## 5. Parent-Child DAG Workflow Engine (`FlowProducer`)
 
 OxMQ supports complex task trees where parent tasks dynamically activate and consume the results of their children:
 
@@ -152,32 +181,6 @@ graph TD
     style Child2 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
     style Child3 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
 ```
-
-### Execution Flow:
-1. `FlowProducer.add(tree)` writes child jobs to `bull:<q>:wait` and the parent job to `bull:<q>:<parentId>` with state `WAITING_CHILDREN` and `unresolvedChildrenCount = N`.
-2. When each child completes, `moveToFinished.lua` stores the child's return value into `bull:<parentQueue>:<parentId>:childrenValues` and atomically decrements the unresolved count.
-3. When `unresolvedChildrenCount` reaches `0`, Redis moves the parent job to `bull:<parentQueue>:wait` for immediate execution.
-
----
-
-## 5. Redis Data Structure Layout (BullMQ Wire-Compatibility)
-
-For a queue named `notifications`, OxMQ manages the following Redis keys:
-
-| Key Pattern | Redis Type | Description |
-| :--- | :--- | :--- |
-| `bull:notifications:id` | `String` | Monotonically increasing atomic ID generator. |
-| `bull:notifications:wait` | `List` | FIFO list of job IDs ready for immediate consumption. |
-| `bull:notifications:active` | `List` | Job IDs currently being processed by active workers. |
-| `bull:notifications:delayed` | `Sorted Set` | Delayed job IDs sorted by millisecond execution timestamp. |
-| `bull:notifications:completed` | `Sorted Set / List` | Completed job IDs sorted by completion timestamp. |
-| `bull:notifications:failed` | `Sorted Set / List` | Failed job IDs with error reasons. |
-| `bull:notifications:stalled` | `Sorted Set` | Watchdog lock verification keys. |
-| `bull:notifications:meta` | `Hash` | Queue metadata (paused state, rate limit settings). |
-| `bull:notifications:limiter` | `Sorted Set` | Sliding window timestamps for rate limiting. |
-| `bull:notifications:<jobId>` | `Hash` | Job fields: `name`, `data`, `opts`, `progress`, `returnvalue`, `failedReason`. |
-| `bull:notifications:<jobId>:lock` | `String` | Ephemeral worker ownership lock with TTL (`lockDuration`). |
-| `bull:notifications:<jobId>:logs` | `List` | Appended log messages for visual debugging. |
 
 ---
 

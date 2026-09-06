@@ -1,8 +1,8 @@
 # 🐂 OxMQ
 
 <p align="center">
-  <b>High-Performance, Virtual Thread-Native Distributed Job Queue & DAG Workflow Engine for Java 21+</b><br/>
-  <i>100% Open Source • BullMQ Wire-Compatible • Native Micrometer Telemetry • Zero-Config Spring Boot Starter</i>
+  <b>High-Performance, Virtual Thread-Native Distributed Job Queue &amp; DAG Workflow Engine for Java 21+</b><br/>
+  <i>100% Open Source (Apache 2.0) • BullMQ Wire-Compatible • Native Micrometer Telemetry • Batch Dequeue • Zero-Config Spring Boot 3</i>
 </p>
 
 <p align="center">
@@ -17,35 +17,41 @@
 
 ## ⚡ Why OxMQ?
 
-Modern Java microservices handle thousands of concurrent background jobs: sending webhooks, invoking LLM APIs, chunking data pipelines, and dispatching transactional emails. Traditional Java background job libraries either **poll relational databases with high latency**, **choke under OS thread-pool starvation**, or **lock essential enterprise features behind expensive commercial paywalls**.
+Modern Java microservices frequently handle high-volume background workloads: webhook delivery, third-party API integration (OpenAI, Stripe, SendGrid), multi-stage ETL/media transcoding pipelines, and high-throughput data ingestion into ClickHouse, PostgreSQL, or Elasticsearch.
 
-**OxMQ** solves this permanently:
+In the Java ecosystem today, background job processing is fragmented:
+1. **Relational Database Schedulers (Quartz, db-scheduler):** High-latency database polling (1–5 seconds), lock contention on relational tables, and low throughput (< 1,000 ops/s).
+2. **Commercial Paywalls (JobRunr Pro):** Essential enterprise features like Parent-Child DAG workflows, sliding-window rate limiting, and dynamic queues are locked behind expensive commercial licenses.
+3. **OS Thread Starvation:** Traditional thread pools consume 1MB+ of stack per thread and block underlying OS carrier threads during network/HTTP I/O.
 
-* **🚀 Virtual Thread Native (Project Loom):** Effortlessly execute **1,000+ to 10,000+ concurrent I/O-bound workers** on a single JVM node with near-zero memory footprint (< 2KB per task).
-* **💯 100% Free & Open Source (No Paywalls):** Get Parent-Child DAG Workflows, Sliding-Window Rate Limiting, Dynamic Queues, and Sub-second Delays with zero paywalled tiers (unlike JobRunr Pro).
-* **🌐 BullMQ Wire-Compatible:** Shared Redis key layout and Lua scripts allow Java, Node.js, and Python microservices to produce and consume jobs across the same Redis cluster, with instant compatibility with **[Bull-Board](https://github.com/felixmosh/bull-board)**.
-* **📊 Native Performance Telemetry:** Built-in Micrometer instrumentation exposing counters, gauges, and high-precision latency distribution timers (`p50`, `p95`, `p99`) out-of-the-box for Prometheus and Grafana.
-* **✨ Minimal Setup & Ergonomics:** Start producing and consuming jobs in under 5 lines of code.
+**OxMQ is built to solve these gaps natively:**
+
+* **🚀 Java 21 Virtual Threads (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** on a single JVM node with near-zero memory overhead (< 2KB per task) and no carrier thread blocking.
+* **💯 100% Free & Open Source:** Full support for Parent-Child DAG Workflows, Sliding-Window Rate Limiting, Dynamic Queues, and Sub-second Delays with zero paywalled features.
+* **🌐 BullMQ Wire-Compatible & Polyglot:** Direct interoperability with Node.js and Python microservices across the same Redis cluster, with out-of-the-box support for the **[Bull-Board UI](https://github.com/felixmosh/bull-board)** dashboard.
+* **⚡ High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis roundtrip for high-performance database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
+* **📊 Native Performance Telemetry:** Built-in Micrometer instrumentation exposing counters, gauges, and high-precision latency percentiles (`p50`, `p95`, `p99`) out-of-the-box for Prometheus and Grafana.
 
 ---
 
 ## 📊 Feature Comparison Matrix
 
-| Feature / Dimension | Quartz Scheduler | db-scheduler | JobRunr (Free / Pro) | Redisson RQueue | **🐂 OxMQ** |
+| Feature / Capability | Quartz Scheduler | db-scheduler | JobRunr (Free / Pro) | Redisson RQueue | **🐂 OxMQ** |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Primary Storage** | JDBC / RDBMS | JDBC / RDBMS | Storage-Agnostic | Redis | **Pure Redis (6.2+ / 7.x)** |
 | **Execution Latency** | Polling (1-5s) | Polling (1-5s) | Polling (1-5s) | Sub-millisecond | **Sub-millisecond (&lt; 1ms)** |
 | **Throughput Target** | < 500 ops/s | < 1,000 ops/s | ~ 2,200 ops/s | ~ 18,000 ops/s | **&ge; 25,000 ops/s** |
 | **Parent-Child DAGs** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ No | **✅ 100% Free / Native** |
 | **Rate Limiting** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ Manual | **✅ 100% Free (Sliding Window)** |
+| **Batch Dequeue (Bulk Popping)**| ❌ No | ❌ No | ❌ No | ❌ No | **✅ Native (OxmqBatchWorker)** |
 | **Web Dashboard** | ❌ None | ❌ None | ✅ Included | ❌ None | **✅ Embedded + Bull-Board UI** |
 | **Polyglot Interop** | ❌ Java only | ❌ Java only | ❌ Java only | ❌ Java only | **✅ Node.js / Python / Java** |
 | **Concurrency Model** | Heavy OS Threads | Heavy OS Threads | Thread Pool | Thread Pool | **✅ Java 21 Virtual Threads (Loom)** |
-| **Native Metrics** | ❌ Plugin | ❌ Plugin | ⚠️ Basic | ⚠️ Basic | **✅ Native Micrometer (p99 Timers)** |
+| **Native Telemetry** | ❌ Plugin | ❌ Plugin | ⚠️ Basic | ⚠️ Basic | **✅ Native Micrometer (p99 Timers)** |
 
 ---
 
-## 🏛️ Architecture Overview
+## 🏛️ System Architecture
 
 ```mermaid
 graph TB
@@ -53,7 +59,8 @@ graph TB
         Producer["OxmqQueue&lt;T&gt;<br/>(Producer API)"]
         Flow["FlowProducer<br/>(Parent-Child DAGs)"]
         SpringListener["@OxmqListener<br/>(Spring Boot 3)"]
-        StandaloneWorker["OxmqWorker&lt;T&gt;<br/>(Java 21 Loom)"]
+        BatchWorker["OxmqBatchWorker&lt;T&gt;<br/>(Bulk Ingestion)"]
+        LoomWorker["OxmqWorker&lt;T&gt;<br/>(Java 21 Loom)"]
     end
 
     subgraph Engine["OxMQ Core Engine"]
@@ -82,7 +89,8 @@ graph TB
     Producer --> LuaEngine
     Flow --> LuaEngine
     SpringListener --> LoomPerTask
-    StandaloneWorker --> LoomPerTask
+    BatchWorker --> LoomPerTask
+    LoomWorker --> LoomPerTask
 
     LoomPerTask --> LuaEngine
     Watchdog --> LuaEngine
@@ -115,16 +123,16 @@ import io.oxmq.OxmqQueue;
 import io.oxmq.model.JobOptions;
 import java.time.Duration;
 
-// Define payload record
+// 1. Define your payload (Java 21 Records natively supported)
 public record EmailNotification(String to, String subject, String body) {}
 
-// Initialize Queue
+// 2. Initialize Queue
 OxmqQueue<EmailNotification> queue = OxmqQueue.<EmailNotification>builder()
     .name("notifications")
     .redisUri("redis://localhost:6379")
     .build();
 
-// Enqueue with 5s delay, 3 retries, exponential backoff
+// 3. Enqueue with 5s delay, 3 retries, and exponential backoff
 queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!", "Hello Alice!"),
     JobOptions.builder()
         .delay(Duration.ofSeconds(5))
@@ -145,8 +153,8 @@ OxmqWorker<EmailNotification> worker = OxmqWorker.<EmailNotification>builder()
     .concurrency(100) // 100 concurrent Virtual Threads!
     .processor(job -> {
         job.updateProgress(50);
-        job.log("Sending email to " + job.getData().to());
-        // Blocking I/O call (HTTP, SMTP, DB) does NOT block OS carrier thread
+        job.log("Dispatching email to " + job.getData().to());
+        // Blocking I/O calls do NOT block OS carrier threads
         return "DELIVERED";
     })
     .build();
@@ -211,50 +219,17 @@ public class NotificationWorker {
 
 ---
 
-## 🌳 Parent-Child DAG Workflows (`FlowProducer`)
+## 📚 Real-World Recipes & Examples (`oxmq-examples/`)
 
-Build complex, multi-stage data pipelines where parent jobs automatically wait for child job completion and receive their aggregated return values:
+Runnable recipes covering production-grade patterns are located in [`oxmq-examples/`](oxmq-examples/):
 
-```mermaid
-graph TD
-    Parent["Parent: Video Assembly<br/>(Waits for all child chunks)"]
-    Child1["Chunk 1: 1080p Transcode"]
-    Child2["Chunk 2: 720p Transcode"]
-    Child3["Chunk 3: 480p Transcode"]
-
-    Child1 --> Parent
-    Child2 --> Parent
-    Child3 --> Parent
-```
-
-```java
-import io.oxmq.FlowProducer;
-import io.oxmq.model.FlowJob;
-
-FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
-
-FlowJob<String> flow = FlowJob.of("video-encoder", "final-assembly-task")
-    .addChild(FlowJob.of("video-encoder", "chunk-1-1080p"))
-    .addChild(FlowJob.of("video-encoder", "chunk-2-720p"))
-    .addChild(FlowJob.of("video-encoder", "chunk-3-480p"));
-
-// Atomically enqueues tree into Redis
-String parentJobId = flowProducer.add(flow);
-```
-
----
-
-## 🚦 Sliding-Window Rate Limiting
-
-Prevent downstream API rate limits (e.g. Stripe, SendGrid, OpenAI) across distributed worker clusters:
-
-```java
-OxmqWorker<EmailPayload> worker = OxmqWorker.<EmailPayload>builder()
-    .queueName("emails")
-    .rateLimit(100, Duration.ofMinutes(1)) // Max 100 requests per minute
-    .processor(job -> sendEmail(job.getData()))
-    .build();
-```
+1. **[Rate Limiting & Throttling](oxmq-examples/src/main/java/io/oxmq/examples/RateLimitingExample.java):** Enforces sliding-window token-bucket limits to protect third-party APIs (e.g. OpenAI / Stripe rate limits).
+2. **[Retries, Exponential Backoff & DLQ](oxmq-examples/src/main/java/io/oxmq/examples/RetriesAndDlqExample.java):** Automatic retry calculation with jitter and permanent dead-letter queue routing.
+3. **[Parent-Child DAG Workflows](oxmq-examples/src/main/java/io/oxmq/examples/DagWorkflowExample.java):** Multi-stage media / ETL pipeline using `FlowProducer` where parent tasks await parallel child completion.
+4. **[Batch Dequeue & Bulk Ingestion](oxmq-examples/src/main/java/io/oxmq/examples/BatchDatabaseIngestionExample.java):** Bulk popping up to 100 jobs at once for fast ClickHouse, Elasticsearch, or PostgreSQL ingestion.
+5. **[Scheduled Delays & Deduplication](oxmq-examples/src/main/java/io/oxmq/examples/ScheduledAndDedupExample.java):** Millisecond-accurate scheduling and custom `jobId` deduplication.
+6. **[Real-Time Progress & Event Streaming](oxmq-examples/src/main/java/io/oxmq/examples/ProgressAndEventsExample.java):** `QueueEvents` Pub/Sub listener for real-time lifecycle tracking.
+7. **[Spring Boot 3 App](oxmq-examples/src/main/java/io/oxmq/examples/spring/SpringBootExampleApplication.java):** REST webhook dispatcher with `@OxmqListener` and Actuator health metrics.
 
 ---
 
@@ -263,10 +238,10 @@ OxmqWorker<EmailPayload> worker = OxmqWorker.<EmailPayload>builder()
 Because OxMQ matches BullMQ's standard Redis schema, you can run Bull-Board with zero extra configuration:
 
 ```bash
-npx @bull-board/cli --redis redis://localhost:6379 --queues notifications,webhooks,video-encoder
+npx @bull-board/cli --redis redis://localhost:6379 --queues notifications,video-chunks,audit-log-ingestion
 ```
 
-Navigate to `http://localhost:3000` to inspect queues, active jobs, retry failures, and view logs!
+Navigate to `http://localhost:3000` to inspect queues, active jobs, retry failures, and view step logs!
 
 ---
 
@@ -282,12 +257,12 @@ Access Prometheus metrics directly via `/actuator/prometheus` or integrate with 
 
 ---
 
-## 📚 Consolidated Documentation & Roadmap
+## 📖 Documentation & Roadmap
 
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis data structures, atomic Lua state machine, Virtual Thread concurrency model, and Mermaid diagrams.
-* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Feature requirements, market comparison, and performance benchmarks ($\ge 25,000$ ops/sec).
-* 🗺️ **[Roadmap](docs/ROADMAP.md)**: Release milestones from v0.1.0 to v1.0.0 GA.
-* 📊 **[Master Progress Tracker](PROGRESS_TRACKER.md)**: Granular task status and live tracking.
+* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Grounded specifications, market comparison, and performance benchmarks ($\ge 25,000$ ops/sec).
+* 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Detailed milestone release plan (v0.1.0 to v1.0.0 GA).
+* 📊 **[Master Progress Tracker](PROGRESS_TRACKER.md)**: Live task status and line-item checklists.
 
 ---
 

@@ -14,9 +14,9 @@
 | **M1: Foundation & Wire-Compatibility** | Multi-module Maven setup, Lettuce Redis transport, BullMQ v5 Lua scripts, Jackson serialization | 🟢 Done | `100%` | `v0.1.0` |
 | **M2: Concurrency & Virtual Threads** | Java 21 Loom dispatcher, Stalled Job Sentinel, Lock Extender, Exponential Backoff, Progress API | 🟢 Done | `100%` | `v0.2.0` |
 | **M3: DAG Workflows & Rate Limiting** | `FlowProducer` parent-child trees, sliding-window rate limiter, pause/resume/clean | 🟢 Done | `100%` | `v0.3.0` |
-| **M4: Spring Boot Integration** | Spring Boot 3.x Starter, `@EnableOxmq`, `@OxmqListener`, Actuator health & endpoints | 🟢 Done | `100%` | `v0.4.0` |
-| **M5: Observability & Performance Metrics** | Native Micrometer engine (Counters, Gauges, Latency Timers p50/p95/p99), Bull-Board parity | 🟢 Done | `100%` | `v0.5.0` |
-| **M6: Hardening, Samples & Benchmarks** | JMH benchmark suite, Standalone & Spring Boot sample apps, CI & Unit tests | 🟢 Done | `100%` | `v1.0.0` |
+| **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
+| **M5: Real-World Examples & Recipes** | Dedicated `oxmq-examples` module covering Rate Limiting, Retries, DAGs, Batch Ingestion, Spring Boot 3 | 🟢 Done | `100%` | `v0.5.0` |
+| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, CI/CD, Documentation & SEO optimization, Maven Central readiness | 🟡 Active | `85%` | `v1.0.0` |
 
 ---
 
@@ -24,18 +24,18 @@
 
 | Module | Core Purpose | Dependencies | Test Coverage | Status |
 | :--- | :--- | :--- | :---: | :---: |
-| **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, Queue, FlowProducer, Micrometer metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration | 🟢 Operational |
+| **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration | 🟢 Operational |
 | **`oxmq-spring-boot-starter`** | Spring Boot 3.x Auto-configuration, `@OxmqListener`, Actuator | Spring Boot 3.x, Spring Context, `oxmq-core` | Unit & Smoke | 🟢 Operational |
 | **`oxmq-benchmarks`** | JMH performance microbenchmarks for enqueue, dequeue, latency | JMH Core & Annotations, `oxmq-core` | Benchmark Suite | 🟢 Operational |
-| **`oxmq-samples`** | Standalone Java 21 and Spring Boot 3.x runnable example applications | Spring Web, Spring Actuator, `oxmq-core` | Runnable Demo | 🟢 Operational |
+| **`oxmq-examples`** | Real-world production recipes (Rate Limiting, Retries, DAGs, Batch Ingestion, Scheduled, Spring Boot) | Spring Web, Spring Actuator, `oxmq-core` | 7 Runnable Demos | 🟢 Operational |
 
 ---
 
-## 3. Granular Action Item Checklist
+## 3. Detailed Action Item Checklist
 
 ### Phase 1: Build & Infrastructure
 - [x] `[SETUP-001]` Root multi-module `pom.xml` configured with Java 21 LTS baseline.
-- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-samples`.
+- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples`.
 - [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config onboarding.
 - [x] `[SETUP-004]` Apache 2.0 `LICENSE`, `.gitignore`, and GitHub Actions CI workflow (`.github/workflows/ci.yml`).
 
@@ -46,6 +46,8 @@
   - [x] `addJob.lua` (Enqueue, delay scheduling, deduplication)
   - [x] `moveToActive.lua` (Atomic job acquisition, lock leasing, rate limit check)
   - [x] `moveToFinished.lua` (Atomic completion, result storage, DAG parent notification)
+  - [x] `moveToActiveBatch.lua` (Atomic batch popping for bulk ingestion)
+  - [x] `moveToFinishedBatch.lua` (Atomic batch completion)
   - [x] `retryJob.lua` (Re-queue with exponential backoff delay)
   - [x] `extendLock.lua` (Heartbeat renewal for long-running jobs)
   - [x] `cleanQueue.lua` (Purge expired completed/failed jobs)
@@ -67,35 +69,40 @@
 - [x] `[PROD-004]` Queue lifecycle controls (`pause()`, `resume()`, `isPaused()`, `count()`, `clean()`, `obliterate()`).
 - [x] `[FLOW-001]` `FlowProducer` for parent-child DAG trees with child result propagation.
 
-### Phase 5: Worker & Java 21 Virtual Thread Dispatcher
-- [x] `[WORK-001]` `OxmqWorker<T>` with builder configuration.
+### Phase 5: Worker & Virtual Thread Dispatcher
+- [x] `[WORK-001]` `OxmqWorker<T>` with builder configuration and semaphore concurrency control.
 - [x] `[WORK-002]` Java 21 `Executors.newVirtualThreadPerTaskExecutor()` concurrency dispatcher.
-- [x] `[WORK-003]` Semaphore-based concurrency limiter for Virtual Thread worker pools.
-- [x] `[WORK-004]` Type-safe `JobProcessor<T, R>` functional interface.
-- [x] `[WORK-005]` Real-time `job.updateProgress(int percentage)` and `job.log(String message)` APIs.
-- [x] `[WORK-006]` Graceful shutdown hook with configurable drain timeout.
+- [x] `[WORK-003]` `OxmqBatchWorker<T>` for high-throughput batch popping (ClickHouse, Elasticsearch, PostgreSQL).
+- [x] `[WORK-004]` `QueueEvents` Redis Pub/Sub listener for real-time lifecycle tracking.
+- [x] `[WORK-005]` Type-safe `JobProcessor<T, R>` and `BatchJobProcessor<T, R>` functional interfaces.
+- [x] `[WORK-006]` Real-time `job.updateProgress(int percentage)` and `job.log(String message)` APIs.
+- [x] `[WORK-007]` Graceful shutdown hook with configurable drain timeout.
 
-### Phase 6: Resilience & Watchdog
+### Phase 6: Resilience & Telemetry
 - [x] `[RESL-001]` `LockExtender` heartbeat background thread renewing Redis worker locks.
 - [x] `[RESL-002]` `StalledJobSentinel` watchdog thread scanning and re-queueing orphaned jobs.
-- [x] `[RESL-003]` Automatic backoff retry and dead-letter failure routing.
-
-### Phase 7: Native Performance Telemetry (Micrometer)
 - [x] `[METR-001]` `OxmqMetrics` native telemetry engine wrapping `MeterRegistry`.
-- [x] `[METR-002]` Counters: `oxmq.jobs.enqueued`, `oxmq.jobs.completed`, `oxmq.jobs.failed`, `oxmq.jobs.retried`, `oxmq.jobs.stalled`.
-- [x] `[METR-003]` Gauges: `oxmq.jobs.active`, `oxmq.jobs.waiting`, `oxmq.jobs.delayed`.
-- [x] `[METR-004]` Latency timers: `oxmq.job.duration` (p50/p95/p99 histograms), `oxmq.job.wait_time`.
+- [x] `[METR-002]` Counters (`enqueued`, `completed`, `failed`, `retried`, `stalled`), Gauges (`active`, `waiting`, `delayed`), Timers (`p50`, `p95`, `p99` latency histograms).
 
-### Phase 8: Spring Boot 3.x Starter
+### Phase 7: Spring Boot 3.x Starter
 - [x] `[SPRG-001]` `OxmqAutoConfiguration` and `OxmqProperties`.
 - [x] `[SPRG-002]` `@EnableOxmq` and `@OxmqListener` annotations.
 - [x] `[SPRG-003]` `OxmqListenerAnnotationBeanPostProcessor` for declarative worker lifecycle management.
 - [x] `[SPRG-004]` Spring Boot Actuator `OxmqHealthIndicator`.
+
+### Phase 8: Real-World Examples & Recipes
+- [x] `[EXMP-001]` `RateLimitingExample.java` (Token bucket rate limiter).
+- [x] `[EXMP-002]` `RetriesAndDlqExample.java` (Exponential backoff & DLQ).
+- [x] `[EXMP-003]` `DagWorkflowExample.java` (Media chunking & assembly DAG).
+- [x] `[EXMP-004]` `BatchDatabaseIngestionExample.java` (ClickHouse / Elasticsearch batch popping).
+- [x] `[EXMP-005]` `ScheduledAndDedupExample.java` (Delays & custom jobId deduplication).
+- [x] `[EXMP-006]` `ProgressAndEventsExample.java` (Live progress & QueueEvents).
+- [x] `[EXMP-007]` `SpringBootExampleApplication.java` (REST Webhooks & Actuator).
 
 ---
 
 ## 4. Documentation References
 
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis schema, Lua state machine, Virtual Thread concurrency model, and Mermaid diagrams.
-* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Functional & non-functional requirements, market comparison, and performance targets.
-* 🗺️ **[Roadmap](docs/ROADMAP.md)**: Visual milestone timeline and release deliverables.
+* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Grounded specifications, market comparison, and performance targets.
+* 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Release milestones from v0.1.0 to v1.0.0 GA.
