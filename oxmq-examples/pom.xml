@@ -6,17 +6,21 @@
 
     <parent>
         <groupId>io.oxmq</groupId>
-        <artifactId>oxmq-samples</artifactId>
+        <artifactId>oxmq-parent</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>oxmq-sample-spring-boot</artifactId>
+    <artifactId>oxmq-examples</artifactId>
     <packaging>jar</packaging>
 
-    <name>OxMQ :: Samples :: Spring Boot 3 App</name>
-    <description>Sample Spring Boot 3 application demonstrating @OxmqListener, REST endpoints, and Actuator metrics</description>
+    <name>OxMQ :: Real-World Examples &amp; Recipes</name>
+    <description>Production-grade examples covering rate limiting, retries/DLQ, DAG workflows, batch database ingestion, scheduling, and Spring Boot</description>
 
     <dependencies>
+        <dependency>
+            <groupId>io.oxmq</groupId>
+            <artifactId>oxmq-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.oxmq</groupId>
             <artifactId>oxmq-spring-boot-starter</artifactId>
@@ -33,15 +37,9 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+        </dependency>
     </dependencies>
-
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>${spring-boot.version}</version>
-            </plugin>
-        </plugins>
-    </build>
 </project>

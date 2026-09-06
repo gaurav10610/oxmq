@@ -1,4 +1,4 @@
-package io.oxmq.sample.spring;
+package io.oxmq.examples.spring;
 
 import io.lettuce.core.RedisClient;
 import io.oxmq.OxmqQueue;
@@ -20,41 +20,45 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * Real-World Recipe: Spring Boot 3 Declarative Webhook Dispatcher
+ * Use Case: Microservice exposing REST endpoint to enqueue jobs with automatic @OxmqListener worker and Actuator health.
+ */
 @SpringBootApplication
 @EnableOxmq
-public class SampleSpringBootApplication {
+public class SpringBootExampleApplication {
 
-    private static final Logger log = LoggerFactory.getLogger(SampleSpringBootApplication.class);
+    private static final Logger log = LoggerFactory.getLogger(SpringBootExampleApplication.class);
 
-    public record WebhookRequest(String url, String eventType, Map<String, Object> payload) {}
+    public record WebhookNotification(String endpointUrl, String eventType, Map<String, Object> data) {}
 
     public static void main(String[] args) {
-        SpringApplication.run(SampleSpringBootApplication.class, args);
+        SpringApplication.run(SpringBootExampleApplication.class, args);
     }
 
     @Bean
-    public OxmqQueue<WebhookRequest> webhookQueue(RedisClient redisClient) {
-        return OxmqQueue.<WebhookRequest>builder()
-                .name("webhooks")
+    public OxmqQueue<WebhookNotification> webhookQueue(RedisClient redisClient) {
+        return OxmqQueue.<WebhookNotification>builder()
+                .name("outgoing-webhooks")
                 .redisClient(redisClient)
-                .payloadClass(WebhookRequest.class)
+                .payloadClass(WebhookNotification.class)
                 .build();
     }
 
     @RestController
     @RequestMapping("/api/webhooks")
-    public static class WebhookController {
+    public static class WebhookApiController {
 
-        private final OxmqQueue<WebhookRequest> queue;
+        private final OxmqQueue<WebhookNotification> queue;
 
-        public WebhookController(OxmqQueue<WebhookRequest> queue) {
+        public WebhookApiController(OxmqQueue<WebhookNotification> queue) {
             this.queue = queue;
         }
 
         @PostMapping("/dispatch")
-        public Map<String, Object> dispatch(@RequestBody WebhookRequest request,
+        public Map<String, Object> dispatch(@RequestBody WebhookNotification payload,
                                             @RequestParam(defaultValue = "0") long delayMs) {
-            Job<WebhookRequest> job = queue.add("dispatch-event", request,
+            Job<WebhookNotification> job = queue.add("dispatch-webhook", payload,
                     JobOptions.builder()
                             .delay(Duration.ofMillis(delayMs))
                             .attempts(3)
@@ -70,7 +74,7 @@ public class SampleSpringBootApplication {
         }
 
         @GetMapping("/stats")
-        public Map<String, Object> getStats() {
+        public Map<String, Object> getQueueStats() {
             return Map.of(
                     "waiting", queue.count(io.oxmq.model.JobState.WAITING),
                     "active", queue.count(io.oxmq.model.JobState.ACTIVE),
@@ -84,17 +88,17 @@ public class SampleSpringBootApplication {
     @RestController
     public static class WebhookWorkerComponent {
 
-        @OxmqListener(queue = "webhooks", concurrency = 50, rateLimitMax = 100, rateLimitDurationMs = 60000)
-        public String handleWebhook(Job<WebhookRequest> job) throws InterruptedException {
-            WebhookRequest req = job.getData();
-            log.info("Processing webhook [jobId: {}] for URL: {} (VirtualThread: {})",
-                    job.getId(), req.url(), Thread.currentThread().isVirtual());
+        @OxmqListener(queue = "outgoing-webhooks", concurrency = 50, rateLimitMax = 100, rateLimitDurationMs = 60000)
+        public String processWebhook(Job<WebhookNotification> job) throws InterruptedException {
+            WebhookNotification webhook = job.getData();
+            log.info("Processing webhook [jobId: {}] to URL: {} (VirtualThread: {})",
+                    job.getId(), webhook.endpointUrl(), Thread.currentThread().isVirtual());
 
             job.updateProgress(50);
             Thread.sleep(50); // Simulating HTTP webhook dispatch
 
             job.updateProgress(100);
-            job.log("Dispatched webhook successfully to " + req.url());
+            job.log("Webhook delivered successfully to " + webhook.endpointUrl());
             return "HTTP_200_OK";
         }
     }
