@@ -34,20 +34,75 @@ In the Java ecosystem today, background job processing is fragmented:
 
 ---
 
-## 📊 Feature Comparison Matrix
+## 🌟 Top Features Supported by OxMQ
 
-| Feature / Capability | Quartz Scheduler | db-scheduler | JobRunr (Free / Pro) | Redisson RQueue | **🐂 OxMQ** |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **Primary Storage** | JDBC / RDBMS | JDBC / RDBMS | Storage-Agnostic | Redis | **Pure Redis (6.2+ / 7.x)** |
-| **Execution Latency** | Polling (1-5s) | Polling (1-5s) | Polling (1-5s) | Sub-millisecond | **Sub-millisecond (&lt; 1ms)** |
-| **Throughput Target** | < 500 ops/s | < 1,000 ops/s | ~ 2,200 ops/s | ~ 18,000 ops/s | **&ge; 25,000 ops/s** |
-| **Parent-Child DAGs** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ No | **✅ 100% Free / Native** |
-| **Rate Limiting** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ Manual | **✅ 100% Free (Sliding Window)** |
-| **Batch Dequeue (Bulk Popping)**| ❌ No | ❌ No | ❌ No | ❌ No | **✅ Native (OxmqBatchWorker)** |
-| **Web Dashboard** | ❌ None | ❌ None | ✅ Included | ❌ None | **✅ Embedded + Bull-Board UI** |
-| **Polyglot Interop** | ❌ Java only | ❌ Java only | ❌ Java only | ❌ Java only | **✅ Node.js / Python / Java** |
-| **Concurrency Model** | Heavy OS Threads | Heavy OS Threads | Thread Pool | Thread Pool | **✅ Java 21 Virtual Threads (Loom)** |
-| **Native Telemetry** | ❌ Plugin | ❌ Plugin | ⚠️ Basic | ⚠️ Basic | **✅ Native Micrometer (p99 Timers)** |
+OxMQ combines the battle-tested, wire-compatible Redis data model of BullMQ with the massive concurrency of Java 21 Virtual Threads:
+
+* **🚀 Java 21 Virtual Thread Concurrency (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** on a single JVM node with near-zero memory overhead (< 2KB stack per task) without thread starvation or carrier thread blocking.
+* **🌲 Parent-Child DAG Workflows (`FlowProducer`):** Native multi-stage dependency trees where parent tasks await parallel child completion, propagating child outputs upstream with zero paid paywalls.
+* **⚡ High-Throughput Batch Dequeue (`OxmqBatchWorker`):** Bulk pop up to $N$ jobs atomically in 1 Redis roundtrip for high-performance database ingestion into ClickHouse, Elasticsearch, PostgreSQL, or Snowflake.
+* **⏱️ Sliding-Window Rate Limiting & Throttling:** Built-in token-bucket rate limiting to safeguard external APIs (OpenAI, Stripe, SendGrid) without dropping jobs.
+* **🔄 Exponential Backoff Retries & Dead-Letter Queue (DLQ):** Configurable retry attempts with exponential backoff & jitter calculations, automatically routing permanently failed jobs to a dead-letter state with full stack traces.
+* **🎯 Sub-Second Scheduled Delays & Deduplication:** Millisecond-accurate delayed execution and custom `jobId` debounce windows to prevent duplicate processing.
+* **📡 Real-Time Progress Updates & Event Streaming (`QueueEvents`):** Live percentage progress reporting (`job.updateProgress(n)`), step logs (`job.log(msg)`), and Redis Pub/Sub lifecycle streaming.
+* **🌐 100% BullMQ Wire-Compatibility & Polyglot Interop:** Identical Redis schema to BullMQ v5, allowing seamless interop with Node.js and Python microservices, plus zero-config support for the **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** dashboard.
+* **📊 Native Micrometer Performance Telemetry:** Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`), counters, and gauges for Prometheus, Grafana, and Datadog out-of-the-box.
+* **🍃 Zero-Config Spring Boot 3 Integration:** Declarative `@EnableOxmq` and `@OxmqListener` annotations with Spring Boot Actuator health checks and auto-configuration.
+
+---
+
+## 🔄 How OxMQ Processes Jobs (Job Lifecycle)
+
+The diagram below illustrates the end-to-end lifecycle of a job—from enqueueing, sliding-window rate limit checks, atomic lock acquisition, Java 21 Virtual Thread dispatching, real-time progress streaming, to completion or exponential backoff retries:
+
+```mermaid
+flowchart TD
+    subgraph Ingestion["1. Enqueue &amp; Scheduling"]
+        Producer["OxmqQueue.add() / FlowProducer"] -->|Atomic EVALSHA| AddLua["addJob.lua"]
+        AddLua -->|Immediate Job| WaitList[("bull:&lt;q&gt;:wait<br/>(Ready List)")]
+        AddLua -->|Delayed / Retry| DelayedZSet[("bull:&lt;q&gt;:delayed<br/>(Timestamp Sorted Set)")]
+        DelayedZSet -.->|Timestamp Matured| WaitList
+    end
+
+    subgraph Acquisition["2. Acquisition &amp; Rate Limiting"]
+        Poller["OxmqWorker Poller Loop"] --> RateCheck{"RateLimiter<br/>Token Bucket OK?"}
+        RateCheck -->|Within Limit| PopLua["moveToActive.lua<br/>(Atomic Pop &amp; Lock Lease)"]
+        RateCheck -->|Rate Limited| ThrottleSleep["Backoff &amp; Wait (ms)"]
+        WaitList --> PopLua
+        PopLua --> ActiveZSet[("bull:&lt;q&gt;:active<br/>(Leased Job Lock)")]
+    end
+
+    subgraph Dispatch["3. Java 21 Loom Execution"]
+        PopLua --> Dispatcher["VirtualThreadPerTaskExecutor<br/>(Thread.ofVirtual())"]
+        Dispatcher --> WorkerThread["Worker Virtual Thread<br/>(JobProcessor.process)"]
+        
+        WorkerThread -.->|job.updateProgress(%)| PubSub[("bull:&lt;q&gt;:events<br/>(Redis Pub/Sub)")]
+        WorkerThread -.->|job.log(msg)| JobLogs[("bull:&lt;q&gt;:&lt;id&gt;:logs")]
+        
+        Heartbeat["LockExtender (Heartbeat)"] -.->|Renew Lock Lease| ActiveZSet
+        Watchdog["StalledJobSentinel"] -.->|Rescue Crashed/Orphaned| WaitList
+    end
+
+    subgraph Completion["4. Completion, Retries &amp; DLQ"]
+        WorkerThread --> ResultCheck{"Execution Result?"}
+        
+        ResultCheck -->|Success| FinishLua["moveToFinished.lua<br/>(State: COMPLETED)"]
+        FinishLua --> CompletedZSet[("bull:&lt;q&gt;:completed")]
+        FinishLua -.->|Propagate Child Results| ParentDAG["Parent DAG Flow"]
+        
+        ResultCheck -->|Failure &amp; Retries Left| RetryLua["retryJob.lua<br/>(Exponential Backoff + Jitter)"]
+        RetryLua --> DelayedZSet
+        
+        ResultCheck -->|Failure &amp; Max Attempts| FailLua["moveToFinished.lua<br/>(State: FAILED / DLQ)"]
+        FailLua --> FailedZSet[("bull:&lt;q&gt;:failed<br/>(Dead-Letter Queue)")]
+    end
+
+    subgraph Observability["5. Telemetry &amp; Monitoring"]
+        FinishLua --> Metrics["OxmqMetrics (Micrometer)"]
+        FailLua --> Metrics
+        PubSub --> BullBoard["Bull-Board UI / WebSockets"]
+    end
+```
 
 ---
 
