@@ -12,22 +12,9 @@ A DAG workflow represents a pipeline of interdependent background jobs where:
 3. If any child job fails, the parent job is automatically notified and fails or can trigger compensatory logic.
 4. Child job return values are aggregated and passed directly to the parent job processor.
 
-```mermaid
-flowchart TD
-    subgraph Step1["Step 1: Parallel Child Tasks"]
-        C1["🎬 <b>Encode 1080p</b><br/><code>video-chunks</code>"]
-        C2["🎬 <b>Encode 720p</b><br/><code>video-chunks</code>"]
-        C3["🎬 <b>Extract Audio</b><br/><code>video-chunks</code>"]
-    end
-
-    subgraph Step2["Step 2: Parent Assembly"]
-        P["📦 <b>Assemble Final HLS Package</b><br/><code>video-assembly</code>"]
-    end
-
-    C1 -->|Output 1080p URL| P
-    C2 -->|Output 720p URL| P
-    C3 -->|Output Audio URL| P
-```
+<p align="center">
+  <img src="assets/oxmq-dag-workflow.gif" alt="OxMQ DAG Workflow Animation" width="100%">
+</p>
 
 ---
 

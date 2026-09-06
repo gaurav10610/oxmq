@@ -53,24 +53,13 @@ OxMQ combines the battle-tested, wire-compatible Redis data model of BullMQ with
 
 ---
 
-## 🔄 How OxMQ Processes Jobs (Job Lifecycle)
+## 🔄 How OxMQ Processes Jobs (Job Lifecycle & Auto-Retries)
 
-At a glance, here is how jobs move through OxMQ—from enqueueing, Virtual Thread dispatching, real-time progress streaming, to completion or automatic retries:
+At a glance, here is how jobs move through OxMQ—from enqueueing, atomic Lua state transitions, Virtual Thread dispatching, real-time progress streaming, to completion and exponential backoff retry loops:
 
-```mermaid
-flowchart LR
-    A["📤 <b>1. Enqueue</b><br/><code>OxmqQueue.add()</code>"] --> B[("🗄️ <b>2. Redis Queue</b><br/><code>bull:&lt;name&gt;:wait</code>")]
-    
-    B --> C["⚡ <b>3. Virtual Thread Worker</b><br/><code>OxmqWorker</code> (Project Loom)"]
-    
-    C -->|Success| D["✅ <b>4a. Completed</b><br/>Result Saved &amp; DAG Notified"]
-    C -->|Transient Failure| E["🔄 <b>4b. Auto-Retry</b><br/>Exponential Backoff"]
-    C -->|Max Retries Exceeded| F["💀 <b>4c. Dead-Letter Queue</b><br/><code>bull:&lt;name&gt;:failed</code>"]
-    
-    E -->|Delay Matures| B
-    
-    C -.->|Progress &amp; Logs| G["📊 <b>Live Dashboards</b><br/>Bull-Board &amp; Prometheus"]
-```
+<p align="center">
+  <img src="docs/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle and Auto-Retry Animation" width="100%">
+</p>
 
 ---
 
