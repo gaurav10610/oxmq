@@ -1,15 +1,15 @@
-# OxMQ Executive Progress Tracker
+# 📊 OxMQ Master Progress Tracker
 
 **Project:** `OxMQ` — Distributed Job & Workflow Engine for Java 21+  
 **Target Release:** `v1.0.0` GA  
-**License:** Apache 2.0 (100% Open Source)  
+**License:** Apache 2.0 (100% Open Source, No Paywalls)  
 **Last Updated:** September 2026  
 
 ---
 
-## 1. Overall Project Progress Dashboard
+## 1. Milestone Progress Overview
 
-| Milestone | Scope / Goal | Status | Progress | Target Version |
+| Milestone | Target Scope | Status | Progress | Target Version |
 | :--- | :--- | :---: | :---: | :---: |
 | **M1: Foundation & Wire-Compatibility** | Multi-module Maven setup, Lettuce Redis transport, BullMQ v5 Lua scripts, Jackson serialization | 🟢 Done | `100%` | `v0.1.0` |
 | **M2: Concurrency & Virtual Threads** | Java 21 Loom dispatcher, Stalled Job Sentinel, Lock Extender, Exponential Backoff, Progress API | 🟢 Done | `100%` | `v0.2.0` |
@@ -31,17 +31,17 @@
 
 ---
 
-## 3. Granular Task Checklist & Status
+## 3. Granular Action Item Checklist
 
 ### Phase 1: Build & Infrastructure
 - [x] `[SETUP-001]` Root multi-module `pom.xml` configured with Java 21 LTS baseline.
-- [x] `[SETUP-002]` Modular module structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-samples`.
-- [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config developer onboarding.
-- [x] `[SETUP-004]` Apache 2.0 `LICENSE`, `.gitignore`, and documentation repository setup.
+- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-samples`.
+- [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config onboarding.
+- [x] `[SETUP-004]` Apache 2.0 `LICENSE`, `.gitignore`, and GitHub Actions CI workflow (`.github/workflows/ci.yml`).
 
 ### Phase 2: Redis Engine & Atomic Lua Scripts
 - [x] `[REDIS-001]` `RedisConnectionManager` with Standalone, Cluster, Sentinel, and Pooling support.
-- [x] `[REDIS-002]` `LuaScriptManager` with SHA-1 digest caching, EVALSHA, and automatic NOSCRIPT re-eval.
+- [x] `[REDIS-002]` `LuaScriptManager` with SHA-1 digest caching, EVALSHA, and automatic NOSCRIPT fallback.
 - [x] `[REDIS-003]` BullMQ v5 atomic Lua scripts:
   - [x] `addJob.lua` (Enqueue, delay scheduling, deduplication)
   - [x] `moveToActive.lua` (Atomic job acquisition, lock leasing, rate limit check)
@@ -51,15 +51,16 @@
   - [x] `cleanQueue.lua` (Purge expired completed/failed jobs)
   - [x] `pauseQueue.lua` (Cluster-wide pause/resume toggle)
   - [x] `rateLimit.lua` (Sliding window token bucket rate limiter)
+  - [x] `obliterate.lua` (Full queue purging)
 
 ### Phase 3: Domain Models & Serialization
 - [x] `[MODEL-001]` `Job<T>` domain model with full metadata, timestamps, and return values.
 - [x] `[MODEL-002]` `JobOptions` builder with delays, attempts, backoff, deduplication keys, and cleanup rules.
 - [x] `[MODEL-003]` `BackoffStrategy` with `FixedBackoff`, `ExponentialBackoff`, and `CustomBackoff`.
-- [x] `[MODEL-004]` `JobState` enum (`WAITING`, `ACTIVE`, `DELAYED`, `COMPLETED`, `FAILED`, `PAUSED`, `STALLED`).
+- [x] `[MODEL-004]` `JobState` enum (`WAITING`, `ACTIVE`, `DELAYED`, `COMPLETED`, `FAILED`, `PAUSED`, `STALLED`, `WAITING_CHILDREN`).
 - [x] `[MODEL-005]` `JacksonJobSerializer` with Java Records, generic DTOs, and JSR-310 JavaTime support.
 
-### Phase 4: Producer & Workflow Engine (`Queue<T>` & `FlowProducer`)
+### Phase 4: Producer & DAG Workflow Engine (`Queue<T>` & `FlowProducer`)
 - [x] `[PROD-001]` `OxmqQueue<T>` with single and bulk enqueueing (`add`, `addBulk`).
 - [x] `[PROD-002]` Delayed job scheduling with millisecond timestamp calculations.
 - [x] `[PROD-003]` Deduplication via custom `jobId` within debounce windows.
@@ -81,7 +82,7 @@
 
 ### Phase 7: Native Performance Telemetry (Micrometer)
 - [x] `[METR-001]` `OxmqMetrics` native telemetry engine wrapping `MeterRegistry`.
-- [x] `[METR-002]` Metrics: `oxmq.jobs.enqueued`, `oxmq.jobs.completed`, `oxmq.jobs.failed`, `oxmq.jobs.retried`, `oxmq.jobs.stalled`.
+- [x] `[METR-002]` Counters: `oxmq.jobs.enqueued`, `oxmq.jobs.completed`, `oxmq.jobs.failed`, `oxmq.jobs.retried`, `oxmq.jobs.stalled`.
 - [x] `[METR-003]` Gauges: `oxmq.jobs.active`, `oxmq.jobs.waiting`, `oxmq.jobs.delayed`.
 - [x] `[METR-004]` Latency timers: `oxmq.job.duration` (p50/p95/p99 histograms), `oxmq.job.wait_time`.
 
@@ -93,9 +94,8 @@
 
 ---
 
-## 4. Acceptance Criteria & Quality Gates
+## 4. Documentation References
 
-1. **Zero-Setup Quickstart:** A standalone Java 21 application must produce and consume jobs in $< 10$ lines of code.
-2. **Virtual Thread Native:** Workers process I/O-bound jobs concurrently without exhausting OS carrier threads.
-3. **BullMQ Compatible:** Keys created in Redis match standard BullMQ schema (`bull:<queue>:wait`, `bull:<queue>:active`, `bull:<queue>:<id>`).
-4. **Native Telemetry:** Complete Micrometer metric suite accessible without installing external plugins.
+* 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis schema, Lua state machine, Virtual Thread concurrency model, and Mermaid diagrams.
+* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Functional & non-functional requirements, market comparison, and performance targets.
+* 🗺️ **[Roadmap](docs/ROADMAP.md)**: Visual milestone timeline and release deliverables.
