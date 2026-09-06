@@ -88,14 +88,14 @@ public class SpringBootExampleApplication {
     @RestController
     public static class WebhookWorkerComponent {
 
-        @OxmqListener(queue = "outgoing-webhooks", concurrency = 50, rateLimitMax = 100, rateLimitDurationMs = 60000)
+        @OxmqListener(queue = "outgoing-webhooks", concurrency = 50)
         public String processWebhook(Job<WebhookNotification> job) throws InterruptedException {
             WebhookNotification webhook = job.getData();
             log.info("Processing webhook [jobId: {}] to URL: {} (VirtualThread: {})",
                     job.getId(), webhook.endpointUrl(), Thread.currentThread().isVirtual());
 
             job.updateProgress(50);
-            Thread.sleep(50); // Simulating HTTP webhook dispatch
+            Thread.sleep(20); // Simulating HTTP webhook dispatch
 
             job.updateProgress(100);
             job.log("Webhook delivered successfully to " + webhook.endpointUrl());
