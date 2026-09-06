@@ -102,8 +102,25 @@
 
 ---
 
-## 4. Documentation References
+## 4. Developer Tooling & Production Assets
 
+* 🐳 **`docker-compose.yml`**: Turn-key local stack with Redis 7, Bull-Board Web UI, Prometheus, and Grafana.
+* 📊 **Grafana Dashboard (`docker/grafana/dashboards/oxmq-dashboard.json`)**: Pre-provisioned metrics dashboard for throughput, p99 latency, gauges, and error rates.
+* ⚙️ **GitHub Actions CI (`.github/workflows/ci.yml`)**: Automated multi-OS (Ubuntu, macOS) and multi-JDK (Java 21, Java 22) matrix against live Redis service.
+* 🤝 **Community Governance**: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, Issue & PR templates.
+
+---
+
+## 5. Documentation Guides & Technical Specifications
+
+* 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: 0-to-1 setup for pure Java and Spring Boot 3.
+* 🌲 **[Parent-Child DAG Workflows](docs/DAG_WORKFLOWS.md)**: Multi-stage pipelines, `FlowProducer`, and dependency resolution.
+* ⚡ **[High-Throughput Batch Ingestion](docs/BATCH_INGESTION.md)**: `OxmqBatchWorker` for bulk ClickHouse, Postgres & Elasticsearch writes.
+* ⏱️ **[Sliding-Window Rate Limiting](docs/RATE_LIMITING.md)**: Token-bucket rate limiting for OpenAI, Stripe, and third-party APIs.
+* 🍃 **[Spring Boot 3 Deep-Dive](docs/SPRING_BOOT.md)**: Auto-configuration, `@OxmqListener`, Actuator health, and metrics.
+* 📊 **[Observability & Metrics](docs/OBSERVABILITY.md)**: Micrometer, Prometheus, Grafana, and `QueueEvents` Pub/Sub.
+* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: In-depth comparison of OxMQ vs BullMQ, JobRunr Pro, Quartz, Kafka, and RabbitMQ.
+* 🛡️ **[Production Hardening Checklist](docs/PRODUCTION_CHECKLIST.md)**: Redis configuration, memory sizing, Sentinel/Cluster, and Kubernetes graceful shutdown.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis schema, Lua state machine, Virtual Thread concurrency model, and Mermaid diagrams.
-* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Grounded specifications, market comparison, and performance targets.
+* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Grounded specifications, market comparison, and performance targets ($\ge 25,000$ ops/sec).
 * 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Release milestones from v0.1.0 to v1.0.0 GA.

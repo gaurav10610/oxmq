@@ -186,6 +186,10 @@ public class OxmqWorker<T> implements Worker<T> {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
+                if (!running.get() || Thread.currentThread().isInterrupted() || e instanceof io.lettuce.core.RedisCommandInterruptedException) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
                 log.warn("Error in OxMQ worker poll loop for queue {}", queueName, e);
                 try {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);

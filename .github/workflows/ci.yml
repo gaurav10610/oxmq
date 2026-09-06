@@ -1,14 +1,20 @@
-name: OxMQ CI
+name: OxMQ CI / Test Suite
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ develop, main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ develop, main ]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-and-test:
+    name: Build & Test (Java ${{ matrix.java-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+        java-version: [ '21', '22' ]
 
     services:
       redis:
@@ -17,20 +23,37 @@ jobs:
           - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
+          --health-interval 5s
+          --health-timeout 3s
           --health-retries 5
 
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      - name: Set up JDK ${{ matrix.java-version }}
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
-          cache: maven
+          cache: 'maven'
 
-      - name: Build with Maven Wrapper
-        run: ./mvnw clean verify
+      - name: Start Redis on macOS (non-container service fallback)
+        if: runner.os == 'macOS'
+        run: |
+          brew install redis
+          brew services start redis
+          sleep 2
+          redis-cli ping
+
+      - name: Build & Run Full Test Suite with Maven
+        run: mvn clean test -B
+        env:
+          OXMQ_REDIS_URI: redis://localhost:6379
+
+      - name: Publish Test Results
+        if: always()
+        uses: scacap/action-surefire-report@v1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          check_name: "Surefire Test Report (Java ${{ matrix.java-version }} - ${{ matrix.os }})"

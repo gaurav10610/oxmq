@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # 1. Redis 7 Storage Engine
+  redis:
+    image: redis:7-alpine
+    container_name: oxmq-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 2. Bull-Board Web UI (Real-Time Queue Management)
+  bull-board:
+    image: node:20-alpine
+    container_name: oxmq-bull-board
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    command: >
+      sh -c "npm install -g @bull-board/cli @bull-board/api @bull-board/express ioredis &&
+             bull-board --redis redis://redis:6379 --port 3000 --queues notifications,outgoing-webhooks,video-chunks,audit-logs,api-prompts"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # 3. Prometheus Telemetry Scraper
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: oxmq-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+
+  # 4. Grafana Dashboards
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: oxmq-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./docker/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./docker/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  redis-data:

@@ -154,13 +154,17 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 }
 
                 if (!jobs.isEmpty()) {
-                    dispatcherExecutor.submit(() -> executeBatch(jobs, pollerConn));
+                    dispatcherExecutor.submit(() -> executeBatch(jobs));
                 }
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
+                if (!running.get() || Thread.currentThread().isInterrupted() || e instanceof io.lettuce.core.RedisCommandInterruptedException) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
                 log.warn("Error in OxMQ batch poller loop for queue {}", queueName, e);
                 try {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
@@ -176,7 +180,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         } catch (Exception ignored) {}
     }
 
-    private void executeBatch(List<Job<T>> jobs, StatefulRedisConnection<String, String> conn) {
+    private void executeBatch(List<Job<T>> jobs) {
         long startTime = System.nanoTime();
         try {
             log.debug("Executing batch of {} jobs on queue {}", jobs.size(), queueName);
@@ -185,7 +189,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            completeBatch(jobs, result, duration, conn);
+            completeBatch(jobs, result, duration);
             for (Job<T> job : jobs) {
                 metrics.recordJobCompleted(queueName, duration);
             }
@@ -195,11 +199,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            failBatch(jobs, t, duration, conn);
+            failBatch(jobs, t, duration);
             for (Job<T> job : jobs) {
                 metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
             }
-            log.warn("Batch of {} jobs failed on queue {}: {}", jobs.size(), queueName, t.getMessage());
+            log.warn("Batch of {} jobs failed on queue {}: {}", jobs.size(), queueName, t.getMessage(), t);
         } finally {
             for (Job<T> job : jobs) {
                 lockExtender.unregisterJob(job.getId());
@@ -207,7 +211,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         }
     }
 
-    private void completeBatch(List<Job<T>> jobs, Object result, Duration duration, StatefulRedisConnection<String, String> conn) {
+    private void completeBatch(List<Job<T>> jobs, Object result, Duration duration) {
         String serializedResult = serializer.serialize(result);
         String[] keys = new String[]{
                 prefix + ":active",
@@ -226,10 +230,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             args.add(job.getId());
         }
 
+        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
         scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED_BATCH, ScriptOutputType.INTEGER, keys, args.toArray(new String[0]));
     }
 
-    private void failBatch(List<Job<T>> jobs, Throwable error, Duration duration, StatefulRedisConnection<String, String> conn) {
+    private void failBatch(List<Job<T>> jobs, Throwable error, Duration duration) {
         StringWriter sw = new StringWriter();
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
@@ -251,6 +256,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             args.add(job.getId());
         }
 
+        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
         scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED_BATCH, ScriptOutputType.INTEGER, keys, args.toArray(new String[0]));
     }
 

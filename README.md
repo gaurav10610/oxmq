@@ -6,11 +6,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/gaurav10610/oxmq/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/gaurav10610/oxmq/ci.yml?branch=develop&label=CI%20Build" alt="CI Status"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/21/"><img src="https://img.shields.io/badge/Java-21%2B%20LTS-orange.svg" alt="Java 21"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-6.2%2B%20%7C%207.x-red.svg" alt="Redis"></a>
   <a href="https://openjdk.org/projects/loom/"><img src="https://img.shields.io/badge/Concurrency-Virtual%20Threads%20(Loom)-brightgreen.svg" alt="Virtual Threads"></a>
   <a href="https://bullmq.io/"><img src="https://img.shields.io/badge/BullMQ-Wire%20Compatible-blueviolet.svg" alt="BullMQ Compatible"></a>
+  <a href="https://grafana.com/"><img src="https://img.shields.io/badge/Grafana-Dashboard%20Included-F46800.svg" alt="Grafana"></a>
 </p>
 
 ---
@@ -232,12 +234,29 @@ Runnable recipes covering production-grade patterns are organized into dedicated
 
 ---
 
-## 🖥️ Instant Bull-Board Web UI
+## 🐳 Turn-Key Local Stack (1-Line Docker Compose)
 
-Because OxMQ matches BullMQ's standard Redis schema, you can run Bull-Board with zero extra configuration:
+Spin up Redis 7, Bull-Board UI, Prometheus, and Grafana with pre-provisioned OxMQ dashboards in one command:
 
 ```bash
-npx @bull-board/cli --redis redis://localhost:6379 --queues notifications,video-chunks,audit-log-ingestion
+docker compose up -d
+```
+
+| Service | Local URL | Default Credentials | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Bull-Board Web UI** | `http://localhost:3000` | None | Real-time queue inspection, manual retries, step logs |
+| **Grafana Dashboards** | `http://localhost:3001` | `admin` / `admin` | Pre-configured throughput, p99 latency, and error dashboards |
+| **Prometheus** | `http://localhost:9090` | None | Raw metrics scraper and PromQL console |
+| **Redis 7** | `localhost:6379` | None | Persistent Redis state store with AOF |
+
+---
+
+## 🖥️ Instant Bull-Board Web UI
+
+Because OxMQ matches BullMQ's standard Redis schema, you can also run Bull-Board standalone via `npx`:
+
+```bash
+npx @bull-board/cli --redis redis://localhost:6379 --queues notifications,outgoing-webhooks,video-chunks,audit-logs
 ```
 
 Navigate to `http://localhost:3000` to inspect queues, active jobs, retry failures, and view step logs!
@@ -252,16 +271,26 @@ OxMQ provides built-in metrics instrumentation with microsecond accuracy:
 * **Gauges:** `oxmq.jobs.active`, `oxmq.jobs.waiting`, `oxmq.jobs.delayed`
 * **Timers:** `oxmq.job.duration` (with `p50`, `p95`, `p99` percentiles), `oxmq.job.wait_time`
 
-Access Prometheus metrics directly via `/actuator/prometheus` or integrate with Grafana.
+Access Prometheus metrics directly via `/actuator/prometheus` or view them on Grafana.
 
 ---
 
-## 📖 Documentation & Roadmap
+## 📖 Deep-Dive Guides & Documentation
 
-* 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis data structures, atomic Lua state machine, Virtual Thread concurrency model, and Mermaid diagrams.
-* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Grounded specifications, market comparison, and performance benchmarks ($\ge 25,000$ ops/sec).
-* 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Detailed milestone release plan (v0.1.0 to v1.0.0 GA).
-* 📊 **[Master Progress Tracker](PROGRESS_TRACKER.md)**: Live task status and line-item checklists.
+Explore our comprehensive technical guides in [`docs/`](docs/):
+
+* 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: 0-to-1 setup for pure Java and Spring Boot 3.
+* 🌲 **[Parent-Child DAG Workflows](docs/DAG_WORKFLOWS.md)**: Multi-stage pipelines, `FlowProducer`, and dependency resolution.
+* ⚡ **[High-Throughput Batch Ingestion](docs/BATCH_INGESTION.md)**: `OxmqBatchWorker` for bulk ClickHouse, Postgres & Elasticsearch writes.
+* ⏱️ **[Sliding-Window Rate Limiting](docs/RATE_LIMITING.md)**: Token-bucket rate limiting for OpenAI, Stripe, and third-party APIs.
+* 🍃 **[Spring Boot 3 Deep-Dive](docs/SPRING_BOOT.md)**: Auto-configuration, `@OxmqListener`, Actuator health, and metrics.
+* 📊 **[Observability & Metrics](docs/OBSERVABILITY.md)**: Micrometer, Prometheus, Grafana, and `QueueEvents` Pub/Sub.
+* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: In-depth comparison of OxMQ vs BullMQ, JobRunr Pro, Quartz, Kafka, and RabbitMQ.
+* 🛡️ **[Production Hardening Checklist](docs/PRODUCTION_CHECKLIST.md)**: Redis configuration, memory sizing, Sentinel/Cluster, and Kubernetes graceful shutdown.
+* 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis data structures, atomic Lua state machine, and Virtual Thread concurrency model.
+* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Specifications, market analysis, and benchmark goals ($\ge 25,000$ ops/sec).
+* 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Release milestones from v0.1.0 to v1.0.0 GA.
+* 🤝 **[Contributing Guidelines](CONTRIBUTING.md)**: Developer setup, code conventions, and pull request workflow.
 
 ---
 
