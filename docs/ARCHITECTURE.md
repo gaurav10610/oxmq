@@ -1,164 +1,222 @@
-# OxMQ Architecture & Internals
+# 🏛️ OxMQ Architecture & Internals
 
-This document details the architectural design, Redis data structures, concurrency model, DAG execution engine, and performance telemetry pipeline of **OxMQ**.
+This document details the architectural design, Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and performance telemetry in **OxMQ**.
 
 ---
 
 ## 1. High-Level System Architecture
 
-OxMQ is engineered around 4 core principles:
-1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) are performed via single-roundtrip Lua scripts.
-2. **Virtual Thread Native (Project Loom):** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread, enabling 1,000+ concurrent I/O-bound workers without thread pool starvation.
-3. **BullMQ v5 Wire-Compatibility:** Uses standard BullMQ Redis key hierarchies, allowing seamless polyglot interoperability with Node.js/Python workers and the **Bull-Board** UI.
-4. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
+OxMQ is engineered around 5 core pillars:
+1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via single-roundtrip Lua scripts.
+2. **Virtual Thread Native (Project Loom):** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread, enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
+3. **High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis call for fast database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
+4. **BullMQ v5 Wire-Compatibility:** Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
+5. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
 
-```
-                  +----------------------------------------------+
-                  |               User Application               |
-                  |     OxmqQueue<T>      /     @OxmqListener    |
-                  +----------------------------------------------+
-                                         │
-                   ┌─────────────────────┴─────────────────────┐
-                   ▼                                           ▼
-      +─────────────────────────+                 +─────────────────────────+
-      |       OxmqQueue         |                 |       OxmqWorker        |
-      |   - add / addBulk       |                 |   - VirtualThreadPerTask|
-      |   - FlowProducer        |                 |   - LockExtender        |
-      |   - pause / resume      |                 |   - StalledJobSentinel  |
-      +─────────────────────────+                 +─────────────────────────+
-                   │                                           │
-                   └─────────────────────┬─────────────────────┘
-                                         ▼
-                  +----------------------------------------------+
-                  |              LuaScriptManager                |
-                  |   - SHA-1 Caching & EVALSHA Execution        |
-                  |   - Automatic EVAL fallback on NOSCRIPT      |
-                  +----------------------------------------------+
-                                         │
-                                         ▼
-                  +----------------------------------------------+
-                  |               Redis Cluster / DB             |
-                  |   - bull:<queue>:wait      (List)            |
-                  |   - bull:<queue>:active    (List)            |
-                  |   - bull:<queue>:delayed   (ZSet)            |
-                  |   - bull:<queue>:<id>      (Hash)            |
-                  |   - bull:<queue>:stalled   (ZSet)            |
-                  |   - bull:<queue>:limiter   (ZSet/String)     |
-                  +----------------------------------------------+
+```mermaid
+graph TB
+    subgraph AppLayer["Application Layer"]
+        Producer["OxmqQueue&lt;T&gt;<br/>(Producer)"]
+        Flow["FlowProducer<br/>(DAG Workflows)"]
+        SpringWorker["@OxmqListener<br/>(Spring Boot 3)"]
+        CoreWorker["OxmqWorker&lt;T&gt;<br/>(1-by-1 Loom Worker)"]
+        BatchWorker["OxmqBatchWorker&lt;T&gt;<br/>(Bulk Ingestion Worker)"]
+        Events["QueueEvents<br/>(Pub/Sub Listener)"]
+    end
+
+    subgraph OxmqCore["OxMQ Core Engine"]
+        LoomDispatcher["Virtual Thread Dispatcher<br/>(Executors.newVirtualThreadPerTaskExecutor)"]
+        LockWatchdog["LockExtender &amp; StalledJobSentinel<br/>(Background Watchdog)"]
+        RateLimit["RateLimiter<br/>(Sliding Window Token Bucket)"]
+        MetricsEngine["OxmqMetrics<br/>(Native Micrometer Integration)"]
+        LuaManager["LuaScriptManager<br/>(SHA-1 Digest Caching &amp; EVALSHA)"]
+    end
+
+    subgraph RedisStorage["Redis Storage Engine (BullMQ Wire-Compatible)"]
+        WaitList[("bull:&lt;queue&gt;:wait<br/>[FIFO List]")]
+        ActiveList[("bull:&lt;queue&gt;:active<br/>[Active List]")]
+        DelayedZSet[("bull:&lt;queue&gt;:delayed<br/>[Timestamp ZSet]")]
+        CompletedZSet[("bull:&lt;queue&gt;:completed<br/>[Completed ZSet]")]
+        FailedZSet[("bull:&lt;queue&gt;:failed<br/>[Failed ZSet]")]
+        JobHashes[("bull:&lt;queue&gt;:&lt;id&gt;<br/>[Job Metadata Hash]")]
+        EventsPubSub[("bull:&lt;queue&gt;:events<br/>[Pub/Sub Channel]")]
+        LimiterKey[("bull:&lt;queue&gt;:limiter<br/>[Sliding Window ZSet]")]
+    end
+
+    subgraph TelemetrySink["Observability Sinks"]
+        Prometheus["Prometheus / Grafana"]
+        BullBoardUI["Bull-Board UI Dashboard"]
+    end
+
+    Producer -->|add / addBulk| LuaManager
+    Flow -->|add DAG tree| LuaManager
+    SpringWorker --> LoomDispatcher
+    CoreWorker --> LoomDispatcher
+    BatchWorker --> LoomDispatcher
+
+    LoomDispatcher --> LuaManager
+    LockWatchdog --> LuaManager
+    RateLimit --> LuaManager
+
+    LuaManager --> RedisStorage
+    MetricsEngine --> Prometheus
+    EventsPubSub --> Events
+    EventsPubSub --> BullBoardUI
+    JobHashes --> BullBoardUI
 ```
 
 ---
 
-## 2. Redis Data Structure Layout (BullMQ Wire Compatibility)
+## 2. Job Lifecycle State Machine
 
-For a queue named `notifications`, OxMQ creates the following Redis keys:
+Jobs transition through a strictly enforced, atomic state machine managed by Redis Lua scripts:
 
-| Key Pattern | Redis Type | Description |
-| :--- | :--- | :--- |
-| `bull:notifications:id` | `String` | Monotonically increasing auto-increment counter for job IDs. |
-| `bull:notifications:wait` | `List` | FIFO list of job IDs ready for immediate consumption. |
-| `bull:notifications:active` | `List` | List of job IDs currently being processed by active workers. |
-| `bull:notifications:delayed` | `Sorted Set` | Sorted set of delayed job IDs, where `score` is the millisecond timestamp when the job becomes ready. |
-| `bull:notifications:completed` | `Sorted Set / List` | IDs of completed jobs for history and cleanup TTL. |
-| `bull:notifications:failed` | `Sorted Set / List` | IDs of failed jobs with stack traces. |
-| `bull:notifications:stalled` | `Sorted Set` | Heartbeat tracking timestamps for detecting hung workers. |
-| `bull:notifications:meta` | `Hash` | Queue metadata (paused state, rate limit settings). |
-| `bull:notifications:limiter` | `Hash / String` | Token bucket / sliding window state for rate limiting. |
-| `bull:notifications:<jobId>` | `Hash` | Full job record: `name`, `data`, `opts`, `progress`, `returnvalue`, `failedReason`, timestamps. |
-| `bull:notifications:<jobId>:logs` | `List` | Appended log messages for visual debugging. |
+```mermaid
+stateDiagram-v2
+    [*] --> WAITING: queue.add() [delay == 0]
+    [*] --> DELAYED: queue.add() [delay > 0]
+    [*] --> WAITING_CHILDREN: flowProducer.add() [parent node]
+
+    DELAYED --> WAITING: Maturity timestamp reached (now >= score)
+    WAITING_CHILDREN --> WAITING: All children completed (unresolved == 0)
+
+    WAITING --> ACTIVE: moveToActive.lua / moveToActiveBatch.lua (Worker acquires job & lock)
+    
+    state ACTIVE {
+        [*] --> Executing
+        Executing --> ProgressUpdated: job.updateProgress()
+        ProgressUpdated --> Executing
+        Executing --> LockExtended: LockExtender Heartbeat
+        LockExtended --> Executing
+    }
+
+    ACTIVE --> COMPLETED: Success (moveToFinished.lua / moveToFinishedBatch.lua)
+    ACTIVE --> DELAYED: Failed & retries remain (retryJob.lua with backoff)
+    ACTIVE --> FAILED: Failed & max attempts exhausted
+    ACTIVE --> WAITING: Lock expired (StalledJobSentinel recovers job)
+
+    FAILED --> WAITING: Explicit retry (queue.retryJob)
+    
+    COMPLETED --> [*]: TTL expired / cleanQueue
+    FAILED --> [*]: TTL expired / cleanQueue
+```
 
 ---
 
-## 3. Atomic Lua Script State Machine
+## 3. High-Throughput Batch Dequeue Architecture
 
-State transitions in OxMQ never suffer from race conditions or split-brain states because they are executed inside atomic Lua scripts:
+For high-volume data pipelines (e.g. audit logs, clickstream events, metrics ingestion into ClickHouse, Elasticsearch, or PostgreSQL), OxMQ provides **Batch Dequeue**:
 
-### A. `addJob.lua`
-1. Resolves or generates the unique `jobId`.
-2. Checks for deduplication if custom `jobId` exists.
-3. Writes the job Hash (`bull:<q>:<id>`).
-4. If `delay > 0`, adds `jobId` to `bull:<q>:delayed` with score `now + delay`.
-5. If `delay == 0`, pushes `jobId` to `bull:<q>:wait` and publishes an event on `bull:<q>:events`.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Redis as Redis Storage
+    participant BatchPoller as OxmqBatchWorker
+    participant Loom as VirtualThreadPerTaskExecutor
+    participant TargetDB as ClickHouse / Elasticsearch / Postgres
 
-### B. `moveToActive.lua`
-1. Checks if the queue is paused or rate-limited.
-2. Promotes any matured jobs from `bull:<q>:delayed` to `bull:<q>:wait`.
-3. Atomically pops from `bull:<q>:wait` and pushes to `bull:<q>:active`.
-4. Sets the worker lock key `bull:<q>:<jobId>:lock` with TTL = `lockDuration`.
-5. Updates job hash `processedOn = now`, `attemptsMade = attemptsMade + 1`.
-
-### C. `moveToFinished.lua`
-1. Releases the worker lock key.
-2. Removes `jobId` from `bull:<q>:active`.
-3. If successful: saves `returnvalue`, adds to `bull:<q>:completed`, notifies parent job if part of a DAG.
-4. If failed and `attemptsMade < maxAttempts`: calculates backoff delay and moves to `bull:<q>:delayed`.
-5. If failed and retries exhausted: saves `failedReason` and adds to `bull:<q>:failed`.
+    BatchPoller->>Redis: moveToActiveBatch.lua (Pop up to 100 jobs atomically)
+    Redis-->>BatchPoller: List<Job<T>> [100 items]
+    BatchPoller->>Loom: submit(() -> processor.process(batch))
+    activate Loom
+    Loom->>TargetDB: 1 Bulk INSERT / _bulk API call (100 items)
+    TargetDB-->>Loom: Batch Write Confirmed (200 OK)
+    Loom->>Redis: moveToFinishedBatch.lua (Atomically complete all 100 jobs)
+    deactivate Loom
+```
 
 ---
 
 ## 4. Virtual Thread Concurrency Model
 
-OxMQ is engineered from the ground up for Java 21 Virtual Threads:
+Unlike traditional thread pools that exhaust operating system carrier threads when tasks perform blocking I/O (HTTP calls, DB queries, LLM inferences), OxMQ leverages Java 21 **Virtual Threads (Project Loom)**:
 
-```
-[Redis Stream / Wait List]
-           │
-           │ (Atomic moveToActive)
-           ▼
-[Worker Poller Loop]
-           │
-           │ submits Runnable task
-           ▼
-[VirtualThreadPerTaskExecutor]
-   ├── [ Virtual Thread #1 ] ──> HTTP Webhook (Blocking I/O - unmounts carrier thread)
-   ├── [ Virtual Thread #2 ] ──> Database Query (Blocking I/O - unmounts carrier thread)
-   ├── [ Virtual Thread #3 ] ──> LLM API Call (Blocking I/O - unmounts carrier thread)
-   └── [ Virtual Thread #N ] ──> S3 Upload (Blocking I/O - unmounts carrier thread)
-```
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Redis as Redis Cluster
+    participant Poller as OxMQ Poller Thread
+    participant Loom as VirtualThreadPerTaskExecutor
+    participant Worker as Virtual Thread #N
+    participant IO as External I/O (HTTP/DB/LLM)
 
-- When a Virtual Thread blocks on network/database I/O, Java 21 unmounts it from the underlying carrier (OS) thread.
-- A single node can comfortably execute **1,000 to 10,000 concurrent jobs** with minimal heap overhead (< 50MB).
-- Configurable concurrency semaphore ensures rate limits and system resource caps are strictly respected.
+    loop Continuous Non-Blocking Polling
+        Poller->>Redis: moveToActive.lua (Atomic pop & set lock)
+        Redis-->>Poller: Job Payload [ID: 1042]
+        Poller->>Loom: submit(JobTask)
+        Note over Poller: Immediately ready for next job (Zero blocking)
+    end
+
+    activate Worker
+    Loom->>Worker: Spawn Virtual Thread
+    Worker->>Worker: job.updateProgress(25%)
+    Worker->>IO: Dispatch HTTP Request / LLM Call
+    Note over Worker: Carrier thread unmounted during blocking I/O!
+    IO-->>Worker: HTTP 200 OK Response
+    Worker->>Redis: moveToFinished.lua (Save return value & release lock)
+    Worker->>Redis: Record Micrometer Metrics (Duration & Status)
+    deactivate Worker
+```
 
 ---
 
 ## 5. Parent-Child DAG Workflow Engine (`FlowProducer`)
 
-OxMQ allows defining complex task dependency trees:
+OxMQ supports complex task trees where parent tasks dynamically activate and consume the results of their children:
 
-```
-                  ┌─────────────────┐
-                  |   Parent Job    |
-                  | (Video Encoder) |
-                  └────────┬────────┘
-                           │ (Waits for all children)
-        ┌──────────────────┼──────────────────┐
-        ▼                  ▼                  ▼
-┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-| Chunk 1 (1080p)|  | Chunk 2 (1080p)|  | Chunk 3 (1080p)|
-└───────────────┘  └───────────────┘  └───────────────┘
-```
+```mermaid
+graph TD
+    Parent["Parent Job: Video Assembly<br/>(State: WAITING_CHILDREN, unresolvedChildren = 3)"]
+    
+    Child1["Child 1: Transcode 1080p<br/>(State: ACTIVE)"]
+    Child2["Child 2: Transcode 720p<br/>(State: ACTIVE)"]
+    Child3["Child 3: Transcode 480p<br/>(State: ACTIVE)"]
 
-1. `FlowProducer.add(FlowJob tree)` pushes child jobs to `bull:<q>:wait` and the parent job with state `WAITING_CHILDREN` and an unresolved child counter.
-2. As each child completes in `moveToFinished.lua`, Redis atomically decrements the parent's child counter and stores the child's return value in `bull:<q>:<parentId>:childrenValues`.
-3. When the counter reaches `0`, Redis automatically moves the parent job to `bull:<q>:wait`.
+    Child1 -->|On Finish: HSET childrenValues & Decr counter| Parent
+    Child2 -->|On Finish: HSET childrenValues & Decr counter| Parent
+    Child3 -->|On Finish: Counter reaches 0 -> Move to WAITING| Parent
+
+    style Parent fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style Child1 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
+    style Child2 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
+    style Child3 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
+```
 
 ---
 
 ## 6. Native Performance Telemetry Pipeline
 
-OxMQ embeds a native `OxmqMetrics` engine powered by Micrometer:
+```mermaid
+graph LR
+    subgraph OxmqCore["OxMQ Execution Hooks"]
+        EnqHook["Job Enqueued"]
+        WaitHook["Job Dequeued (Wait Latency)"]
+        ExecHook["Job Executed (Duration & SLA)"]
+        FailHook["Job Failed / Retried"]
+    end
 
-* **Counters:**
-  - `oxmq.jobs.enqueued`: Total jobs submitted (tagged by `queue`).
-  - `oxmq.jobs.completed`: Total jobs successfully finished (tagged by `queue`).
-  - `oxmq.jobs.failed`: Total jobs failed (tagged by `queue`, `exception`).
-  - `oxmq.jobs.retried`: Total retry attempts scheduled.
-  - `oxmq.jobs.stalled`: Stalled jobs recovered by watchdog.
-* **Gauges:**
-  - `oxmq.jobs.active`: Currently executing jobs.
-  - `oxmq.jobs.waiting`: Jobs pending in wait list.
-  - `oxmq.jobs.delayed`: Jobs waiting on scheduled delay.
-* **Timers:**
-  - `oxmq.job.duration`: Execution time histogram with p50, p95, p99 percentiles.
-  - `oxmq.job.wait_time`: Queue residence time before pickup.
+    subgraph MicrometerEngine["OxmqMetrics (Micrometer)"]
+        CounterEnq["oxmq.jobs.enqueued (Counter)"]
+        CounterComp["oxmq.jobs.completed (Counter)"]
+        CounterFail["oxmq.jobs.failed (Counter)"]
+        TimerDuration["oxmq.job.duration (p50, p95, p99 Timer)"]
+        TimerWait["oxmq.job.wait_time (Timer)"]
+        Gauges["oxmq.jobs.active / waiting / delayed (Gauges)"]
+    end
+
+    subgraph Observability["Dashboards & Sinks"]
+        Prometheus["Prometheus / OpenTelemetry"]
+        Grafana["Grafana Dashboards"]
+        Actuator["Spring Boot /actuator/metrics"]
+    end
+
+    EnqHook --> CounterEnq
+    WaitHook --> TimerWait
+    ExecHook --> TimerDuration
+    ExecHook --> CounterComp
+    FailHook --> CounterFail
+
+    MicrometerEngine --> Prometheus
+    MicrometerEngine --> Actuator
+    Prometheus --> Grafana
+```

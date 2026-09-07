@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+oxmq:
+  redis:
+    uri: ${OXMQ_REDIS_URI:redis://localhost:6379}
+  default-concurrency: 50
+  virtual-threads: true
+  metrics-enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true

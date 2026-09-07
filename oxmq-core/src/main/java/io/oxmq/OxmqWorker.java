@@ -180,12 +180,16 @@ public class OxmqWorker<T> implements Worker<T> {
                 Job<T> job = buildJobFromFields(jobId, fields);
                 lockExtender.registerJob(jobId);
 
-                dispatcherExecutor.submit(() -> executeJob(job, pollerConn));
+                dispatcherExecutor.submit(() -> executeJob(job));
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
+                if (!running.get() || Thread.currentThread().isInterrupted() || e instanceof io.lettuce.core.RedisCommandInterruptedException) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
                 log.warn("Error in OxMQ worker poll loop for queue {}", queueName, e);
                 try {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
@@ -201,7 +205,7 @@ public class OxmqWorker<T> implements Worker<T> {
         } catch (Exception ignored) {}
     }
 
-    private void executeJob(Job<T> job, StatefulRedisConnection<String, String> conn) {
+    private void executeJob(Job<T> job) {
         long startTime = System.nanoTime();
         try {
             log.debug("Executing job {} [id: {}] on queue {}", job.getName(), job.getId(), queueName);
@@ -210,7 +214,7 @@ public class OxmqWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            completeJob(job, result, duration, conn);
+            completeJob(job, result, duration);
             metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
@@ -218,16 +222,16 @@ public class OxmqWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            failJob(job, t, duration, conn);
+            failJob(job, t, duration);
             metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
-            log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.getMessage());
+            log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
         } finally {
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();
         }
     }
 
-    private void completeJob(Job<T> job, Object result, Duration duration, StatefulRedisConnection<String, String> conn) {
+    private void completeJob(Job<T> job, Object result, Duration duration) {
         String serializedResult = serializer.serialize(result);
         JobOptions opts = job.getOpts();
         boolean removeOnComplete = opts != null && opts.isRemoveOnComplete();
@@ -240,6 +244,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 prefix + ":events"
         };
 
+        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
         scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED, ScriptOutputType.INTEGER, keys,
                 prefix,
                 job.getId(),
@@ -254,7 +259,7 @@ public class OxmqWorker<T> implements Worker<T> {
         );
     }
 
-    private void failJob(Job<T> job, Throwable error, Duration duration, StatefulRedisConnection<String, String> conn) {
+    private void failJob(Job<T> job, Throwable error, Duration duration) {
         StringWriter sw = new StringWriter();
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
@@ -275,6 +280,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 prefix + ":events"
         };
 
+        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
         Long status = scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED, ScriptOutputType.INTEGER, keys,
                 prefix,
                 job.getId(),

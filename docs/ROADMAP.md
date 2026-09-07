@@ -1,90 +1,99 @@
-# Project Roadmap
+# 🗺️ Master Project Roadmap
 
-**Project:** `OxMQ` (Distributed Job & Workflow Engine for Java)  
-**Version Strategy:** Semantic Versioning (`v0.1.0` $\rightarrow$ `v1.0.0`)  
-**Target Completion:** 6 Milestones  
+**Project:** `OxMQ` (High-Performance Distributed Job & Workflow Engine for Java 21+)  
+**Version Strategy:** Semantic Versioning (`v0.1.0` $\rightarrow$ `v1.0.0` GA)  
+**Target Completion:** 6 Core Milestones  
 
 ---
 
-## Milestone Timeline Overview
+## 1. Visual Roadmap & Release Milestones
 
+```mermaid
+gantt
+    title OxMQ Release Timeline & Milestones
+    dateFormat  YYYY-MM-DD
+    section Core Foundation
+    M1 - Redis Wire-Compatibility & Lua Scripts :done, 2026-09-01, 2026-09-05
+    M2 - Concurrency & Virtual Threads (Loom)   :done, 2026-09-05, 2026-09-06
+    section Workflows & Features
+    M3 - DAG Workflows & Rate Limiting          :done, 2026-09-06, 2026-09-07
+    M4 - Batch Dequeue & QueueEvents Pub/Sub    :done, 2026-09-07, 2026-09-08
+    section Real-World Recipes & GA
+    M5 - Production Recipes & Spring Boot 3     :done, 2026-09-08, 2026-09-09
+    M6 - JMH Benchmarking, CI & 1.0.0 GA        :active, 2026-09-09, 2026-09-15
 ```
-  Q1: Foundation & Core               Q2: Workflows & Frameworks            Q3: GA & Scale
-┌───────────────────────────────┐   ┌───────────────────────────────┐   ┌───────────────────────────────┐
-│ Milestone 1: Core Wire-Compat │   │ Milestone 3: Flows & DAGs     │   │ Milestone 5: UI & Metrics     │
-│ Milestone 2: Concurrency/Loom │   │ Milestone 4: Spring Boot      │   │ Milestone 6: Hardening & GA   │
-└───────────────────────────────┘   └───────────────────────────────┘   └───────────────────────────────┘
-```
 
 ---
 
-## Milestone 1: Foundation & Redis Wire-Compatibility (`v0.1.0`)
-**Primary Goal:** Establish the core project repository, Redis connection layer via Lettuce, and foundational BullMQ Lua scripts for atomic job enqueueing, fetching, and completion.
+## 2. Milestone Breakdown & Deliverables
 
-* **Key Deliverables:**
-  * Multi-module Maven project structure (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-samples`).
-  * Porting core BullMQ Lua scripts (`addJob.lua`, `moveToActive.lua`, `moveToFinished.lua`, `retryJob.lua`, `extendLock.lua`, `cleanQueue.lua`, `pauseQueue.lua`, `rateLimit.lua`).
-  * Ergonomic `Queue<T>`, `Worker<T>`, and `Job<T>` builder APIs.
-  * Pluggable Jackson serialization engine (`JobSerializer`) supporting Java Records and JSR-310 time types.
-  * Native Micrometer metrics foundation.
-
----
-
-## Milestone 2: Concurrency, Virtual Threads & Robustness (`v0.2.0`)
-**Primary Goal:** Build the high-throughput task execution engine with first-class Java 21 Virtual Threads (Loom) and production-grade resilience.
-
-* **Key Deliverables:**
-  * Virtual Thread-per-task dispatcher (`Executors.newVirtualThreadPerTaskExecutor()`) with platform thread fallback.
-  * Configurable worker concurrency limits (e.g. 50–5000 concurrent jobs).
-  * Stalled job sentinel (watchdog thread scanning for dead/orphaned worker locks).
-  * Heartbeat / lock extension mechanism for long-running jobs.
-  * Retry policies with Exponential, Fixed, and Custom Backoff formulas.
-  * Real-time progress updates (`job.updateProgress(int percentage)`).
-  * Graceful shutdown hooks with configurable drain timeout.
+### ✅ Milestone 1: Foundation & Redis Wire-Compatibility (`v0.1.0`)
+* **Goal:** Multi-module Maven setup, Lettuce Redis transport, and BullMQ v5 compatible atomic Lua scripts.
+* **Deliverables:**
+  * Multi-module project setup (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples`).
+  * Atomic Lua scripts: `addJob.lua`, `moveToActive.lua`, `moveToFinished.lua`, `retryJob.lua`, `extendLock.lua`, `cleanQueue.lua`, `pauseQueue.lua`, `rateLimit.lua`, `obliterate.lua`.
+  * `Queue<T>`, `Worker<T>`, and `Job<T>` builder APIs.
+  * Jackson JSON serialization engine supporting Java 21 Records and JSR-310 dates.
 
 ---
 
-## Milestone 3: Advanced Scheduling, Rate Limiting & Flow Engine (`v0.3.0`)
-**Primary Goal:** Implement BullMQ's most powerful features: parent-child job hierarchies (DAGs) and distributed rate limiting.
-
-* **Key Deliverables:**
-  * `FlowProducer` engine: Define job trees where parent jobs wait for child completion.
-  * Child-to-parent result injection and cascading failure handlers.
-  * Token-bucket and sliding-window rate limiters per queue/key.
-  * Repeatable / Cron job scheduler with IANA timezone support.
-  * Job deduplication with debounce windows and custom ID keys.
-  * Pause, resume, and obliterate queue controls.
-
----
-
-## Milestone 4: Spring Boot Integration & Developer Ergonomics (`v0.4.0`)
-**Primary Goal:** Provide a seamless, zero-friction developer experience for Spring Boot 3.x applications.
-
-* **Key Deliverables:**
-  * `@EnableOxmq` annotation and Spring Boot Auto-Configuration (`OxmqAutoConfiguration`).
-  * Reuse existing `RedisConnectionFactory` / `LettuceConnectionFactory` from Spring Data Redis.
-  * Declarative `@OxmqListener(queue = "name", concurrency = 50)` worker annotation.
-  * Automatic JSON payload conversion into strongly typed DTOs.
-  * Spring Environment configuration bindings (`application.yml` / `application.properties`).
-  * Actuator health indicators and endpoint integration.
+### ✅ Milestone 2: Concurrency, Virtual Threads & Robustness (`v0.2.0`)
+* **Goal:** High-throughput task execution engine with Java 21 Virtual Threads (Loom) and production resilience.
+* **Deliverables:**
+  * Virtual Thread-per-task dispatcher (`Executors.newVirtualThreadPerTaskExecutor()`).
+  * Semaphore-controlled concurrency limiting.
+  * `LockExtender` heartbeat thread for long-running jobs.
+  * `StalledJobSentinel` watchdog scanning for orphaned active jobs.
+  * Configurable exponential, fixed, and custom backoff strategies.
+  * Real-time progress updates (`job.updateProgress`) and execution logs (`job.log`).
 
 ---
 
-## Milestone 5: Observability, Metrics & Embedded UI (`v0.5.0`)
-**Primary Goal:** Provide instant visual inspection and enterprise metrics integration.
-
-* **Key Deliverables:**
-  * **Bull-Board Verification:** 100% interoperability with the Node.js [Bull-Board](https://github.com/felixmosh/bull-board) UI.
-  * **Micrometer Metrics:** Export real-time gauges, counters, and timers for queue latency, active workers, failure rates, and retry counts.
-  * OpenTelemetry tracing propagation for distributed trace context across job boundaries.
+### ✅ Milestone 3: Advanced Workflows & Rate Limiting (`v0.3.0`)
+* **Goal:** BullMQ parent-child job hierarchies (DAGs) and sliding-window rate limiters.
+* **Deliverables:**
+  * `FlowProducer` engine: Hierarchical task trees where parent tasks await all child tasks.
+  * Child result propagation into parent job context (`job.getChildrenValues()`).
+  * Sliding-window token-bucket rate limiter per queue/key.
+  * Queue controls: `pause()`, `resume()`, `clean()`, and `obliterate()`.
 
 ---
 
-## Milestone 6: Benchmarking, Hardening & 1.0.0 GA (`v1.0.0`)
-**Primary Goal:** Production readiness, performance validation, and official public release.
+### ✅ Milestone 4: Batch Dequeue & Event Streaming (`v0.4.0`)
+* **Goal:** High-throughput bulk popping for database ingestion and Pub/Sub event listeners.
+* **Deliverables:**
+  * `OxmqBatchWorker<T>` and `BatchJobProcessor<T, R>`: Pop up to $N$ jobs atomically in 1 Redis roundtrip.
+  * `moveToActiveBatch.lua` and `moveToFinishedBatch.lua` atomic batch scripts.
+  * `QueueEvents`: Redis Pub/Sub listener for real-time events (`onWaiting`, `onProgress`, `onCompleted`, `onFailed`, `onRetried`).
 
-* **Key Deliverables:**
-  * JMH microbenchmarking suite for enqueue and worker throughput.
-  * Polyglot verification: Java Producer $\rightarrow$ Node Worker, Node Producer $\rightarrow$ Java Worker.
-  * Full Javadoc, website documentation, Quickstart guides, and sample projects.
-  * Publication to Maven Central (`io.oxmq:oxmq-core`, `io.oxmq:oxmq-spring-boot-starter`).
+---
+
+### ✅ Milestone 5: Real-World Recipes & Spring Boot 3 (`v0.5.0`)
+* **Goal:** Production-grade developer examples and seamless Spring Boot 3 auto-configuration.
+* **Deliverables:**
+  * Spring Boot 3 Starter with `@EnableOxmq`, declarative `@OxmqListener`, and Actuator health indicator.
+  * 7 runnable recipes in `oxmq-examples/`:
+    1. Rate Limiting & Throttling (Stripe / OpenAI limits).
+    2. Retries, Exponential Backoff & DLQ (Payment webhooks).
+    3. Parent-Child DAG Workflows (Media transcoding pipeline).
+    4. Batch Dequeue & Bulk Ingestion (ClickHouse / Elasticsearch / Postgres).
+    5. Scheduled Delays & Deduplication (Idempotent background tasks).
+    6. Real-Time Progress & Event Streaming (Live monitoring).
+    7. Spring Boot 3 REST Webhook App.
+
+---
+
+### 🚀 Milestone 6: Hardening, Benchmarking & 1.0.0 GA (`v1.0.0`)
+* **Goal:** Production validation, high-throughput microbenchmarks, and official release.
+* **Deliverables:**
+  * JMH microbenchmarking suite (`oxmq-benchmarks`).
+  * Multi-node Redis Sentinel & Cluster soak tests.
+  * Maven Central publication (`io.oxmq:oxmq-core`, `io.oxmq:oxmq-spring-boot-starter`).
+
+---
+
+## 3. Future Horizons (`v1.1.0+`)
+* **OpenTelemetry Context Propagation:** Distributed W3C `traceparent` context passed through job headers.
+* **Large Payload S3/MinIO Spillover:** Automatic offloading of payloads $> 512\text{KB}$ to object storage.
+* **GraalVM Native Image Support:** Native AOT compilation for Quarkus & Micronaut.
+* **Dead-Letter Queue (DLQ) Replay CLI:** Tool to inspect and replay failed jobs in batches.

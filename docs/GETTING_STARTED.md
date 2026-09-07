@@ -1,0 +1,185 @@
+# 🚀 Getting Started with OxMQ
+
+Welcome to **OxMQ**, the high-performance, Virtual Thread-native distributed job queue and DAG workflow engine for Java 21+.
+
+This guide walks you from zero to production-grade background job processing in minutes.
+
+---
+
+## 📦 1. Installation
+
+Add OxMQ to your Maven or Gradle build:
+
+### Maven (`pom.xml`)
+```xml
+<!-- Core Pure Java Engine -->
+<dependency>
+    <groupId>io.oxmq</groupId>
+    <artifactId>oxmq-core</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+
+<!-- Optional: Spring Boot 3 Starter -->
+<dependency>
+    <groupId>io.oxmq</groupId>
+    <artifactId>oxmq-spring-boot-starter</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+### Gradle (`build.gradle.kts`)
+```kotlin
+implementation("io.oxmq:oxmq-core:1.0.0-SNAPSHOT")
+// or implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0-SNAPSHOT")
+```
+
+---
+
+## 🗄️ 2. Starting Redis
+
+OxMQ uses Redis 6.2+ or Redis 7.x (or Valkey) as its atomic state store.
+
+Start a local Redis container in 1 second:
+```bash
+docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
+```
+Or start our complete developer stack (Redis + Bull-Board + Prometheus + Grafana):
+```bash
+docker compose up -d
+```
+
+---
+
+## 📤 3. Producing Jobs
+
+OxMQ natively serializes Java 21 `record` and POJO classes to JSON.
+
+```java
+import io.oxmq.OxmqQueue;
+import io.oxmq.model.Job;
+import io.oxmq.model.JobOptions;
+import java.time.Duration;
+import java.util.Map;
+
+// 1. Define your job payload
+public record OrderInvoice(String orderId, String customerEmail, double amount) {}
+
+public class ProducerExample {
+    public static void main(String[] args) {
+        // 2. Initialize Queue
+        OxmqQueue<OrderInvoice> queue = OxmqQueue.<OrderInvoice>builder()
+                .name("order-invoices")
+                .redisUri("redis://localhost:6379")
+                .payloadClass(OrderInvoice.class)
+                .build();
+
+        // 3. Add a job with 5-second delay and 3 exponential backoff retries
+        Job<OrderInvoice> job = queue.add(
+                "generate-pdf",
+                new OrderInvoice("ord_9876", "customer@example.com", 249.99),
+                JobOptions.builder()
+                        .delay(Duration.ofSeconds(5))
+                        .attempts(3)
+                        .exponentialBackoff(Duration.ofSeconds(1))
+                        .build()
+        );
+
+        System.out.println("Enqueued job ID: " + job.getId());
+    }
+}
+```
+
+---
+
+## ⚡ 4. Consuming Jobs with Virtual Threads
+
+Because OxMQ runs on **Java 21 Project Loom (Virtual Threads)**, you can configure high concurrency without exhausting OS threads or JVM heap memory.
+
+```java
+import io.oxmq.OxmqWorker;
+
+public class ConsumerExample {
+    public static void main(String[] args) {
+        OxmqWorker<OrderInvoice> worker = OxmqWorker.<OrderInvoice>builder()
+                .queueName("order-invoices")
+                .redisUri("redis://localhost:6379")
+                .payloadClass(OrderInvoice.class)
+                .concurrency(100) // 100 concurrent Virtual Threads!
+                .processor(job -> {
+                    OrderInvoice invoice = job.getData();
+                    System.out.printf("Generating invoice for order %s (VirtualThread: %b)%n",
+                            invoice.orderId(), Thread.currentThread().isVirtual());
+
+                    // Report progress in real-time
+                    job.updateProgress(25);
+                    job.log("Fetching order items from database...");
+
+                    // Blocking HTTP / I/O calls do NOT block OS carrier threads
+                    job.updateProgress(75);
+                    job.log("Rendering PDF invoice...");
+
+                    job.updateProgress(100);
+                    return Map.of("pdfUrl", "https://s3.amazonaws.com/invoices/" + invoice.orderId() + ".pdf");
+                })
+                .build();
+
+        worker.start();
+    }
+}
+```
+
+---
+
+## 🍃 5. Spring Boot 3 Quickstart
+
+With `oxmq-spring-boot-starter`, you get declarative listeners and Actuator integration out-of-the-box.
+
+### `application.yml`
+```yaml
+oxmq:
+  redis:
+    uri: redis://localhost:6379
+  default-concurrency: 50
+  virtual-threads: true
+  metrics-enabled: true
+```
+
+### Application Code
+```java
+@SpringBootApplication
+@EnableOxmq
+public class BillingMicroservice {
+
+    public static void main(String[] args) {
+        SpringApplication.run(BillingMicroservice.class, args);
+    }
+
+    @Component
+    public static class InvoiceListener {
+
+        @OxmqListener(queue = "order-invoices", concurrency = 50)
+        public String handleInvoice(Job<OrderInvoice> job) {
+            job.updateProgress(50);
+            job.log("Invoice generated successfully");
+            return "SUCCESS";
+        }
+    }
+}
+```
+
+---
+
+## 📊 6. Real-Time Observability
+
+1. **Bull-Board Dashboard (Port 3000)**: Open `http://localhost:3000` to inspect queues, retry failed jobs, and view live step logs.
+2. **Prometheus & Grafana (Port 3001)**: Open `http://localhost:3001` (login: `admin` / `admin`) to monitor throughput, error rates, and p99 latency percentiles.
+
+---
+
+## 📖 Next Steps
+
+* 🌲 [Parent-Child DAG Workflows Guide](DAG_WORKFLOWS.md)
+* ⚡ [High-Throughput Batch Dequeue Guide](BATCH_INGESTION.md)
+* ⏱️ [Sliding-Window Rate Limiting Guide](RATE_LIMITING.md)
+* 🍃 [Spring Boot 3 Deep-Dive](SPRING_BOOT.md)
+* 📊 [Observability & Telemetry Guide](OBSERVABILITY.md)
