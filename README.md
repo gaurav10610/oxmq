@@ -1,4 +1,8 @@
-# 🐂 OxMQ
+<p align="center">
+  <img src="docs/assets/oxmq-icon.png" alt="OxMQ Logo" width="160" style="border-radius: 24px;">
+</p>
+
+<h1 align="center" style="font-size: 2.8rem; font-weight: 800; margin-top: 0.5rem; margin-bottom: 0.5rem; letter-spacing: -0.5px;">OxMQ</h1>
 
 <p align="center">
   <b>High-Performance, Virtual Thread-Native Distributed Job Queue &amp; DAG Workflow Engine for Java 21+</b><br/>
