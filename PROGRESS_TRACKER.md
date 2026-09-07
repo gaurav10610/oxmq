@@ -16,7 +16,7 @@
 | **M3: DAG Workflows & Rate Limiting** | `FlowProducer` parent-child trees, sliding-window rate limiter, pause/resume/clean | 🟢 Done | `100%` | `v0.3.0` |
 | **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
 | **M5: Real-World Examples & Recipes** | 8 modular sub-projects in `oxmq-examples` covering Standalone, Rate Limiting, Retries, DAGs, Batch Ingestion, Scheduled, Progress, Spring Boot 3 | 🟢 Done | `100%` | `v0.5.0` |
-| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, CI/CD, Documentation & SEO optimization, Maven Central readiness, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
+| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, Documentation & SEO optimization, Maven Central readiness, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
 
 ---
 
@@ -37,7 +37,7 @@
 - [x] `[SETUP-001]` Root multi-module `pom.xml` configured with Java 21 LTS baseline.
 - [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples`.
 - [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config onboarding.
-- [x] `[SETUP-004]` Apache 2.0 `LICENSE`, `.gitignore`, and GitHub Actions CI workflow (`.github/workflows/ci.yml`).
+- [x] `[SETUP-004]` Apache 2.0 `LICENSE` and `.gitignore` repository baseline.
 
 ### Phase 2: Redis Engine & Atomic Lua Scripts
 - [x] `[REDIS-001]` `RedisConnectionManager` with Standalone, Cluster, Sentinel, and Pooling support.
@@ -106,7 +106,6 @@
 
 * 🐳 **`docker-compose.yml`**: Turn-key local stack with Redis 7, Bull-Board Web UI, Prometheus, and Grafana.
 * 📊 **Grafana Dashboard (`docker/grafana/dashboards/oxmq-dashboard.json`)**: Pre-provisioned metrics dashboard for throughput, p99 latency, gauges, and error rates.
-* ⚙️ **GitHub Actions CI (`.github/workflows/ci.yml`)**: Automated multi-OS (Ubuntu, macOS) and multi-JDK (Java 21, Java 22) matrix against live Redis service.
 * 🤝 **Community Governance**: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, Issue & PR templates.
 
 ---

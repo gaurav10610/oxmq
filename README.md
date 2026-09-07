@@ -10,7 +10,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/gaurav10610/oxmq/ci.yml?branch=develop&label=CI%20Build" alt="CI Status"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/21/"><img src="https://img.shields.io/badge/Java-21%2B%20LTS-orange.svg" alt="Java 21"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-6.2%2B%20%7C%207.x-red.svg" alt="Redis"></a>

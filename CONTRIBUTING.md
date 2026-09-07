@@ -109,7 +109,7 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 1. Push your changes to your feature branch in your fork.
 2. Open a Pull Request targeting the `develop` branch of `gaurav10610/oxmq`.
 3. Complete the [Pull Request Template](.github/PULL_REQUEST_TEMPLATE.md).
-4. Ensure all CI checks (multi-OS Java 21 / 22 matrix) pass cleanly.
+4. Ensure all unit and integration tests pass cleanly (`mvn clean test`).
 5. Address code review feedback promptly.
 
 ---

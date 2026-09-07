@@ -88,7 +88,6 @@ gantt
 * **Deliverables:**
   * JMH microbenchmarking suite (`oxmq-benchmarks`).
   * Multi-node Redis Sentinel & Cluster soak tests.
-  * GitHub Actions CI pipeline testing across JDK 21 and Redis 7.
   * Maven Central publication (`io.oxmq:oxmq-core`, `io.oxmq:oxmq-spring-boot-starter`).
 
 ---
