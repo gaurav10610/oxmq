@@ -16,14 +16,14 @@
 | **M3: DAG Workflows & Rate Limiting** | `FlowProducer` parent-child trees, sliding-window rate limiter, pause/resume/clean | 🟢 Done | `100%` | `v0.3.0` |
 | **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
 | **M5: Flagship Showcase Application** | `CloudBridge` multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web dashboard, `FlowProducer` DAGs, and Virtual Threads | 🟢 Done | `100%` | `v0.5.0` |
-| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, Documentation & SEO optimization, Maven Central readiness, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
+| **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, Documentation & SEO optimization, GitHub Release `v1.0.0` with packaged JAR artifacts, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
 
 ---
 
 ## 2. Module Implementation Matrix
 
 | Module | Core Purpose | Dependencies | Test Coverage | Status |
-| :--- | :--- | :--- | :---: | :---: |
+| :--- | :--- | :--- | :--- | :---: |
 | **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration (100% Passing) | 🟢 Operational |
 | **`oxmq-spring-boot-starter`** | Spring Boot 3.x Auto-configuration, `@OxmqListener`, Actuator | Spring Boot 3.x, Spring Context, `oxmq-core` | Unit & Smoke | 🟢 Operational |
 | **`oxmq-benchmarks`** | JMH performance microbenchmarks for enqueue, dequeue, latency | JMH Core & Annotations, `oxmq-core` | Benchmark Suite | 🟢 Operational |

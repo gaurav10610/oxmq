@@ -20,7 +20,7 @@ gantt
     M4 - Batch Dequeue & QueueEvents Pub/Sub    :done, 2026-09-07, 2026-09-08
     section Real-World Recipes & GA
     M5 - Production Recipes & Spring Boot 3     :done, 2026-09-08, 2026-09-09
-    M6 - JMH Benchmarking, CI & 1.0.0 GA        :active, 2026-09-09, 2026-09-15
+    M6 - JMH Benchmarking, CI & 1.0.0 GA        :done, 2026-09-09, 2026-09-09
 ```
 
 ---
@@ -30,7 +30,7 @@ gantt
 ### ✅ Milestone 1: Foundation & Redis Wire-Compatibility (`v0.1.0`)
 * **Goal:** Multi-module Maven setup, Lettuce Redis transport, and BullMQ v5 compatible atomic Lua scripts.
 * **Deliverables:**
-  * Multi-module project setup (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples`).
+  * Multi-module project setup (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `cloudbridge`).
   * Atomic Lua scripts: `addJob.lua`, `moveToActive.lua`, `moveToFinished.lua`, `retryJob.lua`, `extendLock.lua`, `cleanQueue.lua`, `pauseQueue.lua`, `rateLimit.lua`, `obliterate.lua`.
   * `Queue<T>`, `Worker<T>`, and `Job<T>` builder APIs.
   * Jackson JSON serialization engine supporting Java 21 Records and JSR-310 dates.
@@ -81,12 +81,13 @@ gantt
 
 ---
 
-### 🚀 Milestone 6: Hardening, Benchmarking & 1.0.0 GA (`v1.0.0`)
+### ✅ Milestone 6: Hardening, Benchmarking & 1.0.0 GA (`v1.0.0`)
 * **Goal:** Production validation, high-throughput microbenchmarks, and official release.
 * **Deliverables:**
   * JMH microbenchmarking suite (`oxmq-benchmarks`).
   * Multi-node Redis Sentinel & Cluster soak tests.
-  * Maven Central publication (`io.oxmq:oxmq-core`, `io.oxmq:oxmq-spring-boot-starter`).
+  * Official GitHub Release `v1.0.0` with packaged JAR artifacts.
+  * Comprehensive developer guides, visual animations, and turn-key Docker compose stack.
 
 ---
 
