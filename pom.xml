@@ -56,7 +56,7 @@
         <module>oxmq-core</module>
         <module>oxmq-spring-boot-starter</module>
         <module>oxmq-benchmarks</module>
-        <module>cloudbridge</module>
+        <module>oxmq-examples</module>
     </modules>
 
     <dependencyManagement>

@@ -275,9 +275,9 @@ flowProducer.add(parentJob);
 
 ---
 
-## 🎮 Flagship Showcase Application: `CloudBridge` (`cloudbridge/`)
+## 🎮 Flagship Showcase Application: `CloudBridge` (`oxmq-examples/cloudbridge/`)
 
-[`cloudbridge`](cloudbridge/README.md) is a production-grade multi-cloud asset backup and sync application demonstrating 100% of OxMQ's capabilities in a unified real-world application:
+[`cloudbridge`](oxmq-examples/cloudbridge/README.md) is a production-grade multi-cloud asset backup and sync application demonstrating 100% of OxMQ's capabilities in a unified real-world application:
 * **Automated Cloud Backup Pipeline:** Scans repository file trees from **GitHub** $\rightarrow$ streams parallel file uploads to **Dropbox** (API v2) and **Box** (Content API) $\rightarrow$ compiles a parent cryptographic `SyncManifest`.
 * **Parent-Child DAG Workflows (`FlowProducer`):** Parent orchestration task automatically fans out parallel child file transfers and resolves only when all transfers finish.
 * **Java 21 Virtual Threads (Loom):** Worker concurrency running on lightweight Virtual Threads handling concurrent network streaming I/O with zero carrier-thread starvation.
@@ -288,7 +288,7 @@ flowProducer.add(parentJob);
 docker compose up -d
 
 # 2. Start CloudBridge
-./mvnw spring-boot:run -pl cloudbridge
+./mvnw spring-boot:run -pl oxmq-examples/cloudbridge
 
 # 3. Open Web Dashboard
 open http://localhost:8080

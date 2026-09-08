@@ -27,7 +27,8 @@
 | **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration (100% Passing) | 🟢 Operational |
 | **`oxmq-spring-boot-starter`** | Spring Boot 3.x Auto-configuration, `@OxmqListener`, Actuator | Spring Boot 3.x, Spring Context, `oxmq-core` | Unit & Smoke | 🟢 Operational |
 | **`oxmq-benchmarks`** | JMH performance microbenchmarks for enqueue, dequeue, latency | JMH Core & Annotations, `oxmq-core` | Benchmark Suite | 🟢 Operational |
-| **`cloudbridge`** | Flagship multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web UI & live DAG graph | Spring Web, Spring Actuator, `oxmq-spring-boot-starter` | E2E Integration & Web Tests | 🟢 Operational |
+| **`oxmq-examples/cloudbridge`** | Flagship multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web UI & live DAG graph | Spring Web, Spring Actuator, `oxmq-spring-boot-starter` | E2E Integration & Web Tests | 🟢 Operational |
+| **`oxmq-examples`** | Parent aggregator module for showcase applications | Maven POM | Aggregator | 🟢 Operational |
 
 ---
 
@@ -35,7 +36,7 @@
 
 ### Phase 1: Build & Infrastructure
 - [x] `[SETUP-001]` Root multi-module `pom.xml` configured with Java 21 LTS baseline.
-- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `cloudbridge`.
+- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples/cloudbridge`.
 - [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config onboarding.
 - [x] `[SETUP-004]` Apache 2.0 `LICENSE` and `.gitignore` repository baseline.
 
@@ -90,7 +91,7 @@
 - [x] `[SPRG-003]` `OxmqListenerAnnotationBeanPostProcessor` for declarative worker lifecycle management.
 - [x] `[SPRG-004]` Spring Boot Actuator `OxmqHealthIndicator`.
 
-### Phase 8: Flagship Showcase Application (`cloudbridge/`)
+### Phase 8: Flagship Showcase Application (`oxmq-examples/cloudbridge/`)
 - [x] `[EXMP-001]` Multi-cloud asset pipeline syncing GitHub repositories to Dropbox & Box.
 - [x] `[EXMP-002]` Parent-Child DAG workflow via `FlowProducer` (`WAITING_CHILDREN` fan-out and resolution).
 - [x] `[EXMP-003]` High-concurrency file transfer workers running on Java 21 Virtual Threads (`@OxmqListener`).

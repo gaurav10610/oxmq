@@ -45,9 +45,9 @@ docker compose up -d
 
 ### 2. Run CloudBridge
 ```bash
-./mvnw spring-boot:run -pl cloudbridge
+./mvnw spring-boot:run -pl oxmq-examples/cloudbridge
 ```
-*(Or run `java -jar cloudbridge/target/cloudbridge-1.0.0.jar`)*
+*(Or run `java -jar oxmq-examples/cloudbridge/target/cloudbridge-1.0.0-SNAPSHOT.jar`)*
 
 ### 3. Open the Web Dashboard
 Navigate to 👉 **`http://localhost:8080`** in your browser:
@@ -68,7 +68,7 @@ Navigate to 👉 **`http://localhost:8080`** in your browser:
 ## 🧪 Automated Testing
 Run the integration test suite verifying end-to-end DAG execution:
 ```bash
-mvn test -pl cloudbridge
+mvn test -pl oxmq-examples/cloudbridge
 ```
 Tests verify that:
 - The Spring Boot 3 application context initializes with OxMQ autoconfiguration.

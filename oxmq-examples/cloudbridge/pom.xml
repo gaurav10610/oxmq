@@ -6,8 +6,9 @@
 
     <parent>
         <groupId>io.oxmq</groupId>
-        <artifactId>oxmq-parent</artifactId>
+        <artifactId>oxmq-examples</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>cloudbridge</artifactId>

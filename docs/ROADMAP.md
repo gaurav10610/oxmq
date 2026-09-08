@@ -30,7 +30,7 @@ gantt
 ### ✅ Milestone 1: Foundation & Redis Wire-Compatibility (`v0.1.0`)
 * **Goal:** Multi-module Maven setup, Lettuce Redis transport, and BullMQ v5 compatible atomic Lua scripts.
 * **Deliverables:**
-  * Multi-module project setup (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `cloudbridge`).
+  * Multi-module project setup (`oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples/cloudbridge`).
   * Atomic Lua scripts: `addJob.lua`, `moveToActive.lua`, `moveToFinished.lua`, `retryJob.lua`, `extendLock.lua`, `cleanQueue.lua`, `pauseQueue.lua`, `rateLimit.lua`, `obliterate.lua`.
   * `Queue<T>`, `Worker<T>`, and `Job<T>` builder APIs.
   * Jackson JSON serialization engine supporting Java 21 Records and JSR-310 dates.

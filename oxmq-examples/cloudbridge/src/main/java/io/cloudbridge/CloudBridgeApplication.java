@@ -27,7 +27,13 @@ public class CloudBridgeApplication {
     }
 
     private static void loadDotEnvIfPresent() {
-        File[] candidates = new File[] { new File(".env"), new File("cloudbridge/.env"), new File("../.env") };
+        File[] candidates = new File[] {
+            new File(".env"),
+            new File("oxmq-examples/cloudbridge/.env"),
+            new File("cloudbridge/.env"),
+            new File("../.env"),
+            new File("../../.env")
+        };
         for (File file : candidates) {
             if (file.exists() && file.isFile()) {
                 try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
