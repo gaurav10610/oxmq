@@ -60,6 +60,20 @@ public class RedisConnectionManager implements Closeable {
     }
 
     /**
+     * Convenience method to get synchronous Redis commands.
+     */
+    public io.lettuce.core.api.sync.RedisCommands<String, String> sync() {
+        return getCommandConnection().sync();
+    }
+
+    /**
+     * Convenience method to get asynchronous Redis commands.
+     */
+    public io.lettuce.core.api.async.RedisAsyncCommands<String, String> async() {
+        return getCommandConnection().async();
+    }
+
+    /**
      * Gets or creates a reusable Pub/Sub connection.
      */
     public StatefulRedisPubSubConnection<String, String> getPubSubConnection() {

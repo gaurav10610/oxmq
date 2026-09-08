@@ -3,7 +3,9 @@ package io.oxmq.spring;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.oxmq.FlowProducer;
 import io.oxmq.OxmqQueue;
+import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.serializer.JacksonJobSerializer;
@@ -31,6 +33,18 @@ public class OxmqAutoConfiguration {
     public RedisClient oxmqRedisClient(OxmqProperties properties) {
         String uri = properties.getRedis().getUri();
         return RedisClient.create(RedisURI.create(uri));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public RedisConnectionManager oxmqConnectionManager(RedisClient redisClient) {
+        return new RedisConnectionManager(redisClient);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public FlowProducer oxmqFlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
+        return new FlowProducer(connectionManager, scriptManager, serializer);
     }
 
     @Bean

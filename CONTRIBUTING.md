@@ -55,15 +55,7 @@ oxmq/
 ├── oxmq-core/                  # Core Lua scripts, connection management, Virtual Thread workers, FlowProducer
 ├── oxmq-spring-boot-starter/   # Spring Boot 3 auto-configuration, @OxmqListener, Actuator health
 ├── oxmq-benchmarks/            # JMH microbenchmarks for throughput & latency
-├── oxmq-examples/              # 8 runnable, standalone showcase recipes
-│   ├── oxmq-example-standalone/
-│   ├── oxmq-example-rate-limiting/
-│   ├── oxmq-example-dag-workflows/
-│   ├── oxmq-example-batch-ingestion/
-│   ├── oxmq-example-retries-dlq/
-│   ├── oxmq-example-scheduled-dedup/
-│   ├── oxmq-example-progress-events/
-│   └── oxmq-example-spring-boot/
+├── cloudbridge/                # Flagship showcase app: Multi-cloud asset sync (GitHub, Dropbox, Box)
 └── docs/                       # Technical architecture, guides, and comparison docs
 ```
 

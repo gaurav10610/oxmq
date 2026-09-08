@@ -58,7 +58,10 @@ public class FlowProducer implements Closeable {
         String prefix = "bull:" + queueName;
         RedisCommands<String, String> sync = conn.sync();
 
-        String jobId = String.valueOf(sync.incr(prefix + ":id"));
+        String customJobId = node.getOpts() != null ? node.getOpts().getJobId() : null;
+        String jobId = (customJobId != null && !customJobId.isBlank())
+                ? customJobId
+                : String.valueOf(sync.incr(prefix + ":id"));
         String nodeKey = prefix + ":" + jobId;
         long now = System.currentTimeMillis();
 

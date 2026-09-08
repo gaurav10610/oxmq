@@ -1,0 +1,28 @@
+server:
+  port: 8080
+
+oxmq:
+  enabled: true
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+cloudbridge:
+  github:
+    client-id: ${GITHUB_CLIENT_ID:Ov23likKbnLd1O82fTLt}
+    client-secret: ${GITHUB_CLIENT_SECRET:bd7b5c8f325bd95b07f40b27fb916262ebc15700}
+    token: ${GITHUB_TOKEN:}
+  dropbox:
+    client-id: ${DROPBOX_CLIENT_ID:k1t47qqkec43quu}
+    client-secret: ${DROPBOX_CLIENT_SECRET:kb5qze9eggvsgsc}
+    token: ${DROPBOX_TOKEN:}
+  box:
+    client-id: ${BOX_CLIENT_ID:mf2oi4c60vuomvcwxkkbs9y4x2293988}
+    client-secret: ${BOX_CLIENT_SECRET:sUrtXsD5IjKTMyYoTs26CmNuqfK9Ay4Z}
+    token: ${BOX_TOKEN:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

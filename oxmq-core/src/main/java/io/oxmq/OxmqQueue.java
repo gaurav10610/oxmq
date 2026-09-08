@@ -152,6 +152,21 @@ public class OxmqQueue<T> implements Queue<T> {
         if (failedStr != null) job.setFailedReason(failedStr);
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
 
+        try {
+            Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
+            if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                Map<String, Object> childVals = new java.util.HashMap<>();
+                for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                    try {
+                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Map.class));
+                    } catch (Exception ex) {
+                        childVals.put(entry.getKey(), entry.getValue());
+                    }
+                }
+                job.setChildrenValues(childVals);
+            }
+        } catch (Exception ignored) {}
+
         return job;
     }
 
