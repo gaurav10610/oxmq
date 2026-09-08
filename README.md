@@ -34,8 +34,8 @@ Every major engineering ecosystem has an undisputed gold standard for background
 **What about Java?**  
 Until now, Java microservices have been stuck between three painful compromises:
 1. **Overkill Event Streams (Kafka / RabbitMQ):** Event streaming brokers excel at raw pub/sub, but **lack native job lifecycle primitives**: no per-job delayed scheduling, no individual job retries with exponential backoff, no parent-child DAG completion tracking, no step progress reporting, and no out-of-the-box management dashboard.
-2. **Relational Database Schedulers (Quartz, db-scheduler):** Rely on polling relational tables (`SELECT ... FOR UPDATE`) every 1–5 seconds, causing severe SQL lock contention, high database load, and sluggish throughput ($< 1,000\text{ ops/s}$).
-3. **Commercial Paywalls (JobRunr Pro):** Essential enterprise features like Parent-Child DAG workflows, sliding-window rate limiting, and dynamic batching are locked behind expensive commercial paywalls ($99+/month).
+2. **Relational Database Schedulers (Quartz, db-scheduler):** Rely on polling relational tables (`SELECT ... FOR UPDATE`) on periodic intervals, introducing database lock contention, write amplification, and polling latency under high concurrent load.
+3. **Commercial Paywalls (JobRunr Pro):** Essential enterprise features like Parent-Child DAG workflows, sliding-window rate limiting, and dynamic batching are locked behind commercial paywalls.
 4. **OS Thread Starvation:** Traditional thread pools consume 1MB+ of stack per thread, causing JVMs to hit resource limits when executing hundreds of blocking HTTP, database, or LLM calls.
 
 ---
@@ -46,7 +46,7 @@ Until now, Java microservices have been stuck between three painful compromises:
 
 * **🧵 Java 21 Virtual Threads (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** per JVM node with $< 2\text{KB}$ memory per task and zero OS carrier thread blocking.
 * **💯 100% Free & Open Source (Apache 2.0):** Complex Parent-Child DAG Workflows, Sliding-Window Token-Bucket Rate Limiting, Dynamic Queues, and Sub-second Delays with zero paywalls.
-* **⚡ High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis roundtrip for high-performance database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts at $\ge 50,000\text{ ops/s}$).
+* **⚡ High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in a single Redis roundtrip via Lua script, eliminating per-task network roundtrips for high-volume database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
 * **🌐 BullMQ Wire-Compatibility:** Uses BullMQ's standard Redis schema for seamless polyglot interoperability (Java $\leftrightarrow$ Node.js $\leftrightarrow$ Python) and **instant compatibility with the [Bull-Board Web UI](https://github.com/felixmosh/bull-board)**.
 * **🍃 Zero-Config Spring Boot 3 Starter:** Declarative `@OxmqListener` annotations, automated worker lifecycle management, Actuator health checks, and native Micrometer telemetry out-of-the-box.
 
@@ -58,7 +58,7 @@ Until now, Java microservices have been stuck between three painful compromises:
 | :--- | :--- | :--- |
 | **🚀 Virtual Thread Concurrency** | Java 21 Project Loom native dispatcher (`OxmqWorker`) | **10,000+ concurrent I/O workers** on a single node with $< 2\text{KB}$ memory per task and zero OS thread pool starvation. |
 | **🌲 Parent-Child DAG Workflows** | Atomic dependency tree resolution via `FlowProducer` | **100% Free & Open Source**: Parent jobs await parallel child completion with automatic return value propagation. |
-| **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **$\ge 50,000\text{ ops/s}$ bulk ingestion** for ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake in 1 Redis roundtrip. |
+| **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **Amortized network roundtrips** for high-volume batch ingestion into ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake. |
 | **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling & custom `jobId` hashing | Millisecond-accurate delayed job triggers and debounced deduplication windows to prevent duplicate execution. |
@@ -330,12 +330,13 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 
 | Capability | 🐂 **OxMQ** (Java 21+) | 💼 **JobRunr** (Java) | ⏱️ **Quartz / DB-Scheduler** | 🐰 **RabbitMQ** | 📨 **Apache Kafka** |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Concurrency** | **Virtual Threads (Loom)** | Platform Threads (OS) | Platform Threads (OS) | Erlang Actors | Thread-per-partition |
-| **Parent-Child DAGs** | ✅ **100% Free (Apache 2.0)** | ❌ **Paywalled ($99+/mo)** | ❌ None | ❌ Manual | ❌ External engine |
-| **Rate Limiting** | ✅ **Built-in Token Bucket** | ❌ **Paywalled** | ❌ None | ⚠️ Plugin | ❌ None |
-| **Batch Dequeue** | ✅ **$\ge 50,000$ ops/s** | ❌ None | ❌ None | ⚠️ Prefetch | ✅ Native batching |
-| **Sub-Second Delays** | ✅ **Atomic ZSET (<1ms)** | ⚠️ Polling lag | ❌ 1–5s DB poll lag | ⚠️ Plugin trick | ❌ None |
-| **Web Dashboard** | ✅ **Bull-Board UI** | ✅ JobRunr Dashboard | ❌ None | ✅ RabbitMQ Admin | ⚠️ Third-party |
+| **Concurrency Model** | **Virtual Threads (Loom)** | Platform Threads (OS) | Platform Threads (OS) | Erlang Actors | Thread-per-partition |
+| **Primary Workload** | **Distributed Job Lifecycle** | Background Job Processing | Scheduled Jobs & Cron | AMQP Message Routing | Event Streaming & Commit Log |
+| **Parent-Child DAGs** | ✅ **Built-in (Apache 2.0)** | ❌ **JobRunr Pro Feature** | ❌ None | ❌ Manual orchestration | ❌ External engine (Streams/Flink) |
+| **Rate Limiting** | ✅ **Built-in Token Bucket** | ❌ **JobRunr Pro Feature** | ❌ None | ⚠️ Via plugin | ❌ Broker-level quotas only |
+| **Batch Dequeue** | ✅ **Atomic Bulk Lua Pop** | ❌ 1-by-1 processing | ❌ None | ⚠️ Prefetch only | ✅ Native batch polling |
+| **Sub-Second Delays** | ✅ **Atomic Redis ZSET** | ⚠️ Periodic poll interval | ❌ Periodic DB poll lag | ⚠️ Dead-letter TTL / Plugin | ❌ Not supported natively |
+| **Web Dashboard** | ✅ **Bull-Board UI (Native)** | ✅ JobRunr Dashboard | ❌ None (Third-party only) | ✅ RabbitMQ Admin UI | ⚠️ Third-party (Kafdrop) |
 | **License** | **Apache 2.0 (100% Free)** | LGPLv3 / **Commercial Pro** | Apache 2.0 | MPL 2.0 | Apache 2.0 |
 
 *See our full [Architectural Comparison Guide](docs/COMPARISON.md) for deep dives on memory footprints, throughput benchmarks, and polyglot architectures.*

@@ -28,7 +28,7 @@ To build the **fastest, most developer-friendly, 100% open-source distributed jo
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Primary Storage** | JDBC / RDBMS | JDBC / RDBMS | Storage-Agnostic | Redis | **Pure Redis (6.2+ / 7.x)** |
 | **Execution Latency** | Polling (1-5s) | Polling (1-5s) | Polling (1-5s) | Sub-millisecond | **Sub-millisecond (&lt; 1ms)** |
-| **Max Throughput** | ~ 400 ops/s | ~ 850 ops/s | ~ 2,200 ops/s | ~ 18,000 ops/s | **&ge; 25,000 ops/s** |
+| **Throughput Bottleneck** | DB connection pool & SQL lock contention | DB connection pool & SQL lock contention | Storage backend IOPS & OS thread pool | Redis single-roundtrip latency | **Optimized via In-Memory Lua Scripts & Virtual Threads** |
 | **Parent-Child DAGs** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ No | **✅ 100% Free / Native** |
 | **Rate Limiting** | ❌ No | ❌ No | 💳 **Paid Pro Only** | ❌ Manual | **✅ 100% Free (Sliding Window)** |
 | **Web Dashboard** | ❌ None | ❌ None | ✅ Included | ❌ None | **✅ Embedded + Bull-Board UI** |
