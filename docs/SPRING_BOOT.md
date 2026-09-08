@@ -1,17 +1,38 @@
 # 🍃 Spring Boot 3.x Starter Guide
+### *Declarative Distributed Jobs & DAG Workflows for Spring Boot 3*
 
-`oxmq-spring-boot-starter` provides zero-config integration for Spring Boot 3 microservices with declarative listener annotations, Actuator health checks, and Micrometer telemetry.
+`oxmq-spring-boot-starter` delivers zero-configuration integration for Spring Boot 3 microservices with declarative `@OxmqListener` annotations, automated Virtual Thread dispatching, Spring Boot Actuator health checks, and native Micrometer telemetry.
 
 ---
 
-## 📦 1. Add Dependency
+## 📦 1. Installation
 
+### Maven (`pom.xml`)
 ```xml
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
 <dependency>
-    <groupId>io.oxmq</groupId>
+    <groupId>com.github.gaurav10610.oxmq</groupId>
     <artifactId>oxmq-spring-boot-starter</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>v1.0.0</version>
 </dependency>
+```
+
+### Gradle (`build.gradle.kts`)
+```kotlin
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
+
+dependencies {
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:v1.0.0")
+}
 ```
 
 ---
@@ -20,20 +41,20 @@
 
 ```yaml
 oxmq:
-  # Redis Connection URI
+  # Redis Connection URI (supports standalone, Sentinel, and Cluster)
   redis:
     uri: ${OXMQ_REDIS_URI:redis://localhost:6379}
   
-  # Default concurrency for workers (Virtual Threads)
+  # Default concurrency per worker queue
   default-concurrency: 50
   
-  # Enable Java 21 Project Loom Virtual Threads
+  # Enable Java 21 Project Loom Virtual Threads (true by default)
   virtual-threads: true
   
-  # Enable Micrometer metric binding
+  # Automatically bind timers, counters, and gauges to Micrometer MeterRegistry
   metrics-enabled: true
 
-# Spring Boot Actuator Endpoints
+# Expose Actuator Endpoints
 management:
   endpoints:
     web:
@@ -46,19 +67,24 @@ management:
 
 ---
 
-## 🛠️ 3. Declaring Queues as Spring Beans
+## 🛠️ 3. Declaring Strongly-Typed Queue Beans
 
 Declare your strongly-typed `OxmqQueue` beans in any `@Configuration` class:
 
 ```java
+import io.oxmq.OxmqQueue;
+import io.oxmq.client.RedisConnectionManager;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
 @Configuration
 public class QueueConfig {
 
     @Bean
-    public OxmqQueue<OrderEvent> orderQueue(RedisClient redisClient) {
+    public OxmqQueue<OrderEvent> orderQueue(RedisConnectionManager connectionManager) {
         return OxmqQueue.<OrderEvent>builder()
                 .name("order-events")
-                .redisClient(redisClient)
+                .connectionManager(connectionManager)
                 .payloadClass(OrderEvent.class)
                 .build();
     }
@@ -67,38 +93,44 @@ public class QueueConfig {
 
 ---
 
-## 👂 4. Declarative Consumers with `@OxmqListener`
+## 🎧 4. Declarative Worker Methods (`@OxmqListener`)
 
-Annotate any Spring bean method with `@OxmqListener`:
+Annotate any Spring bean method with `@OxmqListener` to automatically register a background worker executing on Java 21 Virtual Threads:
 
 ```java
+import io.oxmq.model.Job;
+import io.oxmq.spring.annotation.OxmqListener;
+import org.springframework.stereotype.Component;
+
 @Component
 public class OrderProcessingService {
 
-    @OxmqListener(queue = "order-events", concurrency = 100)
-    public String processOrder(Job<OrderEvent> job) {
+    @OxmqListener(
+        queue = "order-events",
+        concurrency = 25,
+        rateLimitMax = 100,
+        rateLimitDurationMs = 60000
+    )
+    public OrderResult processOrder(Job<OrderEvent> job) {
         OrderEvent event = job.getData();
-        job.updateProgress(50);
-        job.log("Processing order: " + event.orderId());
+        job.updateProgress(20);
         
-        // Execute business logic (e.g. database updates, payment calls)
-        return "ORDER_PROCESSED";
+        // Blocking payment API call - runs on Virtual Thread!
+        PaymentConfirmation confirmation = paymentGateway.charge(event.amount());
+        job.updateProgress(80);
+        
+        return new OrderResult(event.orderId(), "COMPLETED", confirmation.id());
     }
 }
 ```
 
-### Supported Method Signatures
-- `void process(Job<T> job)`
-- `String process(Job<T> job)` (return value is serialized as job result)
-- `Map<String, Object> process(Job<T> job)`
-
 ---
 
-## 🩺 5. Actuator Health & Metrics
+## 🏥 5. Actuator Health Indicator
 
-### Health Endpoint (`/actuator/health`)
-When `oxmq-spring-boot-starter` is present, it registers an `OxmqHealthIndicator` validating connectivity to Redis:
+OxMQ automatically registers an `OxmqHealthIndicator` with Spring Boot Actuator.
 
+Access `GET /actuator/health`:
 ```json
 {
   "status": "UP",
@@ -106,16 +138,22 @@ When `oxmq-spring-boot-starter` is present, it registers an `OxmqHealthIndicator
     "oxmq": {
       "status": "UP",
       "details": {
-        "redis": "PONG",
-        "engine": "OxMQ v1.0.0 (Virtual Threads Enabled)"
+        "redis": "Connected (PONG)",
+        "activeWorkers": 2,
+        "queues": ["order-events", "sync-orchestration-queue"]
       }
     }
   }
 }
 ```
 
-### Metrics Endpoint (`/actuator/metrics`)
-Query OxMQ metrics via Actuator:
-* `/actuator/metrics/oxmq.jobs.completed`
-* `/actuator/metrics/oxmq.jobs.failed`
-* `/actuator/metrics/oxmq.job.duration`
+---
+
+## 📊 6. Micrometer & Prometheus Metrics
+
+All OxMQ workers automatically publish metrics to the Spring `MeterRegistry`:
+- `oxmq.jobs.enqueued`: Total jobs added to queue.
+- `oxmq.jobs.completed`: Total successfully completed jobs.
+- `oxmq.jobs.failed`: Total failed jobs.
+- `oxmq.jobs.active`: Current active jobs running in Virtual Threads.
+- `oxmq.job.duration`: Execution duration timer with `p50`, `p95`, `p99` percentiles.
