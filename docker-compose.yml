@@ -18,17 +18,12 @@ services:
 
   # 2. Bull-Board Web UI (Real-Time Queue Management)
   bull-board:
-    image: node:20-alpine
+    image: ghcr.io/felixmosh/bull-board:latest
     container_name: oxmq-bull-board
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    command: >
-      sh -c "npm install -g @bull-board/cli @bull-board/api @bull-board/express ioredis &&
-             bull-board --redis redis://redis:6379 --port 3000 --queues notifications,outgoing-webhooks,video-chunks,audit-logs,api-prompts"
+    command: ["--redis", "redis://redis:6379", "--queues", "sync-orchestration-queue,file-transfer-queue", "--prefix", "bull"]
     depends_on:
       redis:
         condition: service_healthy

@@ -65,13 +65,46 @@ public class OxmqProperties {
          * Redis URI connection string (e.g., redis://localhost:6379 or rediss://...).
          */
         private String uri = "redis://localhost:6379";
+        private String host;
+        private int port = 6379;
+        private String password;
 
         public String getUri() {
+            if (host != null && !host.isBlank()) {
+                if (password != null && !password.isBlank()) {
+                    return "redis://:" + password + "@" + host + ":" + port;
+                }
+                return "redis://" + host + ":" + port;
+            }
             return uri;
         }
 
         public void setUri(String uri) {
             this.uri = uri;
+        }
+
+        public String getHost() {
+            return host;
+        }
+
+        public void setHost(String host) {
+            this.host = host;
+        }
+
+        public int getPort() {
+            return port;
+        }
+
+        public void setPort(int port) {
+            this.port = port;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
         }
     }
 }

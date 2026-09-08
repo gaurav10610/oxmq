@@ -37,3 +37,6 @@ out/
 *.log
 *.tmp
 scratch/
+.env
+*.env
+
