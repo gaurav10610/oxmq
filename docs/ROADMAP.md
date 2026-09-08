@@ -68,18 +68,16 @@ gantt
 
 ---
 
-### ✅ Milestone 5: Real-World Recipes & Spring Boot 3 (`v0.5.0`)
-* **Goal:** Production-grade developer examples and seamless Spring Boot 3 auto-configuration.
+### ✅ Milestone 5: Flagship Showcase & Spring Boot 3 (`v0.5.0`)
+* **Goal:** Production-grade developer showcase and seamless Spring Boot 3 auto-configuration.
 * **Deliverables:**
   * Spring Boot 3 Starter with `@EnableOxmq`, declarative `@OxmqListener`, and Actuator health indicator.
-  * 7 runnable recipes in `oxmq-examples/`:
-    1. Rate Limiting & Throttling (Stripe / OpenAI limits).
-    2. Retries, Exponential Backoff & DLQ (Payment webhooks).
-    3. Parent-Child DAG Workflows (Media transcoding pipeline).
-    4. Batch Dequeue & Bulk Ingestion (ClickHouse / Elasticsearch / Postgres).
-    5. Scheduled Delays & Deduplication (Idempotent background tasks).
-    6. Real-Time Progress & Event Streaming (Live monitoring).
-    7. Spring Boot 3 REST Webhook App.
+  * Unified `cloudbridge` flagship application:
+    1. Multi-Cloud Asset Sync Pipeline (GitHub $\rightarrow$ Dropbox / Box).
+    2. Parent-Child DAG Workflows (`FlowProducer`) with automatic parent resolution upon child completion.
+    3. Concurrency on Java 21 Virtual Threads (Loom).
+    4. Real-time progress updates & per-child transfer state inspection.
+    5. Modern interactive web dashboard (`http://localhost:8080`) with embedded Bull-Board inspector.
 
 ---
 

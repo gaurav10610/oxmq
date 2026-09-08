@@ -9,6 +9,7 @@ import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.Job;
 import io.oxmq.serializer.JobSerializer;
 import io.oxmq.spring.OxmqProperties;
+import io.oxmq.spring.annotation.OxListener;
 import io.oxmq.spring.annotation.OxmqListener;
 import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
@@ -25,7 +26,7 @@ import org.springframework.core.MethodIntrospector;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 
 /**
- * Discovers beans with {@link OxmqListener} annotations and manages their worker lifecycles.
+ * Discovers beans with {@link OxmqListener} or {@link OxListener} annotations and manages their worker lifecycles.
  */
 public class OxmqListenerAnnotationBeanPostProcessor implements BeanPostProcessor, SmartLifecycle {
 
@@ -53,8 +54,24 @@ public class OxmqListenerAnnotationBeanPostProcessor implements BeanPostProcesso
     public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
         Class<?> targetClass = bean.getClass();
         var annotatedMethods = MethodIntrospector.selectMethods(targetClass,
-                (MethodIntrospector.MetadataLookup<OxmqListener>) method ->
-                        AnnotatedElementUtils.findMergedAnnotation(method, OxmqListener.class));
+                (MethodIntrospector.MetadataLookup<OxmqListener>) method -> {
+                    OxmqListener oxmqListener = AnnotatedElementUtils.findMergedAnnotation(method, OxmqListener.class);
+                    if (oxmqListener != null) return oxmqListener;
+                    OxListener oxListener = AnnotatedElementUtils.findMergedAnnotation(method, OxListener.class);
+                    if (oxListener != null) {
+                        return new OxmqListener() {
+                            public Class<? extends java.lang.annotation.Annotation> annotationType() { return OxmqListener.class; }
+                            public String queue() { return oxListener.queue(); }
+                            public int concurrency() { return oxListener.concurrency(); }
+                            public boolean virtualThreads() { return oxListener.virtualThreads() && oxListener.useVirtualThreads(); }
+                            public long lockDurationMs() { return oxListener.lockDurationMs(); }
+                            public long pollIntervalMs() { return oxListener.pollIntervalMs(); }
+                            public int rateLimitMax() { return oxListener.rateLimitMax(); }
+                            public long rateLimitDurationMs() { return oxListener.rateLimitDurationMs(); }
+                        };
+                    }
+                    return null;
+                });
 
         for (var entry : annotatedMethods.entrySet()) {
             Method method = entry.getKey();

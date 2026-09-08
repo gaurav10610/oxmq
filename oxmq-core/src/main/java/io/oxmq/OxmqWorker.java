@@ -321,6 +321,24 @@ public class OxmqWorker<T> implements Worker<T> {
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
 
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+            if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                Map<String, Object> childVals = new HashMap<>();
+                for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                    try {
+                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Map.class));
+                    } catch (Exception ex) {
+                        childVals.put(entry.getKey(), entry.getValue());
+                    }
+                }
+                job.setChildrenValues(childVals);
+            }
+        } catch (Exception e) {
+            log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
+        }
+
         job.setProgressUpdater((percentage, payload) -> {
             try {
                 RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();

@@ -213,18 +213,29 @@ public class NotificationWorker {
 
 ---
 
-## 📚 Real-World Recipes & Examples (`oxmq-examples/`)
+## 🎮 Flagship Showcase Application: `CloudBridge` (`cloudbridge/`)
 
-Runnable recipes covering production-grade patterns are organized into dedicated sub-projects in [`oxmq-examples/`](oxmq-examples/):
+`CloudBridge` is a fully-functional multi-cloud asset backup and sync pipeline demonstrating 100% of OxMQ's capabilities in a unified real-world application:
+* **Automated Cloud Backup Pipeline:** Scans repository file trees from **GitHub** $\rightarrow$ streams parallel backups to **Dropbox** and **Box** $\rightarrow$ compiles a parent cryptographic manifest.
+* **Parent-Child DAG Workflows (`FlowProducer`):** Parent orchestration task automatically enters `WAITING_CHILDREN`, fans out parallel child file transfer jobs, and resolves only when all children complete.
+* **Java 21 Virtual Threads (Loom):** Worker concurrency running on lightweight Virtual Threads handling concurrent network streaming I/O with zero carrier-thread starvation.
+* **Real-Time Interactive Web Dashboard (`http://localhost:8080`):** Modern dark-mode UI with animated progress bars, live DAG execution graph from Redis, and embedded Bull-Board inspector.
 
-1. **[Standalone Quickstart](oxmq-examples/oxmq-example-standalone/src/main/java/io/oxmq/example/standalone/StandaloneQuickstartApplication.java):** 5-line pure Java 21 producer and Virtual Thread consumer quickstart.
-2. **[Rate Limiting & Throttling](oxmq-examples/oxmq-example-rate-limiting/src/main/java/io/oxmq/example/ratelimit/RateLimitingExample.java):** Enforces sliding-window token-bucket limits to protect third-party APIs (e.g. OpenAI / Stripe rate limits).
-3. **[Retries, Exponential Backoff & DLQ](oxmq-examples/oxmq-example-retries-dlq/src/main/java/io/oxmq/example/retries/RetriesAndDlqExample.java):** Automatic retry calculation with jitter and permanent dead-letter queue routing.
-4. **[Parent-Child DAG Workflows](oxmq-examples/oxmq-example-dag-workflows/src/main/java/io/oxmq/example/dag/DagWorkflowExample.java):** Multi-stage media / ETL pipeline using `FlowProducer` where parent tasks await parallel child completion.
-5. **[Batch Dequeue & Bulk Ingestion](oxmq-examples/oxmq-example-batch-ingestion/src/main/java/io/oxmq/example/batch/BatchDatabaseIngestionExample.java):** Bulk popping up to 100 jobs at once for fast ClickHouse, Elasticsearch, or PostgreSQL ingestion.
-6. **[Scheduled Delays & Deduplication](oxmq-examples/oxmq-example-scheduled-dedup/src/main/java/io/oxmq/example/scheduled/ScheduledAndDedupExample.java):** Millisecond-accurate scheduling and custom `jobId` deduplication.
-7. **[Real-Time Progress & Event Streaming](oxmq-examples/oxmq-example-progress-events/src/main/java/io/oxmq/example/progress/ProgressAndEventsExample.java):** `QueueEvents` Pub/Sub listener for real-time lifecycle tracking.
-8. **[Spring Boot 3 Webhook Service](oxmq-examples/oxmq-example-spring-boot/src/main/java/io/oxmq/example/spring/SpringBootExampleApplication.java):** REST webhook dispatcher with `@OxmqListener` and Actuator health metrics.
+### Running CloudBridge
+
+1. **Start Redis & Bull-Board:**
+   ```bash
+   docker compose up -d
+   ```
+2. **Start the CloudBridge Application:**
+   ```bash
+   ./mvnw spring-boot:run -pl cloudbridge
+   ```
+3. **Open the Interactive Web Dashboard:**
+   Navigate to 👉 **`http://localhost:8080`**
+   * Click **"Start Sync Workflow (DAG)"**.
+   * Watch the parent job enter `WAITING_CHILDREN` while 8 child file transfers stream concurrently.
+   * View live queue state and metrics directly or switch to the **"Embedded Bull-Board"** tab.
 
 ---
 

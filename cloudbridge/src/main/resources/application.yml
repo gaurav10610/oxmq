@@ -1,0 +1,28 @@
+server:
+  port: 8080
+
+oxmq:
+  enabled: true
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+cloudbridge:
+  github:
+    client-id: ${GITHUB_CLIENT_ID:}
+    client-secret: ${GITHUB_CLIENT_SECRET:}
+    token: ${GITHUB_TOKEN:}
+  dropbox:
+    client-id: ${DROPBOX_CLIENT_ID:}
+    client-secret: ${DROPBOX_CLIENT_SECRET:}
+    token: ${DROPBOX_TOKEN:}
+  box:
+    client-id: ${BOX_CLIENT_ID:}
+    client-secret: ${BOX_CLIENT_SECRET:}
+    token: ${BOX_TOKEN:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
