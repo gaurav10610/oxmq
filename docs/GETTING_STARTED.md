@@ -208,3 +208,9 @@ public class BillingMicroservice {
 * 🍃 [Spring Boot 3 Deep-Dive](SPRING_BOOT.md)
 * 📊 [Observability & Telemetry Guide](OBSERVABILITY.md)
 * ⚖️ [OxMQ vs BullMQ, JobRunr, Quartz & Kafka Comparison](COMPARISON.md)
+
+---
+
+## 👤 Author & Maintainer
+
+OxMQ is architected and maintained by **[Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)** ([@gaurav10610](https://github.com/gaurav10610)).

@@ -1,6 +1,8 @@
 # Contributing to OxMQ 🐂
 
-Thank you for your interest in contributing to **OxMQ**! We welcome bug fixes, performance optimizations, documentation improvements, new showcase examples, and architectural discussions from the developer community.
+Thank you for your interest in contributing to **OxMQ**! OxMQ was created and is maintained by **[Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)**.
+
+We welcome bug fixes, performance optimizations, documentation improvements, new showcase examples, and architectural discussions from the developer community.
 
 ---
 
@@ -109,5 +111,6 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org/) speci
 
 ## 💬 Community & Questions
 
+* **Author & Maintainer:** [Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/) ([@gaurav10610](https://github.com/gaurav10610))
 * **Discussions & Q&A**: [GitHub Discussions](https://github.com/gaurav10610/oxmq/discussions)
 * **Issues & Bugs**: [GitHub Issues](https://github.com/gaurav10610/oxmq/issues)

@@ -74,3 +74,9 @@ Tests verify that:
 - The Spring Boot 3 application context initializes with OxMQ autoconfiguration.
 - `SyncWorkflowService` dispatches a DAG flow with 8 parallel children.
 - Parent aggregation completes and aggregates return values into `SyncManifest`.
+
+---
+
+## 👤 Author & Maintainer
+
+Created and architected by **[Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)** ([@gaurav10610](https://github.com/gaurav10610)).

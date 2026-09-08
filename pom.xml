@@ -21,6 +21,19 @@
         </license>
     </licenses>
 
+    <developers>
+        <developer>
+            <id>gaurav10610</id>
+            <name>Gaurav Kumar Yadav</name>
+            <url>https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/</url>
+            <roles>
+                <role>Author</role>
+                <role>Architect</role>
+                <role>Maintainer</role>
+            </roles>
+        </developer>
+    </developers>
+
     <properties>
         <java.version>21</java.version>
         <maven.compiler.source>21</maven.compiler.source>

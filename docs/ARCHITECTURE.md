@@ -220,3 +220,12 @@ graph LR
     MicrometerEngine --> Actuator
     Prometheus --> Grafana
 ```
+
+---
+
+## 👤 Architect & Author
+
+**Gaurav Kumar Yadav**
+* 💼 **LinkedIn:** [linkedin.com/in/gaurav-kumar-yadav-6125817a](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)
+* 🐙 **GitHub:** [@gaurav10610](https://github.com/gaurav10610)
+

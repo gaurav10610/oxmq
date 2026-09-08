@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0"><img src="https://img.shields.io/badge/Release-v1.0.0-blue.svg" alt="Release v1.0.0"></a>
   <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.0.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/21/"><img src="https://img.shields.io/badge/Java-21%2B%20LTS-orange.svg" alt="Java 21"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
@@ -364,6 +365,14 @@ Explore our comprehensive technical guides in [`docs/`](docs/):
 ## 🤝 Contributing
 
 We welcome community contributions! Please read our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md) before submitting a pull request.
+
+## 👤 Author & Maintainer
+
+**Gaurav Kumar Yadav**
+* 💼 **LinkedIn:** [linkedin.com/in/gaurav-kumar-yadav-6125817a](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)
+* 🐙 **GitHub:** [@gaurav10610](https://github.com/gaurav10610)
+
+Feel free to connect for architectural discussions, collaborations, enterprise adoption, or contributions to OxMQ!
 
 ---
 
