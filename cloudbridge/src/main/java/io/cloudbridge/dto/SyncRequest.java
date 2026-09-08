@@ -5,6 +5,8 @@ public class SyncRequest {
     private String destination = "dropbox:/backups/ideas-notepad";
     private int rateLimitPerSecond = 15;
     private boolean useVirtualThreads = true;
+    private String dropboxToken;
+    private String boxToken;
 
     public SyncRequest() {}
 
@@ -26,4 +28,10 @@ public class SyncRequest {
 
     public boolean isUseVirtualThreads() { return useVirtualThreads; }
     public void setUseVirtualThreads(boolean useVirtualThreads) { this.useVirtualThreads = useVirtualThreads; }
+
+    public String getDropboxToken() { return dropboxToken; }
+    public void setDropboxToken(String dropboxToken) { this.dropboxToken = dropboxToken; }
+
+    public String getBoxToken() { return boxToken; }
+    public void setBoxToken(String boxToken) { this.boxToken = boxToken; }
 }

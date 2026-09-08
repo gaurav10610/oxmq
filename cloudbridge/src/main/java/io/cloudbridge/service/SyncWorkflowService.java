@@ -61,6 +61,13 @@ public class SyncWorkflowService {
     }
 
     public String triggerSync(SyncRequest request) {
+        if (request.getDropboxToken() != null && !request.getDropboxToken().isBlank()) {
+            dropboxClient.setRuntimeToken(request.getDropboxToken().trim());
+        }
+        if (request.getBoxToken() != null && !request.getBoxToken().isBlank()) {
+            boxClient.setRuntimeToken(request.getBoxToken().trim());
+        }
+
         String syncId = "sync-" + UUID.randomUUID().toString().substring(0, 8);
         log.info("Starting CloudBridge Sync [{}] from [{}] to [{}]", syncId, request.getSource(), request.getDestination());
 

@@ -122,11 +122,30 @@
 
                     <div>
                         <label class="block text-xs font-medium text-slate-300 mb-1">Target Cloud Storage</label>
-                        <select id="inputDest" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500 font-mono">
+                        <select id="inputDest" onchange="onDestChange()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-amber-500 font-mono">
                             <option value="dropbox:/backups/ideas-notepad">Dropbox (/backups/ideas-notepad)</option>
                             <option value="box:/archives/ideas-notepad">Box (/archives/ideas-notepad)</option>
                         </select>
                     </div>
+
+                    <!-- Cloud Provider Token Card (stored in browser localStorage, never committed) -->
+                    <div id="tokenCard" class="p-3 bg-slate-950/70 border border-slate-800 rounded-lg space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label class="text-[11px] font-medium text-amber-400 flex items-center gap-1.5">
+                                <i class="fa-solid fa-key"></i> <span id="tokenLabel">Dropbox Access Token</span>
+                            </label>
+                            <a id="tokenHelpLink" href="https://www.dropbox.com/developers/apps" target="_blank" class="text-[10px] text-amber-400/80 hover:text-amber-300 hover:underline flex items-center gap-1">
+                                Generate Token <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
+                            </a>
+                        </div>
+                        <input id="inputToken" type="password" placeholder="Paste generated token for live cloud write (optional)" 
+                            oninput="saveTokenToLocal()"
+                            class="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-amber-500 font-mono">
+                        <p id="tokenHint" class="text-[10px] text-slate-500">
+                            Provide your Dropbox generated token to write real files to your account.
+                        </p>
+                    </div>
+
 
                     <div class="grid grid-cols-2 gap-3">
                         <div>
@@ -225,26 +244,66 @@
             }
         }
 
+        function onDestChange() {
+            const dest = document.getElementById('inputDest').value;
+            const label = document.getElementById('tokenLabel');
+            const helpLink = document.getElementById('tokenHelpLink');
+            const hint = document.getElementById('tokenHint');
+            const tokenInput = document.getElementById('inputToken');
+
+            if (dest.startsWith('dropbox')) {
+                label.innerText = 'Dropbox User Access Token';
+                helpLink.href = 'https://www.dropbox.com/developers/apps';
+                hint.innerText = 'Generate a user access token (starts with sl.u...) from the Dropbox App Console to write real files.';
+                tokenInput.value = localStorage.getItem('cloudbridge_dropbox_token') || '';
+            } else {
+                label.innerText = 'Box Developer Token';
+                helpLink.href = 'https://app.box.com/developers/console';
+                hint.innerText = 'Generate a Developer Token from Box Developer Console (Configuration tab) to write real files.';
+                tokenInput.value = localStorage.getItem('cloudbridge_box_token') || '';
+            }
+        }
+
+        function saveTokenToLocal() {
+            const dest = document.getElementById('inputDest').value;
+            const val = document.getElementById('inputToken').value.trim();
+            if (dest.startsWith('dropbox')) {
+                localStorage.setItem('cloudbridge_dropbox_token', val);
+            } else {
+                localStorage.setItem('cloudbridge_box_token', val);
+            }
+        }
+
         async function triggerSync() {
             const source = document.getElementById('inputSource').value;
             const destination = document.getElementById('inputDest').value;
             const rateLimit = parseInt(document.getElementById('inputRate').value) || 15;
+            const token = document.getElementById('inputToken').value.trim();
 
             const btn = document.getElementById('btnTrigger');
             btn.disabled = true;
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Dispatching DAG...';
 
+            const payload = {
+                source: source,
+                destination: destination,
+                rateLimitPerSecond: rateLimit,
+                useVirtualThreads: true
+            };
+
+            if (destination.startsWith('dropbox') && token) {
+                payload.dropboxToken = token;
+            } else if (destination.startsWith('box') && token) {
+                payload.boxToken = token;
+            }
+
             try {
                 const response = await fetch('/api/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        source: source,
-                        destination: destination,
-                        rateLimitPerSecond: rateLimit,
-                        useVirtualThreads: true
-                    })
+                    body: JSON.stringify(payload)
                 });
+
                 const data = await response.json();
                 currentSyncId = data.syncId;
                 localStorage.setItem('last_sync_id', currentSyncId);
@@ -411,6 +470,7 @@
             });
         }
 
+        onDestChange();
         fetchQueueStats();
         setInterval(fetchQueueStats, 3000);
     </script>
