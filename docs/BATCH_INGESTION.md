@@ -15,7 +15,7 @@ When ingesting high-velocity event streams (e.g., audit logs, telemetry, payment
 | **Redis Roundtrips for 1,000 Jobs** | 1,000 requests | **10 to 20 requests** (batch size 50–100) |
 | **Database Insertion Method** | `INSERT INTO tbl VALUES (...)` | `INSERT INTO tbl VALUES (...), (...), ...` |
 | **Network Overhead** | High latency ($\sim 1\text{ms} \times 1,000 = 1\text{s}$) | Ultra-low latency ($\sim 1\text{ms} \times 20 = 20\text{ms}$) |
-| **Throughput (Ops/sec)** | $\sim 5,000\text{ ops/s}$ | **$\ge 50,000\text{ ops/s}$** |
+| **Throughput Bottleneck** | Bound by per-job network latency | Amortized across batch size (drastically higher ingestion efficiency) |
 | **Best For** | Webhooks, LLM calls, Email sending | ClickHouse, Elasticsearch, PostgreSQL bulk inserts |
 
 ---
