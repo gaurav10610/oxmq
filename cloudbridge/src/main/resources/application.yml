@@ -21,7 +21,6 @@ cloudbridge:
     client-secret: ${BOX_CLIENT_SECRET:}
     token: ${BOX_TOKEN:}
 
-
 management:
   endpoints:
     web:
