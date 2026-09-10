@@ -255,7 +255,7 @@ BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpa
 
 ## 🙏 Attribution
 
-OxMQ builds upon the foundational queue architecture created by **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the **[BullMQ](https://github.com/taskforcesh/bullmq)** open-source community. The official BullMQ Lua scripts are included under the MIT license in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+OxMQ builds upon the foundational queue architecture developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community. The official BullMQ Lua scripts are included under the permissive MIT license in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 

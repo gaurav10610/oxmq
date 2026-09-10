@@ -318,8 +318,8 @@ Open `http://localhost:3000` to inspect queue counts, live jobs, step logs, and 
 ---
 
 ## 🙏 Attribution
-
-OxMQ is proud to reuse the official, battle-tested Lua scripts created by **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community under the MIT license. Full attribution details can be found in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+ 
+OxMQ is proud to reuse the official, battle-tested Lua scripts developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community under the permissive MIT license. Full attribution details can be found in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 
