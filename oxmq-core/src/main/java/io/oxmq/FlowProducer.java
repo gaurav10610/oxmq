@@ -35,6 +35,10 @@ public class FlowProducer implements Closeable {
         this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer());
     }
 
+    public FlowProducer(RedisConnectionManager connectionManager) {
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer());
+    }
+
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();

@@ -10,6 +10,7 @@ import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScript;
 import io.oxmq.lua.LuaScriptManager;
+import io.oxmq.exception.UnrecoverableError;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.Job;
@@ -246,7 +247,31 @@ public class OxmqWorker<T> implements Worker<T> {
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
 
+        boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
+                                  (error.getCause() instanceof UnrecoverableError);
+
         JobOptions opts = job.getOpts();
+        int maxAttempts = opts != null && opts.getAttempts() > 0 ? opts.getAttempts() : 1;
+        int currentAttempts = job.getAttemptsMade() + 1;
+
+        if (!isUnrecoverable && currentAttempts < maxAttempts) {
+            BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
+            long delayMs = backoff != null ? backoff.calculateDelayMs(currentAttempts) : 0;
+            if (delayMs > 0) {
+                bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                        job.getId(), workerId, delayMs);
+                log.debug("Job {} [id: {}] failed (attempt {}/{}), delayed by {} ms for retry",
+                        job.getName(), job.getId(), currentAttempts, maxAttempts, delayMs);
+                return;
+            } else {
+                bullScripts.retryJob(connectionManager.getBinaryConnection(), queueKeys,
+                        job.getId(), workerId, opts != null && opts.isLifo());
+                log.debug("Job {} [id: {}] failed (attempt {}/{}), moved to wait for retry",
+                        job.getName(), job.getId(), currentAttempts, maxAttempts);
+                return;
+            }
+        }
+
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 stackTrace, "failedReason", "failed", workerId, false, opts != null ? opts.toMap() : Map.of());
     }
@@ -275,12 +300,15 @@ public class OxmqWorker<T> implements Worker<T> {
 
         try {
             RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-            Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+            Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+            if (childValsRaw == null || childValsRaw.isEmpty()) {
+                childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+            }
             if (childValsRaw != null && !childValsRaw.isEmpty()) {
                 Map<String, Object> childVals = new HashMap<>();
                 for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
                     try {
-                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Map.class));
+                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
                     } catch (Exception ex) {
                         childVals.put(entry.getKey(), entry.getValue());
                     }

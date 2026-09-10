@@ -16,6 +16,7 @@ import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.slf4j.Logger;
@@ -152,12 +153,15 @@ public class OxmqQueue<T> implements Queue<T> {
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
 
         try {
-            Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
+            Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":processed");
+            if (childValsRaw == null || childValsRaw.isEmpty()) {
+                childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
+            }
             if (childValsRaw != null && !childValsRaw.isEmpty()) {
                 Map<String, Object> childVals = new java.util.HashMap<>();
                 for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
                     try {
-                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Map.class));
+                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
                     } catch (Exception ex) {
                         childVals.put(entry.getKey(), entry.getValue());
                     }
@@ -222,6 +226,146 @@ public class OxmqQueue<T> implements Queue<T> {
     public void obliterate() {
         bullScripts.obliterate(connectionManager.getBinaryConnection(), queueKeys, 1000, true);
         log.info("Obliterated queue {}", name);
+    }
+
+    @Override
+    public List<Job<T>> addBulk(List<io.oxmq.model.JobRequest<T>> jobs) {
+        if (jobs == null || jobs.isEmpty()) {
+            return List.of();
+        }
+        List<Job<T>> createdJobs = new java.util.ArrayList<>(jobs.size());
+        for (io.oxmq.model.JobRequest<T> req : jobs) {
+            createdJobs.add(add(req.name(), req.data(), req.options()));
+        }
+        return createdJobs;
+    }
+
+    @Override
+    public void promote(String jobId) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        bullScripts.promote(connectionManager.getBinaryConnection(), queueKeys, jobId);
+        log.debug("Promoted job {} in queue {}", jobId, name);
+    }
+
+    @Override
+    public void changeDelay(String jobId, java.time.Duration delay) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        long delayMs = delay != null ? delay.toMillis() : 0L;
+        bullScripts.changeDelay(connectionManager.getBinaryConnection(), queueKeys, jobId, delayMs);
+        log.debug("Changed delay for job {} to {} ms in queue {}", jobId, delayMs, name);
+    }
+
+    @Override
+    public void changePriority(String jobId, int priority) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        bullScripts.changePriority(connectionManager.getBinaryConnection(), queueKeys, jobId, priority, false);
+        log.debug("Changed priority for job {} to {} in queue {}", jobId, priority, name);
+    }
+
+    @Override
+    public void retry(String jobId) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        String state = getState(jobId);
+        if ("failed".equals(state) || "completed".equals(state)) {
+            bullScripts.reprocessJob(connectionManager.getBinaryConnection(), queueKeys, jobId, state, false, true, true);
+        } else {
+            bullScripts.retryJob(connectionManager.getBinaryConnection(), queueKeys, jobId, "0", false);
+        }
+        log.debug("Retried job {} in queue {}", jobId, name);
+    }
+
+    @Override
+    public boolean remove(String jobId) {
+        return remove(jobId, false);
+    }
+
+    @Override
+    public boolean remove(String jobId, boolean removeChildren) {
+        if (jobId == null || jobId.isBlank()) {
+            return false;
+        }
+        int res = bullScripts.removeJob(connectionManager.getBinaryConnection(), queueKeys, jobId, removeChildren);
+        log.debug("Removed job {} from queue {} (result: {})", jobId, name, res);
+        return res == 1;
+    }
+
+    @Override
+    public void updateData(String jobId, T data) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        String serialized = serializer.serialize(data);
+        bullScripts.updateData(connectionManager.getBinaryConnection(), queueKeys, jobId, serialized);
+        log.debug("Updated data for job {} in queue {}", jobId, name);
+    }
+
+    @Override
+    public void drain(boolean delayed) {
+        bullScripts.drain(connectionManager.getBinaryConnection(), queueKeys, delayed);
+        log.info("Drained queue {} (delayed={})", name, delayed);
+    }
+
+    @Override
+    public String getState(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return "unknown";
+        }
+        return bullScripts.getState(connectionManager.getBinaryConnection(), queueKeys, jobId);
+    }
+
+    @Override
+    public java.util.Map<String, Long> getJobCounts() {
+        String[] types = {"wait", "active", "delayed", "completed", "failed", "paused", "waiting-children", "prioritized"};
+        List<Long> counts = bullScripts.getCounts(connectionManager.getBinaryConnection(), queueKeys, types);
+        java.util.Map<String, Long> map = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < types.length && i < counts.size(); i++) {
+            map.put(types[i], counts.get(i));
+        }
+        return map;
+    }
+
+    @Override
+    public List<String> getJobLogs(String jobId) {
+        return getJobLogs(jobId, 0, -1);
+    }
+
+    @Override
+    public List<String> getJobLogs(String jobId, int start, int end) {
+        if (jobId == null || jobId.isBlank()) {
+            return List.of();
+        }
+        RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+        List<String> logs = sync.lrange(queueKeys.toJobLogsKey(jobId), start, end);
+        return logs != null ? logs : List.of();
+    }
+
+    @Override
+    public boolean removeDeduplicationKey(String deduplicationId) {
+        if (deduplicationId == null || deduplicationId.isBlank()) {
+            return false;
+        }
+        RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+        Long del = sync.del(queueKeys.toKey("de:" + deduplicationId));
+        return del != null && del > 0;
+    }
+
+    @Override
+    public String upsertJobScheduler(String schedulerId, java.time.Duration every, String jobName, T data, JobOptions opts) {
+        Objects.requireNonNull(schedulerId, "schedulerId must not be null");
+        Objects.requireNonNull(jobName, "jobName must not be null");
+        long intervalMs = every != null ? every.toMillis() : 60_000L;
+        long nextMillis = System.currentTimeMillis() + intervalMs;
+        String serializedData = serializer.serialize(data);
+        JobOptions options = opts != null ? opts : JobOptions.defaults();
+        return bullScripts.addJobScheduler(connectionManager.getBinaryConnection(), queueKeys,
+            schedulerId, nextMillis, jobName, serializedData, options.toMap(), intervalMs, null, null);
+    }
+
+    @Override
+    public boolean removeJobScheduler(String schedulerId) {
+        if (schedulerId == null || schedulerId.isBlank()) {
+            return false;
+        }
+        int res = bullScripts.removeJobScheduler(connectionManager.getBinaryConnection(), queueKeys, schedulerId);
+        return res == 0;
     }
 
     @Override

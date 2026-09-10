@@ -2,9 +2,11 @@ package io.oxmq.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * Configuration options for job execution, retries, delays, and retention.
+ * Configuration options for job execution, retries, delays, retention, deduplication, and workflows.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class JobOptions {
@@ -17,6 +19,15 @@ public class JobOptions {
     private boolean removeOnFail = false;
     private int priority = 0;
     private String parentKey;
+    private boolean lifo = false;
+    private String deduplicationId;
+    private long deduplicationTtlMs = 0;
+    private int keepLogs = 0;
+    private boolean failParentOnFailure = false;
+    private boolean removeDependencyOnFailure = false;
+    private boolean continueParentOnFailure = false;
+    private boolean ignoreDependencyOnFailure = false;
+    private String groupKey;
 
     public JobOptions() {}
 
@@ -88,7 +99,9 @@ public class JobOptions {
         return parentKey;
     }
 
-    private boolean lifo = false;
+    public void setParentKey(String parentKey) {
+        this.parentKey = parentKey;
+    }
 
     public boolean isLifo() {
         return lifo;
@@ -98,12 +111,72 @@ public class JobOptions {
         this.lifo = lifo;
     }
 
-    public void setParentKey(String parentKey) {
-        this.parentKey = parentKey;
+    public String getDeduplicationId() {
+        return deduplicationId;
     }
 
-    public java.util.Map<String, Object> toMap() {
-        java.util.Map<String, Object> map = new java.util.HashMap<>();
+    public void setDeduplicationId(String deduplicationId) {
+        this.deduplicationId = deduplicationId;
+    }
+
+    public long getDeduplicationTtlMs() {
+        return deduplicationTtlMs;
+    }
+
+    public void setDeduplicationTtlMs(long deduplicationTtlMs) {
+        this.deduplicationTtlMs = deduplicationTtlMs;
+    }
+
+    public int getKeepLogs() {
+        return keepLogs;
+    }
+
+    public void setKeepLogs(int keepLogs) {
+        this.keepLogs = keepLogs;
+    }
+
+    public boolean isFailParentOnFailure() {
+        return failParentOnFailure;
+    }
+
+    public void setFailParentOnFailure(boolean failParentOnFailure) {
+        this.failParentOnFailure = failParentOnFailure;
+    }
+
+    public boolean isRemoveDependencyOnFailure() {
+        return removeDependencyOnFailure;
+    }
+
+    public void setRemoveDependencyOnFailure(boolean removeDependencyOnFailure) {
+        this.removeDependencyOnFailure = removeDependencyOnFailure;
+    }
+
+    public boolean isContinueParentOnFailure() {
+        return continueParentOnFailure;
+    }
+
+    public void setContinueParentOnFailure(boolean continueParentOnFailure) {
+        this.continueParentOnFailure = continueParentOnFailure;
+    }
+
+    public boolean isIgnoreDependencyOnFailure() {
+        return ignoreDependencyOnFailure;
+    }
+
+    public void setIgnoreDependencyOnFailure(boolean ignoreDependencyOnFailure) {
+        this.ignoreDependencyOnFailure = ignoreDependencyOnFailure;
+    }
+
+    public String getGroupKey() {
+        return groupKey;
+    }
+
+    public void setGroupKey(String groupKey) {
+        this.groupKey = groupKey;
+    }
+
+    public Map<String, Object> toMap() {
+        Map<String, Object> map = new HashMap<>();
         if (jobId != null) map.put("jobId", jobId);
         map.put("delay", delayMs);
         map.put("attempts", attempts);
@@ -112,13 +185,27 @@ public class JobOptions {
         map.put("priority", priority);
         map.put("lifo", lifo);
         if (parentKey != null) map.put("parentKey", parentKey);
+        if (deduplicationId != null && !deduplicationId.isBlank()) {
+            map.put("deduplicationId", deduplicationId);
+            if (deduplicationTtlMs > 0) {
+                map.put("deduplication", Map.of("id", deduplicationId, "ttl", deduplicationTtlMs));
+            } else {
+                map.put("deduplication", Map.of("id", deduplicationId));
+            }
+        }
+        if (keepLogs > 0) map.put("keepLogs", keepLogs);
+        if (failParentOnFailure) map.put("failParentOnFailure", true);
+        if (removeDependencyOnFailure) map.put("removeDependencyOnFailure", true);
+        if (continueParentOnFailure) map.put("continueParentOnFailure", true);
+        if (ignoreDependencyOnFailure) map.put("ignoreDependencyOnFailure", true);
+        if (groupKey != null) map.put("groupKey", groupKey);
         if (backoff != null) {
             if (backoff instanceof BackoffStrategy.Exponential exp) {
-                map.put("backoff", java.util.Map.of("type", "exponential", "delay", exp.initialDelayMs()));
+                map.put("backoff", Map.of("type", "exponential", "delay", exp.initialDelayMs()));
             } else if (backoff instanceof BackoffStrategy.Fixed fixed) {
-                map.put("backoff", java.util.Map.of("type", "fixed", "delay", fixed.delayMs()));
+                map.put("backoff", Map.of("type", "fixed", "delay", fixed.delayMs()));
             } else {
-                map.put("backoff", java.util.Map.of("type", "fixed", "delay", backoff.calculateDelayMs(1)));
+                map.put("backoff", Map.of("type", "fixed", "delay", backoff.calculateDelayMs(1)));
             }
         }
         return map;
@@ -194,6 +281,62 @@ public class JobOptions {
 
         public Builder parentKey(String parentKey) {
             options.setParentKey(parentKey);
+            return this;
+        }
+
+        public Builder lifo(boolean lifo) {
+            options.setLifo(lifo);
+            return this;
+        }
+
+        public Builder deduplication(String deduplicationId) {
+            options.setDeduplicationId(deduplicationId);
+            return this;
+        }
+
+        public Builder deduplicationId(String deduplicationId) {
+            options.setDeduplicationId(deduplicationId);
+            return this;
+        }
+
+        public Builder deduplication(String deduplicationId, Duration ttl) {
+            options.setDeduplicationId(deduplicationId);
+            options.setDeduplicationTtlMs(ttl.toMillis());
+            return this;
+        }
+
+        public Builder deduplicationTtl(Duration ttl) {
+            options.setDeduplicationTtlMs(ttl.toMillis());
+            return this;
+        }
+
+        public Builder keepLogs(int keepLogs) {
+            options.setKeepLogs(keepLogs);
+            return this;
+        }
+
+        public Builder failParentOnFailure(boolean failParentOnFailure) {
+            options.setFailParentOnFailure(failParentOnFailure);
+            return this;
+        }
+
+        public Builder removeDependencyOnFailure(boolean removeDependencyOnFailure) {
+            options.setRemoveDependencyOnFailure(removeDependencyOnFailure);
+            return this;
+        }
+
+        public Builder continueParentOnFailure(boolean continueParentOnFailure) {
+            options.setContinueParentOnFailure(continueParentOnFailure);
+            return this;
+        }
+
+        public Builder ignoreDependencyOnFailure(boolean ignoreDependencyOnFailure) {
+            options.setIgnoreDependencyOnFailure(ignoreDependencyOnFailure);
+            return this;
+        }
+
+        public Builder groupKey(String groupKey) {
+            options.setGroupKey(groupKey);
             return this;
         }
 
