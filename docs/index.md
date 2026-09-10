@@ -78,3 +78,104 @@ oxmq:
 ```
 
 :::
+
+---
+
+## ⚡ Core Scenarios in Action
+
+Explore how OxMQ handles the real-world operational challenges of distributed queues.
+
+<br/>
+
+### ⏱️ 1. Schedule Jobs for Later
+Process jobs at an exact future timestamp or after a relative delay. Perfect for payment verification windows, reminder emails, or delayed webhook retries.
+- **Millisecond Precision**: Backed by atomic Redis sorted sets (`bull:<queue>:delayed`).
+- **Zero Polling Lag**: Automatically promoted to `WAITING` the exact millisecond maturity is reached.
+- **Survives Restarts**: State is persisted in Redis with zero relational database table locks.
+
+```java
+// Schedule job to execute exactly 15 minutes from now
+queue.add(
+    "send-reminder",
+    new ReminderPayload("user_42"),
+    JobOptions.builder().delay(Duration.ofMinutes(15)).build()
+);
+```
+
+<div style="border-radius: 12px; overflow: hidden; border: 1px solid var(--vp-c-divider); box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-top: 16px;">
+  <img src="/assets/oxmq-delayed-jobs.gif" alt="Delayed Job Execution Animation" style="width: 100%; display: block;">
+</div>
+
+<br/>
+<hr style="border: 0; border-top: 1px solid var(--vp-c-divider); margin: 32px 0;"/>
+<br/>
+
+### 🔁 2. Failures Are Temporary
+When third-party APIs throttle connections or return transient 503 errors, OxMQ automatically reschedules jobs with exponential backoff.
+- **Exponential Backoff**: Configurable multiplier with maximum backoff caps to prevent storming.
+- **Fatal Error Bypass**: Throw `UnrecoverableError` to fail immediately and skip retries on permanent failures.
+- **Zero Loss Dead-Lettering**: Exhausted jobs are preserved in `FAILED` and can be re-queued with `queue.retry(jobId)`.
+
+```java
+// Configure 5 retry attempts with exponential backoff capped at 5 minutes
+JobOptions options = JobOptions.builder()
+    .attempts(5)
+    .exponentialBackoff(Duration.ofSeconds(2), Duration.ofMinutes(5))
+    .build();
+
+queue.add("capture-charge", payment, options);
+```
+
+<div style="border-radius: 12px; overflow: hidden; border: 1px solid var(--vp-c-divider); box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-top: 16px;">
+  <img src="/assets/oxmq-retries-backoff.gif" alt="Exponential Backoff Retry Animation" style="width: 100%; display: block;">
+</div>
+
+<br/>
+<hr style="border: 0; border-top: 1px solid var(--vp-c-divider); margin: 32px 0;"/>
+<br/>
+
+### 🚦 3. Protect Your Downstream APIs
+Safeguard external services (Stripe, Twilio, OpenAI) by enforcing rate limits directly in Redis across your entire worker cluster.
+- **Sliding Window Token Bucket**: Redis Lua script enforces smooth rate quotas without distributed lock overhead.
+- **Multi-Tenant Grouping (`groupKey`)**: Partition rate limits per tenant so one noisy customer never throttles others.
+- **Debounce & Deduplication**: Built-in trailing-edge debounce windows ignore rapid duplicate triggers.
+
+```java
+@OxmqListener(
+    queue = "stripe-webhooks",
+    concurrency = 20,
+    rateLimitMax = 50,          // Max 50 requests
+    rateLimitDurationMs = 1000  // Per 1-second rolling window
+)
+public void handleWebhook(Job<WebhookPayload> job) {
+    stripeClient.process(job.getData());
+}
+```
+
+<div style="border-radius: 12px; overflow: hidden; border: 1px solid var(--vp-c-divider); box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-top: 16px;">
+  <img src="/assets/oxmq-rate-limiting.gif" alt="Sliding Window Rate Limiter Animation" style="width: 100%; display: block;">
+</div>
+
+<br/>
+<hr style="border: 0; border-top: 1px solid var(--vp-c-divider); margin: 32px 0;"/>
+<br/>
+
+### 🌲 4. Complex Workflows (Parent-Child DAGs)
+Orchestrate multi-step task trees where parent tasks wait for parallel children to finish before executing.
+- **Atomic DAG Enqueue**: The entire workflow tree is submitted in one atomic Redis call via `FlowProducer`.
+- **Parallel Child Processing**: Children execute in parallel across independent queues and worker clusters.
+- **Automated Result Aggregation**: Child return values are automatically stored in the parent's processed hash for consumption.
+
+```java
+FlowJob<ReportSummary> parent = FlowJob.<ReportSummary>builder()
+    .queueName("reports")
+    .name("compile-report")
+    .children(List.of(fetchAnalyticsChild, auditFinanceChild))
+    .build();
+
+flowProducer.add(parent);
+```
+
+<div style="border-radius: 12px; overflow: hidden; border: 1px solid var(--vp-c-divider); box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-top: 16px;">
+  <img src="/assets/oxmq-dag-workflow.gif" alt="FlowProducer DAG Workflow Animation" style="width: 100%; display: block;">
+</div>
