@@ -14,6 +14,11 @@ OxMQ is distributed via JitPack and pre-built GitHub releases.
 ```xml
 <repositories>
     <repository>
+        <id>github</id>
+        <name>GitHub Packages</name>
+        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
+    </repository>
+    <repository>
         <id>jitpack.io</id>
         <url>https://jitpack.io</url>
     </repository>
@@ -22,16 +27,16 @@ OxMQ is distributed via JitPack and pre-built GitHub releases.
 <dependencies>
     <!-- Core Pure Java Engine (Virtual Threads + Redis) -->
     <dependency>
-        <groupId>com.github.gaurav10610.oxmq</groupId>
+        <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>v1.0.0</version>
+        <version>1.0.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
-        <groupId>com.github.gaurav10610.oxmq</groupId>
+        <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>v1.0.0</version>
+        <version>1.0.0</version>
     </dependency>
 </dependencies>
 ```
@@ -41,13 +46,20 @@ OxMQ is distributed via JitPack and pre-built GitHub releases.
 ```kotlin
 repositories {
     mavenCentral()
+    maven {
+        url = uri("https://maven.pkg.github.com/gaurav10610/oxmq")
+        credentials {
+            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+        }
+    }
     maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:v1.0.0")
+    implementation("io.oxmq:oxmq-core:1.0.0")
     // or for Spring Boot 3 applications:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:v1.0.0")
+    // implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0")
 }
 ```
 
