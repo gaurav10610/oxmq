@@ -32,11 +32,9 @@ Every major engineering ecosystem has an undisputed gold standard for background
 * **Go** has **Asynq**
 
 **What about Java?**  
-Until now, Java microservices have been stuck between three painful compromises:
-1. **Overkill Event Streams (Kafka / RabbitMQ):** Event streaming brokers excel at raw pub/sub, but **lack native job lifecycle primitives**: no per-job delayed scheduling, no individual job retries with exponential backoff, no parent-child DAG completion tracking, no step progress reporting, and no out-of-the-box management dashboard.
-2. **Relational Database Schedulers (Quartz, db-scheduler):** Rely on polling relational tables (`SELECT ... FOR UPDATE`) on periodic intervals, introducing database lock contention, write amplification, and polling latency under high concurrent load.
-3. **Commercial Paywalls (JobRunr Pro):** Essential enterprise features like Parent-Child DAG workflows, sliding-window rate limiting, and dynamic batching are locked behind commercial paywalls.
-4. **OS Thread Starvation:** Traditional thread pools consume 1MB+ of stack per thread, causing JVMs to hit resource limits when executing hundreds of blocking HTTP, database, or LLM calls.
+Until now, Java microservices have lacked a native, lightweight Redis distributed job queue built specifically for Java 21 Project Loom:
+1. **Heavy OS Thread Pools**: Traditional Java background processors allocate standard platform threads (~1MB stack per thread). When tasks perform blocking I/O (HTTP calls, DB queries, LLM calls), thread pools quickly become saturated.
+2. **The Polyglot BullMQ Gap**: Teams using BullMQ in TypeScript/Node had no direct equivalent in Java sharing the same Redis key conventions and Lua scripts for seamless polyglot architectures.
 
 ---
 
@@ -331,20 +329,23 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 
 ---
 
-## ⚖️ Architectural Comparison
+## ⚖️ Architectural Comparison: OxMQ & BullMQ
+ 
+| Capability | 🐂 **OxMQ** (Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
+| :--- | :--- | :--- |
+| **Runtime** | **Java 21+** (Project Loom) | **Node.js 16+** / TypeScript |
+| **Concurrency** | **Virtual Threads** (Unmounts on blocking I/O) | Single-Threaded Event Loop (Sandboxed workers for CPU) |
+| **Multi-Core Scaling** | Native JVM concurrency across all CPU cores | Multi-process worker clustering |
+| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
+| **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy | Standard `bull:<queue>:*` hierarchy |
+| **DAG Workflows** | Built-in `FlowProducer` | Built-in `FlowProducer` |
+| **Rate Limiting** | Built-in token bucket with `groupKey` | Built-in token bucket with `groupKey` |
+| **Web Dashboard** | Native **Bull-Board UI** compatibility | Native **Bull-Board UI** compatibility |
+| **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`) | Express, Fastify, NestJS |
+| **License** | **Apache 2.0** | **MIT** |
 
-| Capability | 🐂 **OxMQ** (Java 21+) | 💼 **JobRunr** (Java) | ⏱️ **Quartz / DB-Scheduler** | 🐰 **RabbitMQ** | 📨 **Apache Kafka** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Concurrency Model** | **Virtual Threads (Loom)** | Platform Threads (OS) | Platform Threads (OS) | Erlang Actors | Thread-per-partition |
-| **Primary Workload** | **Distributed Job Lifecycle** | Background Job Processing | Scheduled Jobs & Cron | AMQP Message Routing | Event Streaming & Commit Log |
-| **Parent-Child DAGs** | ✅ **Built-in (Apache 2.0)** | ❌ **JobRunr Pro Feature** | ❌ None | ❌ Manual orchestration | ❌ External engine (Streams/Flink) |
-| **Rate Limiting** | ✅ **Built-in Token Bucket** | ❌ **JobRunr Pro Feature** | ❌ None | ⚠️ Via plugin | ❌ Broker-level quotas only |
-| **Batch Dequeue** | ✅ **Atomic Bulk Lua Pop** | ❌ 1-by-1 processing | ❌ None | ⚠️ Prefetch only | ✅ Native batch polling |
-| **Sub-Second Delays** | ✅ **Atomic Redis ZSET** | ⚠️ Periodic poll interval | ❌ Periodic DB poll lag | ⚠️ Dead-letter TTL / Plugin | ❌ Not supported natively |
-| **Web Dashboard** | ✅ **Bull-Board UI (Native)** | ✅ JobRunr Dashboard | ❌ None (Third-party only) | ✅ RabbitMQ Admin UI | ⚠️ Third-party (Kafdrop) |
-| **License** | **Apache 2.0 (100% Free)** | LGPLv3 / **Commercial Pro** | Apache 2.0 | MPL 2.0 | Apache 2.0 |
+*See our full [Architectural Comparison Guide](docs/COMPARISON.md) for deep dives on concurrency architectures and polyglot setups.*
 
-*See our full [Architectural Comparison Guide](docs/COMPARISON.md) for deep dives on memory footprints, throughput benchmarks, and polyglot architectures.*
 
 ---
 
@@ -354,7 +355,7 @@ Explore our comprehensive technical guides in [`docs/`](docs/):
 
 * 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
-* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ vs BullMQ, JobRunr, Quartz, Apache Kafka, and RabbitMQ.
+* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ (Java 21 Loom) and BullMQ (Node.js).
 * 🎮 **[CloudBridge Showcase](oxmq-examples/cloudbridge/README.md)**: Real-world multi-cloud backup microservice with live Web UI and DAG execution.
 
 ---

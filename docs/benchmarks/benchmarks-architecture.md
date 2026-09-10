@@ -1,50 +1,64 @@
-# Benchmarks & Architecture Evaluation
+# OxMQ & BullMQ Architectural Comparison
 
-This document presents an objective, fact-based engineering evaluation of **OxMQ**, including its architectural design, comparative trade-offs with alternative frameworks, and reproducible JMH benchmark instructions.
-
----
-
-## 📊 Feature & Architecture Comparison
-
-| Feature / Capability | 🐂 **OxMQ** (Java 21+) | 🐂 **BullMQ** (Node.js) | 💼 **JobRunr** (Java) | ⏱️ **Quartz / db-scheduler** | 📨 **Apache Kafka** |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Primary Language** | **Java 21+** | TypeScript / Node.js | Java 11+ | Java 8+ | Java / Scala |
-| **Concurrency Model** | **Virtual Threads (Loom)** | Event Loop | Platform OS Pool | Platform OS Pool | Thread-per-partition |
-| **State Storage** | **Redis 6.2+ / Valkey** | Redis / Valkey | SQL / Mongo / Redis | Relational SQL | Partitioned Commit Log |
-| **Parent-Child DAG Workflows** | ✅ **Built-in (Apache 2.0)** | ✅ Built-in | ❌ **JobRunr Pro Feature** | ❌ None | ❌ Requires Flink/Streams |
-| **Sliding-Window Rate Limiting** | ✅ **Built-in (Token Bucket)** | ✅ Built-in | ❌ **JobRunr Pro Feature** | ❌ None | ❌ Broker quotas only |
-| **Sub-Second Delays & Scheduling** | ✅ **Atomic Redis ZSet** | ✅ Atomic Redis ZSet | ⚠️ Periodic poll | ❌ Periodic DB poll (1-5s) | ❌ Not supported natively |
-| **Polyglot Wire Compatibility** | ✅ **BullMQ v5 Wire Match** | ✅ Native | ❌ Java only | ❌ Java only | ✅ Client SDKs |
-| **Web Dashboard** | ✅ **Bull-Board UI** | ✅ Bull-Board UI | ✅ Embedded UI | ❌ Third-party only | ⚠️ Third-party |
-| **License** | **Apache 2.0 (100% Free)** | MIT | LGPLv3 / Commercial Pro | Apache 2.0 | Apache 2.0 |
+This document provides a factual, technically grounded engineering comparison of **OxMQ** (Java 21+) and **BullMQ** (Node.js / TypeScript), examining how both engines leverage Redis, their concurrency models, and empirical benchmarking with JMH.
 
 ---
 
-## 🔬 Architectural Analysis
+## 📊 Architectural Comparison: OxMQ vs. BullMQ
 
-### OxMQ vs. Relational Schedulers (Quartz, db-scheduler)
-- **Relational Polling**: Traditional database schedulers query relational tables on periodic intervals (1–5 seconds) using locking queries (`SELECT ... FOR UPDATE`). This can introduce database lock contention and latency under high volume.
-- **In-Memory Redis ZSets**: OxMQ maintains delayed and waiting queues entirely in Redis in-memory data structures. Transitions execute in microseconds via atomic Lua scripts with zero relational database load.
+Because OxMQ directly executes BullMQ's 49 official Lua scripts and adheres to the identical Redis key schema, both engines provide 100% functional parity while leveraging the strengths of their respective host runtimes:
 
-### OxMQ vs. Event Brokers (Kafka, RabbitMQ)
-- **Log Streaming vs. Task Lifecycle**: Kafka is designed for immutable, sequential event streaming. It intentionally lacks per-job delayed retries, individual retry backoffs, step progress tracking, or parent-child DAG resolution without external stream processing systems.
-- **Discrete Job State Machine**: OxMQ manages individual job states (`WAITING`, `ACTIVE`, `WAITING_CHILDREN`, `COMPLETED`, `FAILED`), exposes real-time percentage progress, and tracks step execution logs.
+| Capability | 🐂 **OxMQ** (Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
+| :--- | :--- | :--- |
+| **Target Runtime** | **Java 21+** (OpenJDK, Temurin, GraalVM) | **Node.js 16+** / TypeScript |
+| **Concurrency Model** | **Project Loom Virtual Threads** (`newVirtualThreadPerTaskExecutor`) | **Single-Threaded Event Loop** (with Worker Threads for sandboxing) |
+| **I/O Blocking Behavior** | Virtual threads unmount from carrier threads during blocking I/O | Non-blocking async/await promises |
+| **CPU-Intensive Tasks** | Multi-core JVM execution across all CPU cores natively | Requires spawning separate OS sandboxed worker processes |
+| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ v5 Lua scripts** | **Official BullMQ v5 Lua scripts** |
+| **Redis Key Topology** | Standard `bull:<queue>:*` naming convention | Standard `bull:<queue>:*` naming convention |
+| **Wire Protocol Interop** | 100% compatible (can produce or consume across languages) | 100% compatible (can produce or consume across languages) |
+| **Job Lifecycle States** | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED |
+| **DAG Workflows** | Native `FlowProducer` with parent-child trees | Native `FlowProducer` with parent-child trees |
+| **Rate Limiting** | Sliding window token bucket with `groupKey` | Sliding window token bucket with `groupKey` |
+| **Web Dashboard** | Native compatibility with **Bull-Board UI** | Native compatibility with **Bull-Board UI** |
+| **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, Actuator) | Express, Fastify, NestJS BullMQ module |
+| **License** | **Apache 2.0** | **MIT** |
 
 ---
 
-## 🧪 Reproducible JMH Benchmarks
+## 🔬 Deep Dive: Concurrency Architecture
 
-OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in `oxmq-benchmarks/` to measure producer and consumer throughput in your specific environment:
+### Single-Threaded Event Loop vs. Multi-Core Loom Virtual Threads
+
+1. **Node.js / BullMQ Event Loop**:
+   - BullMQ runs on Node.js's single-threaded event loop.
+   - Ideal for lightweight async I/O.
+   - For CPU-heavy work (e.g. video processing, cryptography, PDF generation, large JSON parsing), Node.js workers must fork separate child processes ("sandboxed workers") to avoid blocking the main event loop.
+
+2. **Java 21 / OxMQ Virtual Threads**:
+   - OxMQ dispatches every claimed task to an unpinned Java 21 Virtual Thread.
+   - Virtual threads unmount during network delays, database queries, and blocking socket I/O with negligible memory overhead (~1 KB per thread).
+   - Compute-heavy and blocking I/O tasks run across all available CPU cores concurrently without child-process IPC overhead.
+
+### Polyglot Coexistence on the Same Redis Cluster
+
+Because OxMQ uses BullMQ's exact Lua scripts and Redis key schemas:
+- A TypeScript/Node.js API can enqueue jobs with BullMQ that an OxMQ worker in Java processes.
+- A Java microservice can enqueue jobs with OxMQ that a Python or Node.js BullMQ worker processes.
+- Both can be monitored simultaneously on the same Bull-Board dashboard!
+
+---
+
+## 🧪 Measuring Performance in Your Environment
+
+Because throughput and latency depend significantly on network round-trip time (RTT), payload size, Redis persistence configuration (AOF vs RDB), and worker business logic, **we encourage running empirical benchmarks on your target hardware**:
+
+OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in `oxmq-benchmarks/`:
 
 ```bash
 # Compile benchmark suite
 ./mvnw clean test-compile -pl oxmq-benchmarks
 
-# Run JMH benchmark against local or remote Redis
+# Run benchmarks against your local or remote Redis instance
 java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.0.0.jar
 ```
-
-### Key Performance Characteristics:
-- **Atomic Lua Transitions**: Single network round-trip per state transition.
-- **Lightweight Threads**: Virtual threads unmount during network delays, allowing thousands of concurrent workers per node with minimal RAM footprint (~1 KB per thread vs 1 MB for platform threads).
-- **Pipelined Bulk Enqueue**: `queue.addBulk()` leverages Redis pipelining for high-throughput task insertion.

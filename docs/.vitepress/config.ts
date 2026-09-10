@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default defineConfig({
+export default withMermaid(
+  defineConfig({
   title: 'OxMQ',
   description: 'The Distributed Message Queue Engine for Java 21 Loom (100% BullMQ Parity)',
   base: process.env.VITEPRESS_BASE || '/',
@@ -89,4 +91,4 @@ export default defineConfig({
       copyright: 'Copyright © 2026 Gaurav Kumar Yadav & OxMQ Contributors'
     }
   }
-})
+}))

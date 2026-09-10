@@ -29,41 +29,67 @@ OxMQ resolves this by pairing **Redis atomic Lua scripts** with **Java 21 Virtua
 
 ## 🏛️ High-Level Architecture
 
-```text
-+-------------------------------------------------------------------------+
-|                           Application Layer                             |
-|                                                                         |
-|  +-------------------+  +--------------------+  +--------------------+  |
-|  |   OxmqQueue<T>    |  |    FlowProducer    |  |   @OxmqListener    |  |
-|  |    (Producer)     |  |  (DAG Workflows)   |  | (Spring Boot 3.3+) |  |
-|  +---------+---------+  +---------+----------+  +---------+----------+  |
-+------------|----------------------|-----------------------|-------------+
-             |                      |                       |              
-             v                      v                       v              
-+-------------------------------------------------------------------------+
-|                           OxMQ Core Engine                              |
-|                                                                         |
-|  +-------------------------------------------------------------------+  |
-|  |           Project Loom Virtual Thread Task Dispatcher             |  |
-|  |           (Executors.newVirtualThreadPerTaskExecutor())           |  |
-|  +-------------------------------------------------------------------+  |
-|                                                                         |
-|  +------------------+  +-------------------+  +----------------------+  |
-|  |  Lock Watchdog   |  |  Token Bucket     |  |  Micrometer Metrics  |  |
-|  | & Auto-Extension |  |   Rate Limiter    |  |   & Redis Streams    |  |
-|  +------------------+  +-------------------+  +----------------------+  |
-+-----------------------------------|-------------------------------------+
-                                    | EVALSHA
-                                    v
-+-------------------------------------------------------------------------+
-|                  Redis Storage (BullMQ Wire-Compatible)                 |
-|                                                                         |
-|   bull:<queue>:wait      [FIFO List]       bull:<queue>:<id>   [Hash]   |
-|   bull:<queue>:active    [Active List]     bull:<queue>:events [Stream] |
-|   bull:<queue>:delayed   [Timestamp ZSet]  bull:<queue>:stalled[ZSet]   |
-|   bull:<queue>:completed [TTL ZSet]        bull:<queue>:failed [ZSet]   |
-+-------------------------------------------------------------------------+
+```mermaid
+graph TB
+    subgraph App["Application Layer (Java 21+)"]
+        Producer["OxmqQueue&lt;T&gt;<br/>(Producer API)"]
+        Flow["FlowProducer<br/>(DAG Workflows)"]
+        SpringListener["@OxmqListener<br/>(Spring Boot 3)"]
+    end
+
+    subgraph Engine["OxMQ Core Engine (Virtual Threads)"]
+        Loom["Loom Task Dispatcher<br/>Executors.newVirtualThreadPerTaskExecutor()"]
+        Watchdog["Lock Watchdog<br/>Auto-Extension Heartbeat"]
+        Limiter["Rate Limiter<br/>Sliding Token Bucket"]
+        Telemetry["OxmqMetrics<br/>Micrometer &amp; Streams"]
+    end
+
+    subgraph Redis["Redis Storage Engine (BullMQ Wire-Compatible)"]
+        Wait["bull:&lt;queue&gt;:wait<br/>[FIFO List]"]
+        Active["bull:&lt;queue&gt;:active<br/>[Active List]"]
+        Delayed["bull:&lt;queue&gt;:delayed<br/>[Timestamp ZSet]"]
+        Completed["bull:&lt;queue&gt;:completed<br/>[TTL ZSet]"]
+        Failed["bull:&lt;queue&gt;:failed<br/>[Failed ZSet]"]
+        JobHash["bull:&lt;queue&gt;:&lt;id&gt;<br/>[Job Metadata Hash]"]
+        EventsStream["bull:&lt;queue&gt;:events<br/>[Redis Stream]"]
+    end
+
+    Producer -->|add / addBulk| Loom
+    Flow -->|add DAG tree| Loom
+    SpringListener --> Loom
+
+    Loom -->|Claim / Finish| Wait
+    Loom -->|Process| Active
+    Loom -->|Schedule| Delayed
+    Loom -->|Finish| Completed
+    Loom -->|Fail| Failed
+    Watchdog -.->|extendLock-2.lua| Active
+    Limiter -.->|Token Bucket| Wait
+    Loom -->|Metadata| JobHash
+    Telemetry -->|XADD| EventsStream
+
+    style App fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#f8fafc
+    style Engine fill:#1e293b,stroke:#f97316,stroke-width:2px,color:#f8fafc
+    style Redis fill:#1e293b,stroke:#ef4444,stroke-width:2px,color:#f8fafc
+
+    style Producer fill:#2563eb,stroke:#60a5fa,stroke-width:1px,color:#ffffff
+    style Flow fill:#0284c7,stroke:#38bdf8,stroke-width:1px,color:#ffffff
+    style SpringListener fill:#059669,stroke:#34d399,stroke-width:1px,color:#ffffff
+
+    style Loom fill:#d97706,stroke:#fbbf24,stroke-width:1px,color:#ffffff
+    style Watchdog fill:#b45309,stroke:#f59e0b,stroke-width:1px,color:#ffffff
+    style Limiter fill:#b45309,stroke:#f59e0b,stroke-width:1px,color:#ffffff
+    style Telemetry fill:#b45309,stroke:#f59e0b,stroke-width:1px,color:#ffffff
+
+    style Wait fill:#dc2626,stroke:#f87171,stroke-width:1px,color:#ffffff
+    style Active fill:#ea580c,stroke:#fb923c,stroke-width:1px,color:#ffffff
+    style Delayed fill:#7c3aed,stroke:#a78bfa,stroke-width:1px,color:#ffffff
+    style Completed fill:#16a34a,stroke:#4ade80,stroke-width:1px,color:#ffffff
+    style Failed fill:#991b1b,stroke:#f87171,stroke-width:1px,color:#ffffff
+    style JobHash fill:#475569,stroke:#94a3b8,stroke-width:1px,color:#ffffff
+    style EventsStream fill:#475569,stroke:#94a3b8,stroke-width:1px,color:#ffffff
 ```
+
 
 ---
 
