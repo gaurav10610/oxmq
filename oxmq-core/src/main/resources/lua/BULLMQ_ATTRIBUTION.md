@@ -1,6 +1,6 @@
 # BullMQ Lua Scripts Attribution & License
 
-The Lua scripts in this directory are adapted directly from **[BullMQ](https://github.com/taskforcesh/bullmq)**, an open-source project by **[Taskforce.sh](https://taskforce.sh)** (created by Manuel Astudillo and the BullMQ contributors).
+The Lua scripts in this directory are adapted directly from **[BullMQ](https://github.com/taskforcesh/bullmq)**, an open-source project by **[Taskforce.sh](https://taskforce.sh)** and the BullMQ community.
 
 BullMQ is licensed under the **MIT License**:
 
@@ -28,4 +28,4 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-OxMQ is profoundly grateful to the Taskforce.sh team and BullMQ contributors for their world-class engineering and stewardship of Redis-based job queues.
+OxMQ is profoundly grateful to the BullMQ community and Taskforce.sh for their world-class engineering and stewardship of Redis-based job queues.

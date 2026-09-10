@@ -83,5 +83,5 @@ java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.0.0-SNAPSHOT.jar
 
 ## 🙏 Attribution
 
-OxMQ proudly stands on the shoulders of giants. We express our sincere appreciation to **[Taskforce.sh](https://taskforce.sh)** and **Manuel Astudillo ([@manast](https://github.com/manast))** for originating and maintaining the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project under the MIT license. OxMQ directly reuses the official BullMQ Lua scripts to deliver 100% wire and functional parity in the Java ecosystem.
+OxMQ proudly stands on the shoulders of giants. We express our sincere appreciation to the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project and its community for originating and maintaining world-class Redis queue architectures under the permissive MIT license. OxMQ directly reuses the official BullMQ Lua scripts to deliver 100% wire and functional parity in the Java ecosystem.
 

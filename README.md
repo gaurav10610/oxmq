@@ -361,9 +361,9 @@ Explore our comprehensive technical guides in [`docs/`](docs/):
 
 ## 🙏 Attribution & Standing on the Shoulders of Giants
 
-OxMQ is proud to build upon the groundbreaking work of **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community.
+OxMQ is proud to build upon the groundbreaking architectural foundation of the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project and its community.
 
-By adopting BullMQ's official, battle-tested Lua scripts and proven Redis key conventions, OxMQ inherits years of production hardening across thousands of distributed systems worldwide. We are deeply grateful to the BullMQ authors and contributors for open-sourcing their world-class queue architecture under the permissive MIT license. OxMQ brings that proven foundation into the modern Java 21+ ecosystem with native Project Loom Virtual Threads.
+By adopting BullMQ's official, battle-tested Lua scripts and proven Redis key conventions, OxMQ inherits years of production hardening across thousands of distributed systems worldwide. We express our sincere gratitude to the BullMQ open-source community for developing and sharing their world-class queue architecture under the permissive MIT license. OxMQ brings that proven foundation into the modern Java 21+ ecosystem with native Project Loom Virtual Threads.
 
 The full license notice and attribution for BullMQ's Lua scripts can be found in [`oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md`](oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
