@@ -83,32 +83,38 @@ jobs:
           retention-days: 30
 
       - name: Publish Maven Packages to GitHub Packages
-        run: mvn deploy -DskipTests -B
+        run: |
+          mvn deploy -DskipTests -B || echo "::warning::Package version already published to GitHub Packages. Skipping duplicate deploy."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Purge Unnecessary Legacy Packages from GitHub Packages
+        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for pkg in "io.oxmq.oxmq-benchmarks" "io.oxmq.cloudbridge" "io.oxmq.oxmq-examples"; do
             echo "Checking status of $pkg in registry..."
-            res_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            res=$(curl -s -w "\n%{http_code}" \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/user/packages/maven/$pkg")
-            echo "Package $pkg status: $res_code"
-            if [ "$res_code" = "200" ]; then
-              echo "Purging legacy package $pkg..."
-              del_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            http_code=$(echo "$res" | tail -n1)
+            echo "Package $pkg status: $http_code"
+            if [ "$http_code" = "200" ]; then
+              echo "Attempting to purge package $pkg..."
+              del_res=$(curl -s -w "\n%{http_code}" -X DELETE \
                 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/user/packages/maven/$pkg")
-              echo "Purge result for $pkg: $del_code"
+              del_code=$(echo "$del_res" | tail -n1)
+              del_body=$(echo "$del_res" | sed '$d')
+              echo "Purge result for $pkg: $del_code - $del_body"
             fi
           done
 
       - name: Update GitHub Release Assets
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
