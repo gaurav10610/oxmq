@@ -17,6 +17,10 @@
     <name>OxMQ :: Examples</name>
     <description>Showcase of real-world production projects built on OxMQ</description>
 
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
     <modules>
         <module>cloudbridge</module>
     </modules>

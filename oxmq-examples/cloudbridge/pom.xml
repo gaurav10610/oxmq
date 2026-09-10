@@ -17,6 +17,10 @@
     <name>OxMQ :: CloudBridge (Showcase App)</name>
     <description>Multi-Cloud Asset Sync &amp; Backup Pipeline (GitHub, Dropbox, Box)</description>
 
+    <properties>
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
     <dependencies>
         <!-- OxMQ Spring Boot Starter -->
         <dependency>

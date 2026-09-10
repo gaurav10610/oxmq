@@ -69,9 +69,10 @@ jobs:
       - name: Prepare Release Artifacts
         run: |
           mkdir -p release-artifacts
-          for jar in $(find . -maxdepth 4 -path "*/target/*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*.original"); do
-            cp "$jar" release-artifacts/
-          done
+          # Only include essential packages (oxmq-core and oxmq-spring-boot-starter)
+          cp oxmq-core/target/oxmq-core-*.jar release-artifacts/
+          cp oxmq-spring-boot-starter/target/oxmq-spring-boot-starter-*.jar release-artifacts/
+          rm -f release-artifacts/*-sources.jar release-artifacts/*-javadoc.jar release-artifacts/*.original
           ls -lh release-artifacts/
 
       - name: Upload Actions Build Artifacts
@@ -95,16 +96,18 @@ jobs:
             echo "Latest release identified as: $LATEST_TAG"
             TAG_VER="${LATEST_TAG#v}"
 
-            # Create alias files matching release naming convention (e.g., oxmq-core-1.0.0.jar)
+            mkdir -p upload-assets
+            # Standardize release asset filenames matching release tag version (e.g., oxmq-core-1.0.0.jar)
             for f in release-artifacts/*-SNAPSHOT.jar; do
               if [ -f "$f" ]; then
                 base_name=$(basename "$f" | sed -E 's/-[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT\.jar//')
-                cp "$f" "release-artifacts/${base_name}-${TAG_VER}.jar"
+                cp "$f" "upload-assets/${base_name}-${TAG_VER}.jar"
               fi
             done
 
-            echo "Uploading fresh build assets to release $LATEST_TAG..."
-            gh release upload "$LATEST_TAG" release-artifacts/*.jar --clobber
+            echo "Uploading essential release assets to $LATEST_TAG:"
+            ls -lh upload-assets/
+            gh release upload "$LATEST_TAG" upload-assets/*.jar --clobber
             echo "Release $LATEST_TAG assets successfully updated."
           else
             echo "No existing release found. Skipping release asset upload."
