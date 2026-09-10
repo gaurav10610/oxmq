@@ -1,19 +1,15 @@
 # 🚀 Getting Started with OxMQ
-### *The High-Performance, Virtual Thread-Native Distributed Job Queue for Java 21+*
+### *The Production-Grade, Virtual Thread-Native Distributed Job Queue & DAG Engine for Java 21+*
 
-Welcome to **OxMQ**, the production-grade distributed message queue and DAG workflow engine engineered natively for **Java 21 (Project Loom Virtual Threads)** and **Redis**.
-
-This guide walks you from zero to production background job processing in minutes.
+Welcome to **OxMQ**! OxMQ brings the battle-tested power of **BullMQ** to the Java 21 ecosystem, pairing official BullMQ Redis Lua scripts with **Project Loom Virtual Threads** for high-throughput concurrent I/O.
 
 ---
 
 ## 📦 1. Installation
 
-OxMQ is available via **JitPack** or as direct JAR binaries from our [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0).
+OxMQ is distributed via JitPack and pre-built GitHub releases.
 
 ### Maven (`pom.xml`)
-
-Add the JitPack repository and the OxMQ dependency:
 
 ```xml
 <repositories>
@@ -59,21 +55,36 @@ dependencies {
 
 ## 🗄️ 2. Starting Redis
 
-OxMQ uses Redis 6.2+ or Redis 7.x (or Valkey) as its high-speed atomic state store.
+OxMQ works with any standard Redis 6.2+, Redis 7.x, or Valkey instance.
 
-Start a local Redis container in 1 second:
 ```bash
+# Option A: Single Redis instance via Docker
 docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
-```
 
-Or spin up our full developer observability stack (Redis + Bull-Board + Prometheus + Grafana):
-```bash
+# Option B: Full local observability stack (Redis + Bull-Board + Prometheus + Grafana)
 docker compose up -d
 ```
 
 ---
 
-## 📤 3. Producing Jobs (5 Lines of Code)
+## 🔄 3. Understanding the Job Lifecycle
+
+Every OxMQ job transitions through a strictly enforced, atomic state machine managed by official BullMQ Lua scripts:
+
+<p align="center">
+  <img src="assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
+</p>
+
+* **`WAITING`**: Ready to be claimed by an available worker.
+* **`ACTIVE`**: Locked and being executed by a worker Virtual Thread.
+* **`DELAYED`**: Scheduled for future execution via Redis sorted set timestamps.
+* **`WAITING_CHILDREN`**: A parent DAG job waiting for all child jobs to complete.
+* **`COMPLETED`**: Successfully finished, storing its return value in Redis hash.
+* **`FAILED`**: Exhausted all retry attempts or failed with non-recoverable error.
+
+---
+
+## 📤 4. Producing Jobs
 
 OxMQ natively serializes Java 21 `record` and POJO classes to JSON.
 
@@ -86,7 +97,7 @@ import java.time.Duration;
 // 1. Define your payload (Java 21 Records natively supported)
 public record OrderInvoice(String orderId, String customerEmail, double amount) {}
 
-public class ProducerExample {
+public class InvoiceProducer {
     public static void main(String[] args) {
         // 2. Initialize Queue
         OxmqQueue<OrderInvoice> queue = OxmqQueue.<OrderInvoice>builder()
@@ -102,7 +113,7 @@ public class ProducerExample {
                 JobOptions.builder()
                         .delay(Duration.ofSeconds(5))
                         .attempts(3)
-                        .exponentialBackoff(Duration.ofSeconds(1))
+                        .exponentialBackoff(Duration.ofSeconds(1), Duration.ofSeconds(30))
                         .build()
         );
 
@@ -111,17 +122,30 @@ public class ProducerExample {
 }
 ```
 
+### Job Options Reference
+
+| Option | Method | Description |
+| :--- | :--- | :--- |
+| **Delay** | `.delay(Duration.ofSeconds(10))` | Schedule job execution in the future. |
+| **Retries** | `.attempts(3)` | Maximum number of retry attempts. |
+| **Exponential Backoff** | `.exponentialBackoff(initial, max)` | Doubles delay per retry attempt up to max. |
+| **Fixed Backoff** | `.fixedBackoff(Duration.ofSeconds(5))` | Constant delay between retries. |
+| **Custom Job ID** | `.jobId("idempotent-order-123")` | Deduplication window to avoid duplicate execution. |
+| **LIFO** | `.lifo(true)` | Last-in, first-out execution priority. |
+| **Priority** | `.priority(1)` | Lower integer = higher priority dispatch. |
+| **Cleanup** | `.removeOnComplete(true)` | Automatically delete job hash upon success. |
+
 ---
 
-## ⚡ 4. Consuming Jobs with Java 21 Virtual Threads
+## ⚡ 5. Consuming Jobs with Virtual Threads
 
-Because OxMQ runs natively on **Java 21 Project Loom (Virtual Threads)**, you can comfortably configure concurrency of 100, 500, or 1,000+ workers per node without thread pool starvation.
+Because OxMQ runs natively on **Java 21 Project Loom (Virtual Threads)**, you can configure high concurrency without exhausting operating system carrier threads.
 
 ```java
 import io.oxmq.OxmqWorker;
 import java.util.Map;
 
-public class ConsumerExample {
+public class InvoiceConsumer {
     public static void main(String[] args) {
         // Initialize Worker with 100 Virtual Threads
         OxmqWorker<OrderInvoice> worker = OxmqWorker.<OrderInvoice>builder()
@@ -131,19 +155,19 @@ public class ConsumerExample {
                 .concurrency(100) // 100 concurrent Virtual Threads!
                 .processor(job -> {
                     OrderInvoice invoice = job.getData();
-                    System.out.printf("Generating invoice for order %s (VirtualThread: %b)%n",
+                    System.out.printf("Processing order %s (VirtualThread: %b)%n",
                             invoice.orderId(), Thread.currentThread().isVirtual());
 
-                    // Report progress in real-time
+                    // Real-time progress updates (reflected live in Bull-Board)
                     job.updateProgress(25);
-                    job.log("Fetching order items from database...");
+                    job.log("Fetching order line items...");
 
-                    // Blocking HTTP / I/O calls do NOT block OS carrier threads!
+                    // Blocking I/O does NOT block carrier threads
                     job.updateProgress(75);
-                    job.log("Rendering PDF invoice...");
+                    job.log("Generating PDF and uploading to S3...");
 
                     job.updateProgress(100);
-                    return Map.of("pdfUrl", "https://s3.amazonaws.com/invoices/" + invoice.orderId() + ".pdf");
+                    return Map.of("status", "SUCCESS", "invoiceId", "INV-" + invoice.orderId());
                 })
                 .build();
 
@@ -154,9 +178,96 @@ public class ConsumerExample {
 
 ---
 
-## 🍃 5. Spring Boot 3 Quickstart
+## 🌲 6. Parent-Child DAG Workflows (`FlowProducer`)
 
-With `oxmq-spring-boot-starter`, you get declarative listeners and Actuator integration out-of-the-box.
+OxMQ includes a zero-dependency, atomic DAG workflow engine. A parent job automatically enters `WAITING_CHILDREN` and is activated in Redis only after all parallel child tasks succeed:
+
+<p align="center">
+  <img src="assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
+</p>
+
+```java
+import io.oxmq.FlowProducer;
+import io.oxmq.model.FlowJobNode;
+import java.util.List;
+
+FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
+
+// 1. Define child tasks that run in parallel
+FlowJobNode child1 = FlowJobNode.builder()
+        .queueName("video-chunks")
+        .name("encode-1080p")
+        .data(new VideoChunk("vid_101", "1080p"))
+        .build();
+
+FlowJobNode child2 = FlowJobNode.builder()
+        .queueName("video-chunks")
+        .name("encode-720p")
+        .data(new VideoChunk("vid_101", "720p"))
+        .build();
+
+// 2. Define parent job waiting on child completion
+FlowJobNode parentJob = FlowJobNode.builder()
+        .queueName("video-assembly")
+        .name("stitch-and-publish")
+        .data(new VideoAssembly("vid_101"))
+        .children(List.of(child1, child2))
+        .build();
+
+// 3. Atomically enqueue DAG into Redis
+flowProducer.add(parentJob);
+```
+
+When each child worker completes, BullMQ's Lua scripts record the child result into the parent's `childrenValues` hash and decrement its pending dependency count. When all children finish, the parent is atomically moved to `WAITING` with zero external schedulers!
+
+---
+
+## ⚡ 7. High-Throughput Batch Dequeue (`OxmqBatchWorker`)
+
+For database ingestion into systems like ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), or Snowflake, OxMQ provides `OxmqBatchWorker` to dequeue up to $N$ jobs in a single Redis transaction:
+
+```java
+import io.oxmq.OxmqBatchWorker;
+import java.time.Duration;
+import java.util.List;
+
+OxmqBatchWorker<ClickstreamEvent> batchWorker = OxmqBatchWorker.<ClickstreamEvent>builder()
+        .queueName("clickstream-events")
+        .redisUri("redis://localhost:6379")
+        .batchSize(100)                      // Dequeue up to 100 jobs at once
+        .batchTimeout(Duration.ofMillis(200)) // Or flush every 200ms
+        .processor(batch -> {
+            // Write entire batch to ClickHouse in 1 bulk insert
+            clickHouseService.bulkInsert(batch);
+            return "INSERTED_" + batch.size();
+        })
+        .build();
+
+batchWorker.start();
+```
+
+---
+
+## ⏱️ 8. Sliding-Window Rate Limiting
+
+Protect external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans with distributed token-bucket rate limiting:
+
+```java
+OxmqWorker<AiPrompt> worker = OxmqWorker.<AiPrompt>builder()
+        .queueName("openai-prompts")
+        .redisUri("redis://localhost:6379")
+        .rateLimit(60, Duration.ofMinutes(1)) // Max 60 requests per minute across all instances
+        .processor(job -> openAiService.complete(job.getData()))
+        .build();
+
+worker.start();
+```
+
+---
+
+## 🍃 9. Spring Boot 3 Integration (`oxmq-spring-boot-starter`)
+
+OxMQ provides zero-boilerplate autoconfiguration for Spring Boot 3:
 
 ### `application.yml`
 ```yaml
@@ -172,19 +283,19 @@ oxmq:
 ```java
 @SpringBootApplication
 @EnableOxmq
-public class BillingMicroservice {
+public class OrderApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(BillingMicroservice.class, args);
+        SpringApplication.run(OrderApplication.class, args);
     }
 
     @Component
-    public static class InvoiceListener {
+    public static class OrderEventListener {
 
         @OxmqListener(queue = "order-invoices", concurrency = 50)
         public String handleInvoice(Job<OrderInvoice> job) {
             job.updateProgress(50);
-            job.log("Invoice generated successfully");
+            job.log("Invoice processed successfully");
             return "SUCCESS";
         }
     }
@@ -193,21 +304,22 @@ public class BillingMicroservice {
 
 ---
 
-## 📊 6. Real-Time Observability & Management
+## 🖥️ 10. Instant Bull-Board Web UI
 
-1. **Bull-Board Dashboard (Port 3000)**: Open `http://localhost:3000` to inspect queues, retry failed jobs, and view live step logs.
-2. **Prometheus & Grafana (Port 3001)**: Open `http://localhost:3001` (login: `admin` / `admin`) to monitor throughput, error rates, and p99 latency percentiles.
+Because OxMQ uses BullMQ's standard Redis schema, you can inspect your queues using **Bull-Board**:
+
+```bash
+# Run standalone via npx
+npx @bull-board/cli --redis redis://localhost:6379 --queues order-invoices,video-chunks,video-assembly
+```
+
+Open `http://localhost:3000` to inspect queue counts, live jobs, step logs, and manually trigger retries.
 
 ---
 
-## 📖 Deep-Dive Guides
+## 🙏 Attribution
 
-* 🌲 [Parent-Child DAG Workflows Guide](DAG_WORKFLOWS.md)
-* ⚡ [High-Throughput Batch Dequeue Guide](BATCH_INGESTION.md)
-* ⏱️ [Sliding-Window Rate Limiting Guide](RATE_LIMITING.md)
-* 🍃 [Spring Boot 3 Deep-Dive](SPRING_BOOT.md)
-* 📊 [Observability & Telemetry Guide](OBSERVABILITY.md)
-* ⚖️ [OxMQ vs BullMQ, JobRunr, Quartz & Kafka Comparison](COMPARISON.md)
+OxMQ is proud to reuse the official, battle-tested Lua scripts created by **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community under the MIT license. Full attribution details can be found in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 

@@ -88,8 +88,40 @@ public class JobOptions {
         return parentKey;
     }
 
+    private boolean lifo = false;
+
+    public boolean isLifo() {
+        return lifo;
+    }
+
+    public void setLifo(boolean lifo) {
+        this.lifo = lifo;
+    }
+
     public void setParentKey(String parentKey) {
         this.parentKey = parentKey;
+    }
+
+    public java.util.Map<String, Object> toMap() {
+        java.util.Map<String, Object> map = new java.util.HashMap<>();
+        if (jobId != null) map.put("jobId", jobId);
+        map.put("delay", delayMs);
+        map.put("attempts", attempts);
+        map.put("removeOnComplete", removeOnComplete);
+        map.put("removeOnFail", removeOnFail);
+        map.put("priority", priority);
+        map.put("lifo", lifo);
+        if (parentKey != null) map.put("parentKey", parentKey);
+        if (backoff != null) {
+            if (backoff instanceof BackoffStrategy.Exponential exp) {
+                map.put("backoff", java.util.Map.of("type", "exponential", "delay", exp.initialDelayMs()));
+            } else if (backoff instanceof BackoffStrategy.Fixed fixed) {
+                map.put("backoff", java.util.Map.of("type", "fixed", "delay", fixed.delayMs()));
+            } else {
+                map.put("backoff", java.util.Map.of("type", "fixed", "delay", backoff.calculateDelayMs(1)));
+            }
+        }
+        return map;
     }
 
     public static class Builder {

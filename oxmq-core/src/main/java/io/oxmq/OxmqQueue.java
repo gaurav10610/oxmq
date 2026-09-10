@@ -5,7 +5,9 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
+import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScript;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
@@ -30,8 +32,10 @@ public class OxmqQueue<T> implements Queue<T> {
 
     private final String name;
     private final String prefix;
+    private final QueueKeys queueKeys;
     private final RedisConnectionManager connectionManager;
     private final LuaScriptManager scriptManager;
+    private final BullScripts bullScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final Class<T> payloadClass;
@@ -40,8 +44,10 @@ public class OxmqQueue<T> implements Queue<T> {
                      JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
         this.name = Objects.requireNonNull(name, "Queue name must not be null");
         this.prefix = "bull:" + name;
+        this.queueKeys = new QueueKeys("bull", name);
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
+        this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.metrics = metrics != null ? metrics : new OxmqMetrics();
         this.payloadClass = payloadClass;
@@ -68,6 +74,10 @@ public class OxmqQueue<T> implements Queue<T> {
         return prefix;
     }
 
+    public QueueKeys getQueueKeys() {
+        return queueKeys;
+    }
+
     @Override
     public Job<T> add(String jobName, T data) {
         return add(jobName, data, JobOptions.defaults());
@@ -79,32 +89,21 @@ public class OxmqQueue<T> implements Queue<T> {
         JobOptions options = opts != null ? opts : JobOptions.defaults();
 
         String serializedData = serializer.serialize(data);
-        String serializedOpts = serializer.serialize(options);
         long now = System.currentTimeMillis();
         long delayMs = options.getDelayMs();
         String customJobId = options.getJobId() != null ? options.getJobId() : "";
-        String parentKey = options.getParentKey() != null ? options.getParentKey() : "";
 
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
+        Map<String, Object> optsMap = options.toMap();
 
-        String[] keys = new String[]{
-                prefix + ":wait",
-                prefix + ":delayed",
-                prefix + ":id",
-                prefix + ":events",
-                prefix + ":meta"
-        };
-
-        String jobId = scriptManager.eval(conn, LuaScript.ADD_JOB, ScriptOutputType.VALUE, keys,
-                prefix,
-                customJobId,
-                jobName,
-                serializedData != null ? serializedData : "{}",
-                serializedOpts != null ? serializedOpts : "{}",
-                String.valueOf(now),
-                String.valueOf(delayMs),
-                parentKey
-        );
+        StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+        String jobId;
+        if (delayMs > 0) {
+            jobId = bullScripts.addDelayedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+        } else if (options.getPriority() > 0) {
+            jobId = bullScripts.addPrioritizedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
+        } else {
+            jobId = bullScripts.addStandardJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now);
+        }
 
         metrics.recordJobEnqueued(name);
         log.debug("Enqueued job {} [id: {}] in queue {}", jobName, jobId, name);
@@ -172,28 +171,20 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public void pause() {
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        scriptManager.eval(conn, LuaScript.PAUSE_QUEUE, ScriptOutputType.INTEGER,
-                new String[]{prefix + ":meta", prefix + ":events"},
-                "pause"
-        );
+        bullScripts.pause(connectionManager.getBinaryConnection(), queueKeys, true);
         log.info("Paused queue {}", name);
     }
 
     @Override
     public void resume() {
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        scriptManager.eval(conn, LuaScript.PAUSE_QUEUE, ScriptOutputType.INTEGER,
-                new String[]{prefix + ":meta", prefix + ":events"},
-                "resume"
-        );
+        bullScripts.pause(connectionManager.getBinaryConnection(), queueKeys, false);
         log.info("Resumed queue {}", name);
     }
 
     @Override
     public boolean isPaused() {
         RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-        String paused = sync.hget(prefix + ":meta", "paused");
+        String paused = sync.hget(queueKeys.toKey("meta"), "paused");
         return "1".equals(paused) || "true".equalsIgnoreCase(paused);
     }
 
@@ -202,11 +193,12 @@ public class OxmqQueue<T> implements Queue<T> {
         RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
         try {
             return switch (state) {
-                case WAITING -> sync.llen(prefix + ":wait");
-                case ACTIVE -> sync.llen(prefix + ":active");
-                case DELAYED -> sync.zcard(prefix + ":delayed");
-                case COMPLETED -> sync.zcard(prefix + ":completed");
-                case FAILED -> sync.zcard(prefix + ":failed");
+                case WAITING -> sync.llen(queueKeys.toKey("wait"));
+                case ACTIVE -> sync.llen(queueKeys.toKey("active"));
+                case DELAYED -> sync.zcard(queueKeys.toKey("delayed"));
+                case COMPLETED -> sync.zcard(queueKeys.toKey("completed"));
+                case FAILED -> sync.zcard(queueKeys.toKey("failed"));
+                case WAITING_CHILDREN -> sync.zcard(queueKeys.toKey("waiting-children"));
                 default -> 0L;
             };
         } catch (Exception e) {
@@ -216,36 +208,19 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long clean(long graceMs, int limit, JobState state) {
-        String targetKey = switch (state) {
-            case COMPLETED -> prefix + ":completed";
-            case FAILED -> prefix + ":failed";
+        String set = switch (state) {
+            case COMPLETED -> "completed";
+            case FAILED -> "failed";
+            case DELAYED -> "delayed";
             default -> throw new IllegalArgumentException("Cannot clean state: " + state);
         };
-        long cutoff = System.currentTimeMillis() - graceMs;
-        Long cleaned = scriptManager.eval(connectionManager.getCommandConnection(), LuaScript.CLEAN_QUEUE,
-                ScriptOutputType.INTEGER,
-                new String[]{targetKey},
-                prefix,
-                String.valueOf(cutoff),
-                String.valueOf(limit)
-        );
+        Long cleaned = bullScripts.cleanJobsInSet(connectionManager.getBinaryConnection(), queueKeys, set, graceMs, limit);
         return cleaned != null ? cleaned : 0L;
     }
 
     @Override
     public void obliterate() {
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        String[] keys = new String[]{
-                prefix + ":wait",
-                prefix + ":active",
-                prefix + ":delayed",
-                prefix + ":completed",
-                prefix + ":failed",
-                prefix + ":stalled",
-                prefix + ":meta",
-                prefix + ":limiter"
-        };
-        scriptManager.eval(conn, LuaScript.OBLITERATE, ScriptOutputType.INTEGER, keys, prefix);
+        bullScripts.obliterate(connectionManager.getBinaryConnection(), queueKeys, 1000, true);
         log.info("Obliterated queue {}", name);
     }
 

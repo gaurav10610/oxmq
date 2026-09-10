@@ -272,6 +272,11 @@ FlowJobNode parentJob = FlowJobNode.builder()
 // Atomically enqueue the DAG into Redis
 flowProducer.add(parentJob);
 ```
+
+<p align="center">
+  <img src="docs/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution Animation" width="100%">
+</p>
+
 *The parent job automatically enters `WAITING_CHILDREN` in Redis and triggers only when both 1080p and 720p encodings finish successfully!*
 
 ---
@@ -347,19 +352,20 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 
 Explore our comprehensive technical guides in [`docs/`](docs/):
 
-* 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: 0-to-1 setup for pure Java and Spring Boot 3.
-* 🌲 **[Parent-Child DAG Workflows](docs/DAG_WORKFLOWS.md)**: Multi-stage pipelines, `FlowProducer`, and dependency resolution.
-* ⚡ **[High-Throughput Batch Ingestion](docs/BATCH_INGESTION.md)**: `OxmqBatchWorker` for bulk ClickHouse, Postgres & Elasticsearch writes.
-* ⏱️ **[Sliding-Window Rate Limiting](docs/RATE_LIMITING.md)**: Token-bucket rate limiting for OpenAI, Stripe, and third-party APIs.
-* 🧩 **[Extensibility & SPI Architecture](docs/EXTENSIBILITY.md)**: Pluggable serializers (Avro/Protobuf), custom backoffs, tracing middleware, and telemetry sinks.
-* 🍃 **[Spring Boot 3 Deep-Dive](docs/SPRING_BOOT.md)**: Auto-configuration, `@OxmqListener`, Actuator health, and metrics.
-* 📊 **[Observability & Metrics](docs/OBSERVABILITY.md)**: Micrometer, Prometheus, Grafana, and `QueueEvents` Pub/Sub.
-* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: In-depth comparison of OxMQ vs BullMQ, JobRunr Pro, Quartz, Kafka, and RabbitMQ.
-* 🛡️ **[Production Hardening Checklist](docs/PRODUCTION_CHECKLIST.md)**: Redis configuration, memory sizing, Sentinel/Cluster, and Kubernetes graceful shutdown.
-* 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Redis data structures, atomic Lua state machine, and Virtual Thread concurrency model.
-* 📋 **[Product Requirements Document (PRD)](docs/PRD.md)**: Specifications, market analysis, and benchmark goals ($\ge 25,000$ ops/sec).
-* 🗺️ **[Master Roadmap](docs/ROADMAP.md)**: Release milestones from v0.1.0 to v1.0.0 GA.
-* 🤝 **[Contributing Guidelines](CONTRIBUTING.md)**: Developer setup, code conventions, and pull request workflow.
+* 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
+* 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
+* ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ vs BullMQ, JobRunr, Quartz, Apache Kafka, and RabbitMQ.
+* 🎮 **[CloudBridge Showcase](oxmq-examples/cloudbridge/README.md)**: Real-world multi-cloud backup microservice with live Web UI and DAG execution.
+
+---
+
+## 🙏 Attribution & Standing on the Shoulders of Giants
+
+OxMQ is proud to build upon the groundbreaking work of **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community.
+
+By adopting BullMQ's official, battle-tested Lua scripts and proven Redis key conventions, OxMQ inherits years of production hardening across thousands of distributed systems worldwide. We are deeply grateful to the BullMQ authors and contributors for open-sourcing their world-class queue architecture under the permissive MIT license. OxMQ brings that proven foundation into the modern Java 21+ ecosystem with native Project Loom Virtual Threads.
+
+The full license notice and attribution for BullMQ's Lua scripts can be found in [`oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md`](oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 

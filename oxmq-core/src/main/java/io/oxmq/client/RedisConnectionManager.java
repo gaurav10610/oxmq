@@ -19,7 +19,11 @@ public class RedisConnectionManager implements Closeable {
     private final RedisClient redisClient;
     private final boolean ownsClient;
     private volatile StatefulRedisConnection<String, String> commandConnection;
+    private volatile StatefulRedisConnection<String, byte[]> binaryConnection;
     private volatile StatefulRedisPubSubConnection<String, String> pubSubConnection;
+
+    private static final io.lettuce.core.codec.RedisCodec<String, byte[]> BINARY_CODEC =
+            io.lettuce.core.codec.RedisCodec.of(io.lettuce.core.codec.StringCodec.UTF8, io.lettuce.core.codec.ByteArrayCodec.INSTANCE);
 
     public RedisConnectionManager(String redisUri) {
         this(RedisClient.create(RedisURI.create(Objects.requireNonNull(redisUri, "redisUri must not be null"))), true);
@@ -57,6 +61,27 @@ public class RedisConnectionManager implements Closeable {
      */
     public StatefulRedisConnection<String, String> createDedicatedConnection() {
         return redisClient.connect();
+    }
+
+    /**
+     * Gets or creates a reusable binary command connection (String keys, byte[] values) for BullMQ Lua scripts.
+     */
+    public StatefulRedisConnection<String, byte[]> getBinaryConnection() {
+        if (binaryConnection == null || !binaryConnection.isOpen()) {
+            synchronized (this) {
+                if (binaryConnection == null || !binaryConnection.isOpen()) {
+                    binaryConnection = redisClient.connect(BINARY_CODEC);
+                }
+            }
+        }
+        return binaryConnection;
+    }
+
+    /**
+     * Creates a new dedicated stateful binary command connection.
+     */
+    public StatefulRedisConnection<String, byte[]> createDedicatedBinaryConnection() {
+        return redisClient.connect(BINARY_CODEC);
     }
 
     /**
@@ -99,6 +124,13 @@ public class RedisConnectionManager implements Closeable {
             }
         } catch (Exception e) {
             log.warn("Error closing command connection", e);
+        }
+        try {
+            if (binaryConnection != null && binaryConnection.isOpen()) {
+                binaryConnection.close();
+            }
+        } catch (Exception e) {
+            log.warn("Error closing binary connection", e);
         }
         try {
             if (pubSubConnection != null && pubSubConnection.isOpen()) {

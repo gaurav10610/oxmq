@@ -1,7 +1,8 @@
 package io.oxmq.watchdog;
 
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.sync.RedisCommands;
+import io.oxmq.client.QueueKeys;
+import io.oxmq.lua.BullScripts;
 import io.oxmq.metrics.OxmqMetrics;
 import java.io.Closeable;
 import java.util.List;
@@ -12,30 +13,32 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Watchdog service that scans for orphaned/hung active jobs whose worker lock has expired,
- * re-queueing them or failing them safely.
+ * Watchdog service that scans for stalled active jobs whose worker lock has expired,
+ * re-queueing or failing them using BullMQ moveStalledJobsToWait Lua script.
  */
 public class StalledJobSentinel implements Closeable {
 
     private static final Logger log = LoggerFactory.getLogger(StalledJobSentinel.class);
 
-    private final StatefulRedisConnection<String, String> connection;
-    private final String queuePrefix;
-    private final String queueName;
+    private final StatefulRedisConnection<String, byte[]> connection;
+    private final BullScripts bullScripts;
+    private final QueueKeys queueKeys;
     private final OxmqMetrics metrics;
     private final ScheduledExecutorService scheduler;
     private final int maxStalledCount;
+    private final long checkIntervalMs;
 
-    public StalledJobSentinel(StatefulRedisConnection<String, String> connection, String queuePrefix,
-                              String queueName, OxmqMetrics metrics, long checkIntervalMs, int maxStalledCount) {
+    public StalledJobSentinel(StatefulRedisConnection<String, byte[]> connection, BullScripts bullScripts,
+                              QueueKeys queueKeys, OxmqMetrics metrics, long checkIntervalMs, int maxStalledCount) {
         this.connection = connection;
-        this.queuePrefix = queuePrefix;
-        this.queueName = queueName;
+        this.bullScripts = bullScripts != null ? bullScripts : new BullScripts();
+        this.queueKeys = queueKeys;
         this.metrics = metrics;
         this.maxStalledCount = maxStalledCount;
+        this.checkIntervalMs = checkIntervalMs;
 
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "oxmq-stalled-sentinel-" + queueName);
+            Thread t = new Thread(r, "oxmq-stalled-sentinel-" + queueKeys.getQueueName());
             t.setDaemon(true);
             return t;
         });
@@ -44,51 +47,26 @@ public class StalledJobSentinel implements Closeable {
 
     private void checkStalledJobs() {
         try {
-            RedisCommands<String, String> sync = connection.sync();
-            String activeKey = queuePrefix + ":active";
-            String waitKey = queuePrefix + ":wait";
-            String failedKey = queuePrefix + ":failed";
+            List<Object> result = bullScripts.moveStalledJobsToWait(connection, queueKeys, maxStalledCount, (int) checkIntervalMs);
+            if (result != null && result.size() >= 2) {
+                @SuppressWarnings("unchecked")
+                List<Object> failedJobs = (List<Object>) result.get(0);
+                @SuppressWarnings("unchecked")
+                List<Object> stalledJobs = (List<Object>) result.get(1);
 
-            List<String> activeJobs = sync.lrange(activeKey, 0, -1);
-            if (activeJobs == null || activeJobs.isEmpty()) {
-                return;
-            }
-
-            for (String jobId : activeJobs) {
-                String lockKey = queuePrefix + ":" + jobId + ":lock";
-                String lockExists = sync.get(lockKey);
-
-                if (lockExists == null) {
-                    // Lock has expired! Worker is dead or stalled.
-                    String jobKey = queuePrefix + ":" + jobId;
-                    String stalledCountStr = sync.hget(jobKey, "stalledCount");
-                    int stalledCount = stalledCountStr != null ? Integer.parseInt(stalledCountStr) : 0;
-                    stalledCount++;
-
-                    sync.hset(jobKey, "stalledCount", String.valueOf(stalledCount));
-                    sync.lrem(activeKey, 0, jobId);
-
-                    if (stalledCount <= maxStalledCount) {
-                        log.warn("Job {} in queue {} stalled (count {}). Re-queueing to wait list.", jobId, queueName, stalledCount);
-                        sync.lpush(waitKey, jobId);
-                        if (metrics != null) {
-                            metrics.recordJobStalled(queueName);
-                        }
-                    } else {
-                        log.error("Job {} in queue {} exceeded max stalled count ({}). Moving to failed.", jobId, queueName, maxStalledCount);
-                        sync.hmset(jobKey, java.util.Map.of(
-                                "failedReason", "Job stalled more than " + maxStalledCount + " times",
-                                "finishedOn", String.valueOf(System.currentTimeMillis())
-                        ));
-                        sync.zadd(failedKey, System.currentTimeMillis(), jobId);
-                        if (metrics != null) {
-                            metrics.recordJobFailed(queueName, null, "JobStalledException");
-                        }
+                if (failedJobs != null && !failedJobs.isEmpty()) {
+                    for (Object id : failedJobs) {
+                        log.warn("Job {} on queue {} exceeded max stalled attempts and was moved to failed", id, queueKeys.getQueueName());
+                    }
+                }
+                if (stalledJobs != null && !stalledJobs.isEmpty()) {
+                    for (Object id : stalledJobs) {
+                        log.info("Job {} on queue {} stalled and was re-queued to wait", id, queueKeys.getQueueName());
                     }
                 }
             }
         } catch (Exception e) {
-            log.warn("Error scanning stalled jobs for queue {}", queueName, e);
+            log.warn("Error checking stalled jobs in queue {}", queueKeys.getQueueName(), e);
         }
     }
 
@@ -100,8 +78,8 @@ public class StalledJobSentinel implements Closeable {
                 scheduler.shutdownNow();
             }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
             scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }

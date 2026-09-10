@@ -1,12 +1,19 @@
 package io.oxmq.model;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import java.time.Duration;
 
 /**
  * Strategy for calculating retry delay on job failure.
  */
-@JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, property = "@type")
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+@JsonSubTypes({
+    @JsonSubTypes.Type(value = BackoffStrategy.Fixed.class, name = "fixed"),
+    @JsonSubTypes.Type(value = BackoffStrategy.Exponential.class, name = "exponential")
+})
 public interface BackoffStrategy {
 
     /**
@@ -20,7 +27,7 @@ public interface BackoffStrategy {
     /**
      * Fixed backoff with constant delay.
      */
-    record Fixed(long delayMs) implements BackoffStrategy {
+    record Fixed(@JsonProperty("delay") long delayMs) implements BackoffStrategy {
         public Fixed(Duration duration) {
             this(duration.toMillis());
         }
@@ -34,7 +41,11 @@ public interface BackoffStrategy {
     /**
      * Exponential backoff: delay = initialDelayMs * 2^(attemptsMade - 1), capped at maxDelayMs.
      */
-    record Exponential(long initialDelayMs, long maxDelayMs) implements BackoffStrategy {
+    record Exponential(@JsonProperty("delay") long initialDelayMs,
+                        @JsonProperty("maxDelay") @JsonAlias("maxDelayMs") long maxDelayMs) implements BackoffStrategy {
+        public Exponential(long initialDelayMs) {
+            this(initialDelayMs, 3600_000L);
+        }
         public Exponential(Duration initialDuration) {
             this(initialDuration.toMillis(), 3600_000L); // default 1 hr max
         }
