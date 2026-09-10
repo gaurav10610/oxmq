@@ -98,7 +98,7 @@ jobs:
             # Create alias files matching release naming convention (e.g., oxmq-core-1.0.0.jar)
             for f in release-artifacts/*-SNAPSHOT.jar; do
               if [ -f "$f" ]; then
-                base_name=$(basename "$f" | sed -E 's/-[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT//')
+                base_name=$(basename "$f" | sed -E 's/-[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT\.jar//')
                 cp "$f" "release-artifacts/${base_name}-${TAG_VER}.jar"
               fi
             done
