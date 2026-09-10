@@ -8,16 +8,69 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, declarat
 
 ::: code-group
 
-```xml [Maven (pom.xml)]
-<dependency>
-    <groupId>io.oxmq</groupId>
-    <artifactId>oxmq-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
-</dependency>
+```xml [Maven (JitPack - Zero Auth)]
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<dependencies>
+    <dependency>
+        <groupId>com.github.gaurav10610.oxmq</groupId>
+        <artifactId>oxmq-spring-boot-starter</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+</dependencies>
 ```
 
-```kotlin [Gradle (build.gradle.kts)]
-implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0")
+```kotlin [Gradle (JitPack - Zero Auth)]
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
+
+dependencies {
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.0.0")
+}
+```
+
+```xml [Maven (GitHub Packages)]
+<!-- In your pom.xml -->
+<repositories>
+    <repository>
+        <id>github</id>
+        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
+    </repository>
+</repositories>
+
+<dependencies>
+    <dependency>
+        <groupId>io.oxmq</groupId>
+        <artifactId>oxmq-spring-boot-starter</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+</dependencies>
+
+<!-- Requires GitHub PAT with read:packages in ~/.m2/settings.xml -->
+```
+
+```kotlin [Gradle (GitHub Packages)]
+repositories {
+    mavenCentral()
+    maven {
+        url = uri("https://maven.pkg.github.com/gaurav10610/oxmq")
+        credentials {
+            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+        }
+    }
+}
+
+dependencies {
+    implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0")
+}
 ```
 
 :::

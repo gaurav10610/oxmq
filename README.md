@@ -109,17 +109,15 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **GitHub Packages**, **JitPack**, or download the pre-packaged JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0):
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0).
 
-### Maven (`pom.xml`)
+### Option 1: JitPack (Recommended — Zero-Auth)
 
+No GitHub token or authentication required. Simply add the JitPack repository:
+
+#### Maven (`pom.xml`)
 ```xml
 <repositories>
-    <repository>
-        <id>github</id>
-        <name>GitHub Packages</name>
-        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
-    </repository>
     <repository>
         <id>jitpack.io</id>
         <url>https://jitpack.io</url>
@@ -129,22 +127,79 @@ Add OxMQ to your project using **GitHub Packages**, **JitPack**, or download the
 <dependencies>
     <!-- Core Pure Java Engine (Virtual Threads + Redis) -->
     <dependency>
-        <groupId>io.oxmq</groupId>
+        <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
         <version>1.0.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
-        <groupId>io.oxmq</groupId>
+        <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
         <version>1.0.0</version>
     </dependency>
 </dependencies>
 ```
 
-### Gradle (`build.gradle.kts`)
+#### Gradle (`build.gradle.kts`)
+```kotlin
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
 
+dependencies {
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.0.0")
+    // or for Spring Boot 3 microservices:
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.0.0")
+}
+```
+
+### Option 2: GitHub Packages Registry
+
+To consume official `io.oxmq` artifacts from GitHub Packages:
+
+#### Maven (`pom.xml` & `~/.m2/settings.xml`)
+```xml
+<!-- In your pom.xml -->
+<repositories>
+    <repository>
+        <id>github</id>
+        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
+    </repository>
+</repositories>
+
+<dependencies>
+    <dependency>
+        <groupId>io.oxmq</groupId>
+        <artifactId>oxmq-core</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+    <!-- or for Spring Boot 3: -->
+    <!--
+    <dependency>
+        <groupId>io.oxmq</groupId>
+        <artifactId>oxmq-spring-boot-starter</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+    -->
+</dependencies>
+```
+
+> **Note:** GitHub Packages Maven registry requires authentication. Add your GitHub Personal Access Token (`read:packages` scope) to your `~/.m2/settings.xml`:
+> ```xml
+> <settings>
+>   <servers>
+>     <server>
+>       <id>github</id>
+>       <username>YOUR_GITHUB_USERNAME</username>
+>       <password>YOUR_GITHUB_PAT</password>
+>     </server>
+>   </servers>
+> </settings>
+> ```
+
+#### Gradle (`build.gradle.kts`)
 ```kotlin
 repositories {
     mavenCentral()
@@ -155,15 +210,18 @@ repositories {
             password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
         }
     }
-    maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
     implementation("io.oxmq:oxmq-core:1.0.0")
-    // or for Spring Boot 3 microservices:
     // implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0")
 }
 ```
+
+### Option 3: Pre-built Release JARs
+Direct download links from [GitHub Releases v1.0.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0):
+- [`oxmq-core-1.0.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.0.0/oxmq-core-1.0.0.jar)
+- [`oxmq-spring-boot-starter-1.0.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.0.0/oxmq-spring-boot-starter-1.0.0.jar)
 
 ---
 
