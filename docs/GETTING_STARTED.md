@@ -72,7 +72,7 @@ docker compose up -d
 Every OxMQ job transitions through a strictly enforced, atomic state machine managed by official BullMQ Lua scripts:
 
 <p align="center">
-  <img src="assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
+  <img src="/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
 </p>
 
 * **`WAITING`**: Ready to be claimed by an available worker.
@@ -183,7 +183,7 @@ public class InvoiceConsumer {
 OxMQ includes a zero-dependency, atomic DAG workflow engine. A parent job automatically enters `WAITING_CHILDREN` and is activated in Redis only after all parallel child tasks succeed:
 
 <p align="center">
-  <img src="assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
+  <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
 </p>
 
 ```java
@@ -319,7 +319,7 @@ Open `http://localhost:3000` to inspect queue counts, live jobs, step logs, and 
 
 ## 🙏 Attribution
  
-OxMQ is proud to reuse the official, battle-tested Lua scripts developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community under the permissive MIT license. Full attribution details can be found in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+OxMQ is proud to reuse the official, battle-tested Lua scripts developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community under the permissive MIT license. Full attribution details can be found in [`BULLMQ_ATTRIBUTION.md`](https://github.com/gaurav10610/oxmq/blob/main/oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 

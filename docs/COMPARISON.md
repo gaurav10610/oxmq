@@ -72,7 +72,7 @@ This document provides a factual, technically grounded comparison of **OxMQ** ag
 
 Because throughput and latency depend significantly on network round-trip latency, payload size, Redis persistence configuration (AOF vs RDB), and worker business logic, **we encourage running empirical benchmarks**:
 
-OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq-benchmarks/`](../oxmq-benchmarks):
+OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq-benchmarks/`](https://github.com/gaurav10610/oxmq/tree/main/oxmq-benchmarks):
 ```bash
 mvn clean test-compile -pl oxmq-benchmarks
 # Run benchmarks against your local or remote Redis instance:
