@@ -94,20 +94,9 @@ jobs:
           LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
           if [ -n "$LATEST_TAG" ]; then
             echo "Latest release identified as: $LATEST_TAG"
-            TAG_VER="${LATEST_TAG#v}"
-
-            mkdir -p upload-assets
-            # Standardize release asset filenames matching release tag version (e.g., oxmq-core-1.0.0.jar)
-            for f in release-artifacts/*-SNAPSHOT.jar; do
-              if [ -f "$f" ]; then
-                base_name=$(basename "$f" | sed -E 's/-[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT\.jar//')
-                cp "$f" "upload-assets/${base_name}-${TAG_VER}.jar"
-              fi
-            done
-
             echo "Uploading essential release assets to $LATEST_TAG:"
-            ls -lh upload-assets/
-            gh release upload "$LATEST_TAG" upload-assets/*.jar --clobber
+            ls -lh release-artifacts/
+            gh release upload "$LATEST_TAG" release-artifacts/*.jar --clobber
             echo "Release $LATEST_TAG assets successfully updated."
           else
             echo "No existing release found. Skipping release asset upload."
