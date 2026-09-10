@@ -75,6 +75,30 @@ public class LuaScriptManager {
         }
     }
 
+    /**
+     * Executes a Lua script with binary arguments using EVALSHA with automatic fallback on NOSCRIPT.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T evalBinary(StatefulRedisConnection<String, byte[]> connection, LuaScript script,
+                            ScriptOutputType outputType, String[] keys, byte[]... args) {
+        String sha = scriptShas.get(script);
+        String source = scriptSources.get(script);
+        RedisCommands<String, byte[]> commands = connection.sync();
+
+        try {
+            return (T) commands.evalsha(sha, outputType, keys, args);
+        } catch (RedisException e) {
+            if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                log.debug("Script {} SHA {} not cached in Redis, falling back to EVAL", script.name(), sha);
+                try {
+                    commands.scriptLoad(source.getBytes(StandardCharsets.UTF_8));
+                } catch (Exception ignored) {}
+                return (T) commands.eval(source, outputType, keys, args);
+            }
+            throw e;
+        }
+    }
+
     public String getSource(LuaScript script) {
         return scriptSources.get(script);
     }

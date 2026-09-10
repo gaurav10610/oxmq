@@ -1,10 +1,10 @@
 package io.oxmq;
 
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
+import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
-import io.oxmq.lua.LuaScript;
+import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.Job;
@@ -14,13 +14,9 @@ import io.oxmq.serializer.JobSerializer;
 import io.oxmq.watchdog.LockExtender;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -30,7 +26,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * High-throughput batch worker engine for consuming chunks of jobs atomically.
- * Optimized for bulk database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts, S3).
+ * Uses BullMQ moveToActive and moveToFinished scripts.
  *
  * @param <T> Payload data type
  */
@@ -40,6 +36,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private final String queueName;
     private final String prefix;
+    private final QueueKeys queueKeys;
     private final String workerId;
     private final BatchJobProcessor<T, ?> processor;
     private final Class<T> payloadClass;
@@ -51,6 +48,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private final RedisConnectionManager connectionManager;
     private final LuaScriptManager scriptManager;
+    private final BullScripts bullScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
 
@@ -64,6 +62,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private OxmqBatchWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
         this.prefix = "bull:" + queueName;
+        this.queueKeys = new QueueKeys("bull", queueName);
         this.workerId = "batch-worker:" + UUID.randomUUID();
         this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
         this.payloadClass = builder.payloadClass;
@@ -75,6 +74,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
+        this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = builder.serializer != null ? builder.serializer : new JacksonJobSerializer();
         this.metrics = builder.metrics != null ? builder.metrics : new OxmqMetrics();
     }
@@ -99,8 +99,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 });
             }
 
-            this.lockExtender = new LockExtender(connectionManager.createDedicatedConnection(), scriptManager,
-                    prefix, workerId, lockDurationMs);
+            this.lockExtender = new LockExtender(connectionManager.createDedicatedBinaryConnection(), bullScripts,
+                    queueKeys, workerId, lockDurationMs);
 
             this.pollerThread = new Thread(this::pollLoop, "oxmq-batch-poller-" + queueName);
             this.pollerThread.setDaemon(true);
@@ -109,14 +109,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     }
 
     private void pollLoop() {
-        StatefulRedisConnection<String, String> pollerConn = connectionManager.createDedicatedConnection();
-        String[] keys = new String[]{
-                prefix + ":wait",
-                prefix + ":active",
-                prefix + ":delayed",
-                prefix + ":stalled",
-                prefix + ":meta"
-        };
+        StatefulRedisConnection<String, byte[]> pollerConn = connectionManager.createDedicatedBinaryConnection();
 
         while (running.get()) {
             try {
@@ -126,36 +119,36 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 }
 
                 long now = System.currentTimeMillis();
-                List<List<Object>> rawBatches = scriptManager.eval(pollerConn, LuaScript.MOVE_TO_ACTIVE_BATCH,
-                        ScriptOutputType.MULTI, keys,
-                        prefix,
-                        workerId,
-                        String.valueOf(lockDurationMs),
-                        String.valueOf(now),
-                        String.valueOf(batchSize)
-                );
+                List<Job<T>> jobs = new ArrayList<>();
 
-                if (rawBatches == null || rawBatches.isEmpty()) {
+                for (int i = 0; i < batchSize; i++) {
+                    List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
+                            (int) lockDurationMs, null, workerId, now);
+
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
+                        break;
+                    }
+
+                    Object idObj = rawResult.get(1);
+                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                    if (jobId.isEmpty() || "0".equals(jobId)) {
+                        break;
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
+                    Map<String, String> fields = parseHashFields(hashFlat);
+                    Job<T> job = buildJobFromFields(jobId, fields);
+                    jobs.add(job);
+                    lockExtender.registerJob(jobId);
+                }
+
+                if (jobs.isEmpty()) {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
                     continue;
                 }
 
-                List<Job<T>> jobs = new ArrayList<>();
-                for (List<Object> rawJob : rawBatches) {
-                    if (rawJob != null && rawJob.size() >= 2 && rawJob.get(0) != null) {
-                        String jobId = rawJob.get(0).toString();
-                        @SuppressWarnings("unchecked")
-                        List<String> hashFlat = (List<String>) rawJob.get(1);
-                        Map<String, String> fields = parseHashFields(hashFlat);
-                        Job<T> job = buildJobFromFields(jobId, fields);
-                        jobs.add(job);
-                        lockExtender.registerJob(jobId);
-                    }
-                }
-
-                if (!jobs.isEmpty()) {
-                    dispatcherExecutor.submit(() -> executeBatch(jobs));
-                }
+                dispatcherExecutor.submit(() -> executeBatch(jobs));
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -213,25 +206,24 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private void completeBatch(List<Job<T>> jobs, Object result, Duration duration) {
         String serializedResult = serializer.serialize(result);
-        String[] keys = new String[]{
-                prefix + ":active",
-                prefix + ":completed",
-                prefix + ":failed",
-                prefix + ":events"
-        };
-
-        List<String> args = new ArrayList<>();
-        args.add(prefix);
-        args.add("completed");
-        args.add(workerId);
-        args.add(String.valueOf(System.currentTimeMillis()));
-        args.add(serializedResult != null ? serializedResult : "");
         for (Job<T> job : jobs) {
-            args.add(job.getId());
+            try {
+                JobOptions opts = job.getOpts();
+                bullScripts.moveToFinished(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    job.getId(),
+                    serializedResult,
+                    "returnvalue",
+                    "completed",
+                    workerId,
+                    false,
+                    opts != null ? opts.toMap() : Map.of()
+                );
+            } catch (Exception e) {
+                log.warn("Failed to mark job {} completed in batch: {}", job.getId(), e.getMessage());
+            }
         }
-
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED_BATCH, ScriptOutputType.INTEGER, keys, args.toArray(new String[0]));
     }
 
     private void failBatch(List<Job<T>> jobs, Throwable error, Duration duration) {
@@ -239,25 +231,24 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
 
-        String[] keys = new String[]{
-                prefix + ":active",
-                prefix + ":completed",
-                prefix + ":failed",
-                prefix + ":events"
-        };
-
-        List<String> args = new ArrayList<>();
-        args.add(prefix);
-        args.add("failed");
-        args.add(workerId);
-        args.add(String.valueOf(System.currentTimeMillis()));
-        args.add(stackTrace);
         for (Job<T> job : jobs) {
-            args.add(job.getId());
+            try {
+                JobOptions opts = job.getOpts();
+                bullScripts.moveToFinished(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    job.getId(),
+                    stackTrace,
+                    "failedReason",
+                    "failed",
+                    workerId,
+                    false,
+                    opts != null ? opts.toMap() : Map.of()
+                );
+            } catch (Exception e) {
+                log.warn("Failed to mark job {} failed in batch: {}", job.getId(), e.getMessage());
+            }
         }
-
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        scriptManager.eval(conn, LuaScript.MOVE_TO_FINISHED_BATCH, ScriptOutputType.INTEGER, keys, args.toArray(new String[0]));
     }
 
     private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
@@ -279,27 +270,57 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             long waitTimeMs = System.currentTimeMillis() - ts;
             metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
         }
+
+        job.setProgressUpdater((percentage, payload) -> {
+            try {
+                bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+            } catch (Exception e) {
+                log.warn("Failed to update progress for job {}", jobId, e);
+            }
+        });
+
+        job.setLogAppender(msg -> {
+            try {
+                bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
+            } catch (Exception e) {
+                log.warn("Failed to append log for job {}", jobId, e);
+            }
+        });
+
         return job;
     }
 
-    private Map<String, String> parseHashFields(List<String> flatList) {
+    private Map<String, String> parseHashFields(List<?> flatList) {
         Map<String, String> map = new HashMap<>();
         if (flatList != null) {
             for (int i = 0; i < flatList.size() - 1; i += 2) {
-                map.put(flatList.get(i), flatList.get(i + 1));
+                String key = toUtf8String(flatList.get(i));
+                String val = toUtf8String(flatList.get(i + 1));
+                if (key != null) {
+                    map.put(key, val);
+                }
             }
         }
         return map;
     }
 
+    private String toUtf8String(Object obj) {
+        if (obj instanceof byte[] bytes) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
+        return obj != null ? obj.toString() : null;
+    }
+
     @Override
     public void pause() {
         paused.set(true);
+        log.info("Paused batch worker [{}] for queue {}", workerId, queueName);
     }
 
     @Override
     public void resume() {
         paused.set(false);
+        log.info("Resumed batch worker [{}] for queue {}", workerId, queueName);
     }
 
     @Override
@@ -315,58 +336,50 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
-            log.info("Stopping OxMQ Batch Worker [{}] for queue {}", workerId, queueName);
-            if (pollerThread != null) pollerThread.interrupt();
-            if (lockExtender != null) lockExtender.close();
+            log.info("Closing OxMQ Batch Worker [{}] for queue {}", workerId, queueName);
+
+            if (pollerThread != null) {
+                pollerThread.interrupt();
+            }
+
             if (dispatcherExecutor != null) {
                 dispatcherExecutor.shutdown();
                 try {
                     if (!dispatcherExecutor.awaitTermination(drainTimeoutMs, TimeUnit.MILLISECONDS)) {
+                        log.warn("Batch worker [{}] tasks did not finish within drain timeout, forcing shutdown", workerId);
                         dispatcherExecutor.shutdownNow();
                     }
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
                     dispatcherExecutor.shutdownNow();
+                    Thread.currentThread().interrupt();
                 }
             }
+
+            if (lockExtender != null) {
+                lockExtender.close();
+            }
+
             connectionManager.close();
-            log.info("OxMQ Batch Worker [{}] stopped.", workerId);
+            log.info("OxMQ Batch Worker [{}] stopped successfully", workerId);
         }
     }
 
     public static class Builder<T> {
         private String queueName;
-        private RedisConnectionManager connectionManager;
-        private RedisClient redisClient;
-        private String redisUri;
         private BatchJobProcessor<T, ?> processor;
         private Class<T> payloadClass;
-        private int batchSize = 100;
+        private int batchSize = 10;
         private boolean useVirtualThreads = true;
         private long lockDurationMs = 30_000;
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
+        private RedisConnectionManager connectionManager;
         private LuaScriptManager scriptManager;
         private JobSerializer serializer;
         private OxmqMetrics metrics;
 
         public Builder<T> queueName(String queueName) {
             this.queueName = queueName;
-            return this;
-        }
-
-        public Builder<T> redisUri(String redisUri) {
-            this.redisUri = redisUri;
-            return this;
-        }
-
-        public Builder<T> redisClient(RedisClient redisClient) {
-            this.redisClient = redisClient;
-            return this;
-        }
-
-        public Builder<T> connectionManager(RedisConnectionManager connectionManager) {
-            this.connectionManager = connectionManager;
             return this;
         }
 
@@ -395,13 +408,43 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             return this;
         }
 
+        public Builder<T> lockDurationMs(long lockDurationMs) {
+            this.lockDurationMs = lockDurationMs;
+            return this;
+        }
+
         public Builder<T> drainTimeout(Duration drainTimeout) {
             this.drainTimeoutMs = drainTimeout.toMillis();
             return this;
         }
 
+        public Builder<T> drainTimeoutMs(long drainTimeoutMs) {
+            this.drainTimeoutMs = drainTimeoutMs;
+            return this;
+        }
+
+        public Builder<T> pollInterval(Duration pollInterval) {
+            this.pollIntervalMs = pollInterval.toMillis();
+            return this;
+        }
+
         public Builder<T> pollIntervalMs(long pollIntervalMs) {
             this.pollIntervalMs = pollIntervalMs;
+            return this;
+        }
+
+        public Builder<T> redisUri(String redisUri) {
+            this.connectionManager = new RedisConnectionManager(redisUri);
+            return this;
+        }
+
+        public Builder<T> redisClient(RedisClient redisClient) {
+            this.connectionManager = new RedisConnectionManager(redisClient);
+            return this;
+        }
+
+        public Builder<T> connectionManager(RedisConnectionManager connectionManager) {
+            this.connectionManager = connectionManager;
             return this;
         }
 
@@ -421,15 +464,6 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         }
 
         public OxmqBatchWorker<T> build() {
-            if (connectionManager == null) {
-                if (redisClient != null) {
-                    connectionManager = new RedisConnectionManager(redisClient);
-                } else if (redisUri != null) {
-                    connectionManager = new RedisConnectionManager(redisUri);
-                } else {
-                    connectionManager = new RedisConnectionManager("redis://localhost:6379");
-                }
-            }
             return new OxmqBatchWorker<>(this);
         }
     }

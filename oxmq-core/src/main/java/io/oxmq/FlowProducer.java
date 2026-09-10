@@ -1,23 +1,22 @@
 package io.oxmq;
 
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.ScriptOutputType;
-import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.sync.RedisCommands;
+import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
-import io.oxmq.lua.LuaScript;
+import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.model.FlowJob;
-import io.oxmq.model.JobOptions;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.io.Closeable;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Workflow producer for parent-child DAG task trees.
+ * Workflow producer for parent-child DAG task trees using BullMQ Lua scripts.
  */
 public class FlowProducer implements Closeable {
 
@@ -25,6 +24,7 @@ public class FlowProducer implements Closeable {
 
     private final RedisConnectionManager connectionManager;
     private final LuaScriptManager scriptManager;
+    private final BullScripts bullScripts;
     private final JobSerializer serializer;
 
     public FlowProducer(String redisUri) {
@@ -35,9 +35,14 @@ public class FlowProducer implements Closeable {
         this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer());
     }
 
+    public FlowProducer(RedisConnectionManager connectionManager) {
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer());
+    }
+
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
+        this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
     }
 
@@ -49,75 +54,67 @@ public class FlowProducer implements Closeable {
      */
     public String add(FlowJob<?> root) {
         Objects.requireNonNull(root, "Root flow job must not be null");
-        StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
-        return addNode(root, null, conn);
+        return addNode(root, null, null);
     }
 
-    private String addNode(FlowJob<?> node, String parentKey, StatefulRedisConnection<String, String> conn) {
+    private String addNode(FlowJob<?> node, String parentKey, Map<String, Object> parentObj) {
         String queueName = node.getQueueName();
-        String prefix = "bull:" + queueName;
-        RedisCommands<String, String> sync = conn.sync();
-
-        String customJobId = node.getOpts() != null ? node.getOpts().getJobId() : null;
-        String jobId = (customJobId != null && !customJobId.isBlank())
-                ? customJobId
-                : String.valueOf(sync.incr(prefix + ":id"));
-        String nodeKey = prefix + ":" + jobId;
+        QueueKeys queueKeys = new QueueKeys("bull", queueName);
         long now = System.currentTimeMillis();
 
+        String customJobId = node.getOpts() != null ? node.getOpts().getJobId() : null;
         String serializedData = serializer.serialize(node.getData());
-        String serializedOpts = serializer.serialize(node.getOpts());
+
+        Map<String, Object> optsMap = node.getOpts() != null ? node.getOpts().toMap() : new HashMap<>();
+        if (parentKey != null) {
+            optsMap.put("parentKey", parentKey);
+        }
+        if (parentObj != null) {
+            optsMap.put("parent", parentObj);
+        }
 
         if (node.getChildren().isEmpty()) {
-            // Leaf node: schedule directly into wait or delayed
-            String[] keys = new String[]{
-                    prefix + ":wait",
-                    prefix + ":delayed",
-                    prefix + ":id",
-                    prefix + ":events",
-                    prefix + ":meta"
-            };
-
-            scriptManager.eval(conn, LuaScript.ADD_JOB, ScriptOutputType.VALUE, keys,
-                    prefix,
-                    jobId,
-                    node.getName(),
-                    serializedData != null ? serializedData : "{}",
-                    serializedOpts != null ? serializedOpts : "{}",
-                    String.valueOf(now),
-                    String.valueOf(node.getOpts() != null ? node.getOpts().getDelayMs() : 0),
-                    parentKey != null ? parentKey : ""
+            // Leaf node: schedule directly into wait queue
+            String jobId = bullScripts.addStandardJob(
+                connectionManager.getBinaryConnection(),
+                queueKeys,
+                customJobId,
+                node.getName(),
+                serializedData,
+                optsMap,
+                now
             );
             log.debug("Enqueued flow leaf job {} [id: {}] with parent: {}", node.getName(), jobId, parentKey);
+            return jobId;
 
         } else {
-            // Parent node: create job record in WAITING_CHILDREN state
-            int childCount = node.getChildren().size();
+            // Parent node: schedule into waiting-children state
+            String parentId = bullScripts.addParentJob(
+                connectionManager.getBinaryConnection(),
+                queueKeys,
+                customJobId,
+                node.getName(),
+                serializedData,
+                optsMap,
+                now
+            );
 
-            sync.hmset(nodeKey, java.util.Map.of(
-                    "id", jobId,
-                    "name", node.getName(),
-                    "data", serializedData != null ? serializedData : "{}",
-                    "opts", serializedOpts != null ? serializedOpts : "{}",
-                    "timestamp", String.valueOf(now),
-                    "unresolvedChildrenCount", String.valueOf(childCount),
-                    "queueWaitKey", prefix + ":wait",
-                    "state", "WAITING_CHILDREN"
-            ));
+            log.debug("Created flow parent job {} [id: {}] waiting for {} children",
+                    node.getName(), parentId, node.getChildren().size());
 
-            if (parentKey != null) {
-                sync.hset(nodeKey, "parentKey", parentKey);
-            }
-
-            log.debug("Created flow parent job {} [id: {}] waiting for {} children", node.getName(), jobId, childCount);
+            String nodeParentKey = queueKeys.toJobKey(parentId);
+            Map<String, Object> childParentObj = Map.of(
+                "id", parentId,
+                "queueKey", queueKeys.getQualifiedName()
+            );
 
             // Recursively add all children
             for (FlowJob<?> child : node.getChildren()) {
-                addNode(child, nodeKey, conn);
+                addNode(child, nodeParentKey, childParentObj);
             }
-        }
 
-        return jobId;
+            return parentId;
+        }
     }
 
     @Override

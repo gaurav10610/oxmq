@@ -14,6 +14,7 @@ public class RateLimiter {
     private final StatefulRedisConnection<String, String> connection;
     private final LuaScriptManager scriptManager;
     private final String limiterKey;
+    private final String metaKey;
     private final int max;
     private final long durationMs;
 
@@ -22,23 +23,22 @@ public class RateLimiter {
         this.connection = connection;
         this.scriptManager = scriptManager;
         this.limiterKey = queuePrefix + ":limiter";
+        this.metaKey = queuePrefix + ":meta";
         this.max = max;
         this.durationMs = duration.toMillis();
     }
 
     /**
-     * Checks and consumes a token within the sliding window.
+     * Checks and consumes a token within the sliding window using BullMQ rate limiting semantics.
      *
      * @return true if token was acquired and job execution is allowed, false if rate limited
      */
     public boolean tryAcquire() {
-        Long result = scriptManager.eval(connection, LuaScript.RATE_LIMIT, ScriptOutputType.INTEGER,
-                new String[]{limiterKey},
-                String.valueOf(max),
-                String.valueOf(durationMs),
-                String.valueOf(System.currentTimeMillis())
+        Long ttl = scriptManager.eval(connection, LuaScript.GET_RATE_LIMIT_TTL, ScriptOutputType.INTEGER,
+                new String[]{limiterKey, metaKey},
+                String.valueOf(max)
         );
-        return result != null && result == 1L;
+        return ttl == null || ttl <= 0;
     }
 
     public int getMax() {

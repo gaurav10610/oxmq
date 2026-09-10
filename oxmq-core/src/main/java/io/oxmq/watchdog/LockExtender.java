@@ -1,9 +1,8 @@
 package io.oxmq.watchdog;
 
-import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.oxmq.lua.LuaScript;
-import io.oxmq.lua.LuaScriptManager;
+import io.oxmq.client.QueueKeys;
+import io.oxmq.lua.BullScripts;
 import java.io.Closeable;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,31 +13,32 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Background heartbeat service that periodically extends Redis locks for long-running active jobs.
+ * Background heartbeat service that periodically extends Redis locks for long-running active jobs
+ * using BullMQ extendLock Lua script.
  */
 public class LockExtender implements Closeable {
 
     private static final Logger log = LoggerFactory.getLogger(LockExtender.class);
 
-    private final StatefulRedisConnection<String, String> connection;
-    private final LuaScriptManager scriptManager;
-    private final String queuePrefix;
+    private final StatefulRedisConnection<String, byte[]> connection;
+    private final BullScripts bullScripts;
+    private final QueueKeys queueKeys;
     private final String token;
     private final long lockDurationMs;
     private final Set<String> activeJobIds = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService scheduler;
 
-    public LockExtender(StatefulRedisConnection<String, String> connection, LuaScriptManager scriptManager,
-                        String queuePrefix, String token, long lockDurationMs) {
+    public LockExtender(StatefulRedisConnection<String, byte[]> connection, BullScripts bullScripts,
+                        QueueKeys queueKeys, String token, long lockDurationMs) {
         this.connection = connection;
-        this.scriptManager = scriptManager;
-        this.queuePrefix = queuePrefix;
+        this.bullScripts = bullScripts != null ? bullScripts : new BullScripts();
+        this.queueKeys = queueKeys;
         this.token = token;
         this.lockDurationMs = lockDurationMs;
 
         long intervalMs = Math.max(1000, lockDurationMs / 2);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "oxmq-lock-extender-" + queuePrefix);
+            Thread t = new Thread(r, "oxmq-lock-extender-" + queueKeys.getQueueName());
             t.setDaemon(true);
             return t;
         });
@@ -56,20 +56,15 @@ public class LockExtender implements Closeable {
     private void extendAllLocks() {
         for (String jobId : activeJobIds) {
             try {
-                String lockKey = queuePrefix + ":" + jobId + ":lock";
-                Long result = scriptManager.eval(connection, LuaScript.EXTEND_LOCK, ScriptOutputType.INTEGER,
-                        new String[]{lockKey},
-                        token,
-                        String.valueOf(lockDurationMs)
-                );
-                if (result == null || result == 0L) {
-                    log.warn("Failed to extend lock for job {} in queue {}", jobId, queuePrefix);
+                boolean extended = bullScripts.extendLock(connection, queueKeys, jobId, token, (int) lockDurationMs);
+                if (!extended) {
+                    log.warn("Failed to extend lock for job {} in queue {}", jobId, queueKeys.getQueueName());
                     activeJobIds.remove(jobId);
                 } else {
                     log.trace("Extended lock for job {} for {} ms", jobId, lockDurationMs);
                 }
             } catch (Exception e) {
-                log.warn("Error extending lock for job {} in queue {}", jobId, queuePrefix, e);
+                log.warn("Error extending lock for job {} in queue {}", jobId, queueKeys.getQueueName(), e);
             }
         }
     }
@@ -82,9 +77,8 @@ public class LockExtender implements Closeable {
                 scheduler.shutdownNow();
             }
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
             scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
         }
-        activeJobIds.clear();
     }
 }

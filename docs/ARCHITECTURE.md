@@ -69,36 +69,40 @@ graph TB
 
 ## 2. Job Lifecycle State Machine
 
-Jobs transition through a strictly enforced, atomic state machine managed by Redis Lua scripts:
+Jobs transition through a strictly enforced, atomic state machine managed by official BullMQ Redis Lua scripts:
+
+<p align="center">
+  <img src="assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
+</p>
 
 ```mermaid
 stateDiagram-v2
-    [*] --> WAITING: queue.add() [delay == 0]
-    [*] --> DELAYED: queue.add() [delay > 0]
-    [*] --> WAITING_CHILDREN: flowProducer.add() [parent node]
+    [*] --> WAITING: addStandardJob-9.lua [delay == 0]
+    [*] --> DELAYED: addDelayedJob-6.lua [delay > 0]
+    [*] --> WAITING_CHILDREN: addParentJob-6.lua [parent node]
 
     DELAYED --> WAITING: Maturity timestamp reached (now >= score)
     WAITING_CHILDREN --> WAITING: All children completed (unresolved == 0)
 
-    WAITING --> ACTIVE: moveToActive.lua / moveToActiveBatch.lua (Worker acquires job & lock)
+    WAITING --> ACTIVE: moveToActive-11.lua (Worker acquires job & lock)
     
     state ACTIVE {
         [*] --> Executing
-        Executing --> ProgressUpdated: job.updateProgress()
+        Executing --> ProgressUpdated: updateProgress-3.lua
         ProgressUpdated --> Executing
-        Executing --> LockExtended: LockExtender Heartbeat
+        Executing --> LockExtended: extendLock-2.lua Heartbeat
         LockExtended --> Executing
     }
 
-    ACTIVE --> COMPLETED: Success (moveToFinished.lua / moveToFinishedBatch.lua)
-    ACTIVE --> DELAYED: Failed & retries remain (retryJob.lua with backoff)
+    ACTIVE --> COMPLETED: Success (moveToFinished-14.lua)
+    ACTIVE --> DELAYED: Failed & retries remain (retryJob-11.lua with backoff)
     ACTIVE --> FAILED: Failed & max attempts exhausted
-    ACTIVE --> WAITING: Lock expired (StalledJobSentinel recovers job)
+    ACTIVE --> WAITING: Lock expired (moveStalledJobsToWait-9.lua recovers job)
 
-    FAILED --> WAITING: Explicit retry (queue.retryJob)
+    FAILED --> WAITING: Explicit retry (retryJob-11.lua)
     
-    COMPLETED --> [*]: TTL expired / cleanQueue
-    FAILED --> [*]: TTL expired / cleanQueue
+    COMPLETED --> [*]: TTL expired / cleanJobsInSet-3.lua
+    FAILED --> [*]: TTL expired / cleanJobsInSet-3.lua
 ```
 
 ---
@@ -164,6 +168,10 @@ sequenceDiagram
 
 OxMQ supports complex task trees where parent tasks dynamically activate and consume the results of their children:
 
+<p align="center">
+  <img src="assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
+</p>
+
 ```mermaid
 graph TD
     Parent["Parent Job: Video Assembly<br/>(State: WAITING_CHILDREN, unresolvedChildren = 3)"]
@@ -220,6 +228,34 @@ graph LR
     MicrometerEngine --> Actuator
     Prometheus --> Grafana
 ```
+
+---
+
+## 7. Official BullMQ Lua Script Engine & Key Topology
+
+OxMQ directly incorporates all 49 official standalone Lua scripts from **BullMQ v5**. By executing the exact same Lua state transitions as BullMQ, OxMQ guarantees 100% wire and functional compatibility:
+
+### Key Topology (`QueueKeys`)
+| Key | Redis Type | Purpose |
+| :--- | :--- | :--- |
+| `bull:<queue>:wait` | LIST / STREAM | Pending jobs waiting to be claimed by workers |
+| `bull:<queue>:active` | LIST | Currently executing jobs locked by workers |
+| `bull:<queue>:delayed` | ZSET | Jobs scheduled for future timestamps (`score = timestamp`) |
+| `bull:<queue>:waiting-children` | ZSET | Parent jobs waiting for dependencies to complete |
+| `bull:<queue>:completed` | ZSET | Successfully finished jobs |
+| `bull:<queue>:failed` | ZSET | Failed jobs that have exhausted all retries |
+| `bull:<queue>:<jobId>` | HASH | Job metadata, payload, opts, stacktrace, progress |
+| `bull:<queue>:<jobId>:lock` | STRING | Worker ownership token with lock lease TTL |
+| `bull:<queue>:events` | STREAM / PUBSUB | Real-time state transition events |
+
+### MessagePack Binary Protocol (`BullMsgPack`)
+BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpack(ARGV[i])`. OxMQ encodes these options into binary MessagePack format using Jackson's MessagePack format and maps key names using BullMQ's option compression table (`fpof` for `failParentOnFailure`, `cpof` for `continueParentOnFailure`, `idof` for `ignoreDependencyOnFailure`, etc.).
+
+---
+
+## 🙏 Attribution
+
+OxMQ builds upon the foundational queue architecture created by **[Taskforce.sh](https://taskforce.sh)**, **Manuel Astudillo ([@manast](https://github.com/manast))**, and the **[BullMQ](https://github.com/taskforcesh/bullmq)** open-source community. The official BullMQ Lua scripts are included under the MIT license in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 
