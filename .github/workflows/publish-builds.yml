@@ -1,0 +1,111 @@
+name: Build & Publish OxMQ
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: publish-builds-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-verify:
+    name: Test & Verify (Java 21 + Redis 7)
+    runs-on: ubuntu-latest
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run Full Test Suite
+        run: mvn clean test -B
+        env:
+          OXMQ_REDIS_URI: redis://localhost:6379
+
+  package-and-publish:
+    name: Package & Publish Builds
+    needs: test-and-verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 with GitHub Packages Registry
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          server-id: github
+          cache: 'maven'
+
+      - name: Build and Package JARs
+        run: mvn clean package -DskipTests -B
+
+      - name: Prepare Release Artifacts
+        run: |
+          mkdir -p release-artifacts
+          for jar in $(find . -maxdepth 4 -path "*/target/*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" ! -name "*.original"); do
+            cp "$jar" release-artifacts/
+          done
+          ls -lh release-artifacts/
+
+      - name: Upload Actions Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxmq-build-artifacts
+          path: release-artifacts/*
+          retention-days: 30
+
+      - name: Publish Maven Packages to GitHub Packages
+        run: mvn deploy -DskipTests -B
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update GitHub Release Assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -n "$LATEST_TAG" ]; then
+            echo "Latest release identified as: $LATEST_TAG"
+            TAG_VER="${LATEST_TAG#v}"
+
+            # Create alias files matching release naming convention (e.g., oxmq-core-1.0.0.jar)
+            for f in release-artifacts/*-SNAPSHOT.jar; do
+              if [ -f "$f" ]; then
+                base_name=$(basename "$f" | sed -E 's/-[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT//')
+                cp "$f" "release-artifacts/${base_name}-${TAG_VER}.jar"
+              fi
+            done
+
+            echo "Uploading fresh build assets to release $LATEST_TAG..."
+            gh release upload "$LATEST_TAG" release-artifacts/*.jar --clobber
+            echo "Release $LATEST_TAG assets successfully updated."
+          else
+            echo "No existing release found. Skipping release asset upload."
+          fi
