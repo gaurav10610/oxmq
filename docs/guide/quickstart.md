@@ -23,6 +23,11 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 ```xml [Maven (pom.xml)]
 <repositories>
     <repository>
+        <id>github</id>
+        <name>GitHub Packages</name>
+        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
+    </repository>
+    <repository>
         <id>jitpack.io</id>
         <url>https://jitpack.io</url>
     </repository>
@@ -30,9 +35,9 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 
 <dependencies>
     <dependency>
-        <groupId>com.github.gaurav10610.oxmq</groupId>
+        <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>v1.0.0</version>
+        <version>1.0.0</version>
     </dependency>
 </dependencies>
 ```
@@ -40,11 +45,18 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 ```kotlin [Gradle (build.gradle.kts)]
 repositories {
     mavenCentral()
+    maven {
+        url = uri("https://maven.pkg.github.com/gaurav10610/oxmq")
+        credentials {
+            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+        }
+    }
     maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:v1.0.0")
+    implementation("io.oxmq:oxmq-core:1.0.0")
 }
 ```
 

@@ -10,14 +10,14 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, declarat
 
 ```xml [Maven (pom.xml)]
 <dependency>
-    <groupId>com.github.gaurav10610.oxmq</groupId>
+    <groupId>io.oxmq</groupId>
     <artifactId>oxmq-spring-boot-starter</artifactId>
-    <version>v1.0.0</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
 ```kotlin [Gradle (build.gradle.kts)]
-implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:v1.0.0")
+implementation("io.oxmq:oxmq-spring-boot-starter:1.0.0")
 ```
 
 :::

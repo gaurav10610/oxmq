@@ -87,6 +87,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Purge Unnecessary Legacy Packages from GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for pkg in "io.oxmq.oxmq-benchmarks" "io.oxmq.cloudbridge" "io.oxmq.oxmq-examples"; do
+            echo "Checking status of $pkg in registry..."
+            res_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/user/packages/maven/$pkg")
+            echo "Package $pkg status: $res_code"
+            if [ "$res_code" = "200" ]; then
+              echo "Purging legacy package $pkg..."
+              del_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/user/packages/maven/$pkg")
+              echo "Purge result for $pkg: $del_code"
+            fi
+          done
+
       - name: Update GitHub Release Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

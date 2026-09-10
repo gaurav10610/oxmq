@@ -47,7 +47,7 @@ docker compose up -d
 ```bash
 ./mvnw spring-boot:run -pl oxmq-examples/cloudbridge
 ```
-*(Or run `java -jar oxmq-examples/cloudbridge/target/cloudbridge-1.0.0-SNAPSHOT.jar`)*
+*(Or run `java -jar oxmq-examples/cloudbridge/target/cloudbridge-1.0.0.jar`)*
 
 ### 3. Open the Web Dashboard
 Navigate to 👉 **`http://localhost:8080`** in your browser:
