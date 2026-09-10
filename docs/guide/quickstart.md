@@ -20,16 +20,40 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 
 ::: code-group
 
-```xml [Maven (pom.xml)]
+```xml [Maven (JitPack - Zero Auth)]
 <repositories>
-    <repository>
-        <id>github</id>
-        <name>GitHub Packages</name>
-        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
-    </repository>
     <repository>
         <id>jitpack.io</id>
         <url>https://jitpack.io</url>
+    </repository>
+</repositories>
+
+<dependencies>
+    <dependency>
+        <groupId>com.github.gaurav10610.oxmq</groupId>
+        <artifactId>oxmq-core</artifactId>
+        <version>1.0.0</version>
+    </dependency>
+</dependencies>
+```
+
+```kotlin [Gradle (JitPack - Zero Auth)]
+repositories {
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+}
+
+dependencies {
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.0.0")
+}
+```
+
+```xml [Maven (GitHub Packages)]
+<!-- In your pom.xml -->
+<repositories>
+    <repository>
+        <id>github</id>
+        <url>https://maven.pkg.github.com/gaurav10610/oxmq</url>
     </repository>
 </repositories>
 
@@ -40,9 +64,11 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
         <version>1.0.0</version>
     </dependency>
 </dependencies>
+
+<!-- Requires GitHub PAT with read:packages in ~/.m2/settings.xml -->
 ```
 
-```kotlin [Gradle (build.gradle.kts)]
+```kotlin [Gradle (GitHub Packages)]
 repositories {
     mavenCentral()
     maven {
@@ -52,7 +78,6 @@ repositories {
             password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
         }
     }
-    maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
@@ -61,6 +86,8 @@ dependencies {
 ```
 
 :::
+
+> 💡 **Standalone JARs:** You can also download pre-built binaries directly from [GitHub Releases v1.0.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.0.0).
 
 ---
 
