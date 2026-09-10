@@ -72,7 +72,7 @@ graph TB
 Jobs transition through a strictly enforced, atomic state machine managed by official BullMQ Redis Lua scripts:
 
 <p align="center">
-  <img src="assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
+  <img src="/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
 </p>
 
 ```mermaid
@@ -169,7 +169,7 @@ sequenceDiagram
 OxMQ supports complex task trees where parent tasks dynamically activate and consume the results of their children:
 
 <p align="center">
-  <img src="assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
+  <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
 </p>
 
 ```mermaid
@@ -255,7 +255,7 @@ BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpa
 
 ## 🙏 Attribution
 
-OxMQ builds upon the foundational queue architecture developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community. The official BullMQ Lua scripts are included under the permissive MIT license in [`BULLMQ_ATTRIBUTION.md`](../oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+OxMQ builds upon the foundational queue architecture developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community. The official BullMQ Lua scripts are included under the permissive MIT license in [`BULLMQ_ATTRIBUTION.md`](https://github.com/gaurav10610/oxmq/blob/main/oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
 
 ---
 

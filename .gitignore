@@ -37,6 +37,8 @@ out/
 *.log
 *.tmp
 scratch/
-.env
-*.env
+### Node / VitePress ###
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
