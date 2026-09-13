@@ -18,6 +18,7 @@ export default withMermaid(
       { text: 'Patterns', link: '/patterns/rate-limiting' },
       { text: 'Operations', link: '/operations/redis-topology' },
       { text: 'Bull-Board', link: '/interop/bull-board' },
+      { text: 'Roadmap', link: '/ROADMAP' },
       {
         text: 'v1.0.0',
         items: [
@@ -76,6 +77,7 @@ export default withMermaid(
           { text: '49 Lua Scripts Catalog', link: '/operations/lua-scripts-catalog' },
           { text: 'JMH Benchmarks & Tuning', link: '/operations/benchmarks' },
           { text: 'Production Troubleshooting', link: '/operations/troubleshooting' },
+          { text: 'Strategic Roadmap', link: '/ROADMAP' },
           { text: 'Attribution & License', link: '/attribution' }
         ]
       }
