@@ -4,6 +4,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
+import io.oxmq.concurrent.DispatcherExecutorFactory;
 import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
@@ -55,6 +56,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
 
+    private final ExecutorService customExecutor;
     private ExecutorService dispatcherExecutor;
     private Thread pollerThread;
     private LockExtender lockExtender;
@@ -68,6 +70,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         this.payloadClass = builder.payloadClass;
         this.batchSize = Math.max(1, builder.batchSize);
         this.useVirtualThreads = builder.useVirtualThreads;
+        this.customExecutor = builder.customExecutor;
         this.lockDurationMs = builder.lockDurationMs;
         this.drainTimeoutMs = builder.drainTimeoutMs;
         this.pollIntervalMs = builder.pollIntervalMs;
@@ -89,14 +92,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             log.info("Starting OxMQ Batch Worker [{}] for queue '{}' with batchSize {} (Virtual Threads: {})",
                     workerId, queueName, batchSize, useVirtualThreads);
 
-            if (useVirtualThreads) {
-                this.dispatcherExecutor = Executors.newVirtualThreadPerTaskExecutor();
-            } else {
-                this.dispatcherExecutor = Executors.newCachedThreadPool(r -> {
-                    Thread t = new Thread(r, "oxmq-batch-worker-" + queueName);
-                    t.setDaemon(true);
-                    return t;
-                });
+            if (this.dispatcherExecutor == null) {
+                if (this.customExecutor != null) {
+                    this.dispatcherExecutor = this.customExecutor;
+                } else {
+                    this.dispatcherExecutor = DispatcherExecutorFactory.createExecutor(useVirtualThreads, "oxmq-batch-worker-" + queueName);
+                }
             }
 
             this.lockExtender = new LockExtender(connectionManager.createDedicatedBinaryConnection(), bullScripts,
@@ -342,7 +343,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 pollerThread.interrupt();
             }
 
-            if (dispatcherExecutor != null) {
+            if (dispatcherExecutor != null && customExecutor == null) {
                 dispatcherExecutor.shutdown();
                 try {
                     if (!dispatcherExecutor.awaitTermination(drainTimeoutMs, TimeUnit.MILLISECONDS)) {
@@ -370,6 +371,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         private Class<T> payloadClass;
         private int batchSize = 10;
         private boolean useVirtualThreads = true;
+        private ExecutorService customExecutor;
         private long lockDurationMs = 30_000;
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
@@ -400,6 +402,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
         public Builder<T> useVirtualThreads(boolean useVirtualThreads) {
             this.useVirtualThreads = useVirtualThreads;
+            return this;
+        }
+
+        public Builder<T> executor(ExecutorService customExecutor) {
+            this.customExecutor = customExecutor;
             return this;
         }
 

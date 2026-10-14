@@ -21,6 +21,7 @@ public class OxmqAutoConfigurationTest {
             assertThat(context).hasSingleBean(LuaScriptManager.class);
             assertThat(context).hasSingleBean(JobSerializer.class);
             assertThat(context).hasSingleBean(OxmqMetrics.class);
+            assertThat(context).hasSingleBean(OxmqTemplate.class);
             assertThat(context).hasSingleBean(OxmqListenerAnnotationBeanPostProcessor.class);
         });
     }

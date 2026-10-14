@@ -5,8 +5,8 @@
 <h1 align="center" style="font-size: 2.8rem; font-weight: 800; margin-top: 0.5rem; margin-bottom: 0.5rem; letter-spacing: -0.5px;">OxMQ</h1>
 
 <p align="center">
-  <b>The High-Performance, Virtual Thread-Native Distributed Job Queue &amp; DAG Workflow Engine for Java 21+</b><br/>
-  <i>The BullMQ of Java • 100% Free &amp; Open Source (Apache 2.0) • Native Bull-Board UI Parity • Batch Dequeue • Zero-Config Spring Boot 3</i>
+  <b>The High-Performance Distributed Job Queue &amp; DAG Workflow Engine for Java 17+ &amp; Java 21 Loom</b><br/>
+  <i>The BullMQ of Java • 100% Free &amp; Open Source (Apache 2.0) • Native Bull-Board UI Parity • Batch Dequeue • 100% Annotation-Driven Spring Boot 3</i>
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
   <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.0.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
-  <a href="https://openjdk.org/projects/jdk/21/"><img src="https://img.shields.io/badge/Java-21%2B%20LTS-orange.svg" alt="Java 21"></a>
+  <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-6.2%2B%20%7C%207.x-red.svg" alt="Redis"></a>
   <a href="https://openjdk.org/projects/loom/"><img src="https://img.shields.io/badge/Concurrency-Virtual%20Threads%20(Loom)-brightgreen.svg" alt="Virtual Threads"></a>
@@ -279,33 +279,86 @@ worker.start();
 
 ## 🍃 Spring Boot 3 Starter (`oxmq-spring-boot-starter`)
 
-OxMQ provides first-class, zero-boilerplate autoconfiguration for Spring Boot 3 microservices:
+OxMQ provides first-class, **100% annotation-driven** autoconfiguration for Spring Boot 3 on **Java 17 LTS and Java 21+**:
 
-### 1. Configure `application.yml`
-
-```yaml
-oxmq:
-  redis:
-    uri: redis://localhost:6379
-  default-concurrency: 50
-  virtual-threads: true
-  metrics-enabled: true
-```
-
-### 2. Declarative `@OxmqListener`
+### 1. Enable in Application
 
 ```java
-@Component
-public class NotificationWorker {
-
-    @OxmqListener(queue = "notifications", concurrency = 100, rateLimitMax = 200, rateLimitDurationMs = 60000)
-    public String processNotification(Job<EmailNotification> job) {
-        job.updateProgress(50);
-        // Process webhook, email, or LLM call on a lightweight Virtual Thread
-        return "SUCCESS";
+@SpringBootApplication
+@EnableOxmq
+public class OrderApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(OrderApplication.class, args);
     }
 }
 ```
+
+### 2. Enqueue with `OxmqTemplate` (Template Pattern)
+
+```java
+@Service
+public class OrderService {
+
+    @Autowired
+    private OxmqTemplate oxmqTemplate;
+
+    public void submitOrder(OrderDto order) {
+        // Enqueue with automatic JSON serialization
+        Job<OrderDto> job = oxmqTemplate.send("orders", "process-order", order);
+        
+        // Pause or resume queues dynamically
+        oxmqTemplate.pause("orders");
+        oxmqTemplate.resume("orders");
+    }
+}
+```
+
+### 3. Declarative Listeners & Parameter Injection
+
+#### Method-Level Listener (`@OxmqListener`)
+```java
+@Component
+public class OrderWorker {
+
+    @OxmqListener(queue = "${app.queues.orders:orders}", concurrencyString = "${app.concurrency:20}")
+    public String processOrder(
+            OrderDto order,
+            @Header("jobId") String jobId,
+            @Header("timestamp") long timestamp
+    ) {
+        // Automatically runs on Virtual Threads in Java 21+ (or platform daemon threads in Java 17)
+        return "PROCESSED";
+    }
+}
+```
+
+#### High-Throughput Batch Listener (`@OxmqBatchListener`)
+```java
+@Component
+public class AuditWorker {
+
+    @OxmqBatchListener(queue = "audit-logs", batchSize = 100)
+    public void processAuditBatch(List<Job<AuditLogDto>> batch) {
+        // Bulk JDBC insert / Elasticsearch batch indexing
+    }
+}
+```
+
+#### Multi-Method Class Listener (`@OxmqListener` + `@OxmqHandler`)
+```java
+@Component
+@OxmqListener(queue = "notifications", concurrency = 10)
+public class NotificationWorker {
+
+    @OxmqHandler(name = "email")
+    public void handleEmail(NotificationDto email) { ... }
+
+    @OxmqHandler(name = "sms")
+    public void handleSms(NotificationDto sms) { ... }
+}
+```
+
+> 💡 **Working Showcase**: Check out [`oxmq-examples/oxmq-spring-boot-java17-example`](oxmq-examples/oxmq-spring-boot-java17-example) for an end-to-end working showcase on Java 17 and Java 21!
 
 ---
 

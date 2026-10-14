@@ -23,5 +23,6 @@
 
     <modules>
         <module>cloudbridge</module>
+        <module>oxmq-spring-boot-java17-example</module>
     </modules>
 </project>

@@ -1,12 +1,12 @@
 # Quickstart (Core Engine)
 
-Get up and running with OxMQ in a pure Java 21+ application in less than 5 minutes.
+Get up and running with OxMQ in a Java 17+ / Java 21+ application in less than 5 minutes.
 
 ---
 
 ## 📋 Prerequisites
 
-- **Java 21** or newer (OpenJDK, Temurin, Corretto, GraalVM)
+- **Java 17** or newer (OpenJDK, Temurin, Corretto, GraalVM) — automatic Project Loom Virtual Threads on Java 21+
 - **Redis 6.2+**, **Redis 7.x**, or **Valkey** running locally or in Docker
 
 ```bash

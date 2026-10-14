@@ -49,6 +49,17 @@ public class OxmqAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    public OxmqTemplate oxmqTemplate(RedisClient redisClient,
+                                     RedisConnectionManager connectionManager,
+                                     LuaScriptManager scriptManager,
+                                     JobSerializer serializer,
+                                     OxmqMetrics metrics,
+                                     FlowProducer flowProducer) {
+        return new OxmqTemplate(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     public LuaScriptManager oxmqLuaScriptManager() {
         return new LuaScriptManager();
     }
@@ -71,13 +82,8 @@ public class OxmqAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public OxmqListenerAnnotationBeanPostProcessor oxmqListenerAnnotationBeanPostProcessor(
-            RedisClient redisClient,
-            LuaScriptManager scriptManager,
-            JobSerializer serializer,
-            OxmqMetrics metrics,
-            OxmqProperties properties) {
-        return new OxmqListenerAnnotationBeanPostProcessor(redisClient, scriptManager, serializer, metrics, properties);
+    public static OxmqListenerAnnotationBeanPostProcessor oxmqListenerAnnotationBeanPostProcessor() {
+        return new OxmqListenerAnnotationBeanPostProcessor();
     }
 
     @Bean

@@ -9,10 +9,10 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 public record JobProgress(int percentage, Object payload) {
 
     public static JobProgress of(int percentage) {
-        return new JobProgress(Math.clamp(percentage, 0, 100), null);
+        return new JobProgress(Math.min(100, Math.max(0, percentage)), null);
     }
 
     public static JobProgress of(int percentage, Object payload) {
-        return new JobProgress(Math.clamp(percentage, 0, 100), payload);
+        return new JobProgress(Math.min(100, Math.max(0, percentage)), payload);
     }
 }
