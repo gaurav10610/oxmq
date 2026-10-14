@@ -27,15 +27,12 @@ package com.example;
 
 import io.oxmq.FlowProducer;
 import io.oxmq.model.FlowJob;
-import io.oxmq.model.FlowJobNode;
-import redis.clients.jedis.JedisPool;
 
 import java.util.List;
 
 public class ReportFlowExample {
     public static void main(String[] args) {
-        JedisPool jedisPool = new JedisPool("localhost", 6379);
-        FlowProducer flowProducer = new FlowProducer(jedisPool);
+        FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
 
         // Define Child 1: Analytics aggregation
         FlowJob<AnalyticsPayload> fetchAnalytics = FlowJob.of(

@@ -95,4 +95,4 @@ public class EventNotificationService {
 
 ## 🧵 Concurrency & Non-Blocking Dispatch
 
-Every incoming stream event is dispatched onto an independent **Java 21 Virtual Thread**, ensuring slow event handlers (such as sending WebSockets notifications or updating UI dashboards) never block the stream reader thread.
+Every incoming stream event is dispatched onto an independent **Java 21 Virtual Thread** (with automatic fallback to platform thread pools on Java 17), ensuring slow event handlers (such as sending WebSockets notifications or updating UI dashboards) never block the stream reader thread.

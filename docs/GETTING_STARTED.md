@@ -1,7 +1,7 @@
 # 🚀 Getting Started with OxMQ
-### *The Production-Grade, Virtual Thread-Native Distributed Job Queue & DAG Engine for Java 21+*
+### *The Production-Grade, Virtual Thread-Native Distributed Job Queue & DAG Engine for Java 17+ and Java 21+*
 
-Welcome to **OxMQ**! OxMQ brings the battle-tested power of **BullMQ** to the Java 21 ecosystem, pairing official BullMQ Redis Lua scripts with **Project Loom Virtual Threads** for high-throughput concurrent I/O.
+Welcome to **OxMQ**! OxMQ brings the battle-tested power of **BullMQ** to the Java ecosystem, pairing official BullMQ Redis Lua scripts with **Project Loom Virtual Threads** on Java 21+ (with graceful platform thread fallback on Java 17 LTS) for high-throughput concurrent I/O.
 
 ---
 
@@ -156,7 +156,7 @@ Every OxMQ job transitions through a strictly enforced, atomic state machine man
 
 ## 📤 4. Producing Jobs
 
-OxMQ natively serializes Java 21 `record` and POJO classes to JSON.
+OxMQ natively serializes Java 17/21 `record` and POJO classes to JSON.
 
 ```java
 import io.oxmq.OxmqQueue;
@@ -164,7 +164,7 @@ import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import java.time.Duration;
 
-// 1. Define your payload (Java 21 Records natively supported)
+// 1. Define your payload (Java 17/21 Records natively supported)
 public record OrderInvoice(String orderId, String customerEmail, double amount) {}
 
 public class InvoiceProducer {
@@ -209,7 +209,7 @@ public class InvoiceProducer {
 
 ## ⚡ 5. Consuming Jobs with Virtual Threads
 
-Because OxMQ runs natively on **Java 21 Project Loom (Virtual Threads)**, you can configure high concurrency without exhausting operating system carrier threads.
+Because OxMQ runs natively on **Java 21 Project Loom (Virtual Threads)** (with automatic platform thread pool fallback on Java 17 LTS), you can configure high concurrency without exhausting operating system carrier threads.
 
 ```java
 import io.oxmq.OxmqWorker;
@@ -258,34 +258,25 @@ OxMQ includes a zero-dependency, atomic DAG workflow engine. A parent job automa
 
 ```java
 import io.oxmq.FlowProducer;
-import io.oxmq.model.FlowJobNode;
-import java.util.List;
+import io.oxmq.model.FlowJob;
 
 FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
 
 // 1. Define child tasks that run in parallel
-FlowJobNode child1 = FlowJobNode.builder()
-        .queueName("video-chunks")
-        .name("encode-1080p")
-        .data(new VideoChunk("vid_101", "1080p"))
-        .build();
+FlowJob<VideoChunk> child1 = FlowJob.of(
+        "video-chunks", "encode-1080p", new VideoChunk("vid_101", "1080p"));
 
-FlowJobNode child2 = FlowJobNode.builder()
-        .queueName("video-chunks")
-        .name("encode-720p")
-        .data(new VideoChunk("vid_101", "720p"))
-        .build();
+FlowJob<VideoChunk> child2 = FlowJob.of(
+        "video-chunks", "encode-720p", new VideoChunk("vid_101", "720p"));
 
 // 2. Define parent job waiting on child completion
-FlowJobNode parentJob = FlowJobNode.builder()
-        .queueName("video-assembly")
-        .name("stitch-and-publish")
-        .data(new VideoAssembly("vid_101"))
-        .children(List.of(child1, child2))
-        .build();
+FlowJob<VideoAssembly> parentJob = FlowJob.of(
+        "video-assembly", "stitch-and-publish", new VideoAssembly("vid_101"))
+        .addChild(child1)
+        .addChild(child2);
 
 // 3. Atomically enqueue DAG into Redis
-flowProducer.add(parentJob);
+String rootJobId = flowProducer.add(parentJob);
 ```
 
 When each child worker completes, BullMQ's Lua scripts record the child result into the parent's `childrenValues` hash and decrement its pending dependency count. When all children finish, the parent is atomically moved to `WAITING` with zero external schedulers!

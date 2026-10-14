@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: "OxMQ"
-  text: "Distributed Queue Engine for Java 21 Loom"
-  tagline: "100% wire and functional parity with BullMQ v5. Powered by Project Loom Virtual Threads."
+  text: "Distributed Queue Engine for Java 17+ & Java 21 Loom"
+  tagline: "100% wire and functional parity with BullMQ v5. Powered by Project Loom Virtual Threads on Java 21+ with Java 17 LTS support."
   image:
     src: /assets/oxmq-logo.png
     alt: OxMQ Logo
@@ -22,7 +22,7 @@ hero:
 features:
   - icon: 🚀
     title: Project Loom Virtual Threads
-    details: Replace heavy OS threads with lightweight Java 21 Virtual Threads. Handle thousands of concurrent blocking I/O jobs without pool starvation.
+    details: Replace heavy OS threads with lightweight Virtual Threads on Java 21+ (automatic fallback to platform thread pools on Java 17). Handle thousands of concurrent blocking I/O jobs without pool starvation.
   - icon: ⚡
     title: 100% BullMQ v5 Parity
     details: Direct execution of 49 official BullMQ Lua scripts for atomic Redis state transitions, rate limiting, and parent-child workflows.
@@ -46,7 +46,11 @@ features:
 
 ```java [Standalone Producer]
 JedisPool pool = new JedisPool("localhost", 6379);
-Queue<OrderPayload> queue = new OxmqQueue<>("orders", pool);
+OxmqQueue<OrderPayload> queue = OxmqQueue.<OrderPayload>builder()
+        .name("orders")
+        .jedisPool(pool)
+        .payloadClass(OrderPayload.class)
+        .build();
 
 // Enqueue job with automatic retry & backoff
 Job<OrderPayload> job = queue.add("process-payment", new OrderPayload("ord_101", 99.00));
@@ -60,7 +64,7 @@ public class PaymentWorker {
     @OxmqListener(queue = "orders", concurrency = 50)
     public void handlePayment(Job<OrderPayload> job) {
         OrderPayload order = job.getData();
-        // Virtual threads safely handle blocking HTTP or DB calls
+        // Virtual threads safely handle blocking HTTP or DB calls (falls back to platform threads on Java 17)
         paymentGateway.charge(order.amount());
     }
 }
@@ -69,12 +73,10 @@ public class PaymentWorker {
 ```yaml [application.yml]
 oxmq:
   redis:
-    host: localhost
-    port: 6379
-  worker:
-    virtual-threads: true
-    default-concurrency: 50
-    stalled-interval-ms: 30000
+    uri: redis://localhost:6379
+  default-concurrency: 50
+  virtual-threads: true
 ```
 
 :::
+

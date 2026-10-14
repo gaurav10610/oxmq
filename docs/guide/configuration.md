@@ -15,7 +15,7 @@ When using `oxmq-spring-boot-starter`, all properties are prefixed with `oxmq`:
 | `oxmq.redis.port` | `int` | `6379` | Redis server port. |
 | `oxmq.redis.password` | `String` | `null` | Redis AUTH password (optional). |
 | `oxmq.default-concurrency` | `int` | `20` | Default worker concurrency applied to `@OxmqListener` when unspecified. |
-| `oxmq.virtual-threads` | `boolean` | `true` | Whether to execute worker tasks on Java 21 Virtual Threads (Project Loom). |
+| `oxmq.virtual-threads` | `boolean` | `true` | Whether to execute worker tasks on Java 21 Virtual Threads (Project Loom). Falls back automatically to platform threads on Java 17. |
 | `oxmq.metrics-enabled` | `boolean` | `true` | Enables native Micrometer telemetry for Prometheus and Spring Boot Actuator. |
 
 ### Example `application.yml`

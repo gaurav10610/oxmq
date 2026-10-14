@@ -1,6 +1,6 @@
 # Workers
 
-A **Worker** is the consumer engine in OxMQ responsible for claiming waiting jobs from Redis, executing user code concurrently on **Java 21 Virtual Threads**, extending locks via heartbeats, reporting completion or failure, and recovering stalled jobs.
+A **Worker** is the consumer engine in OxMQ responsible for claiming waiting jobs from Redis, executing user code concurrently on **Java 21 Virtual Threads** (with transparent fallback to platform threads on Java 17 LTS), extending locks via heartbeats, reporting completion or failure, and recovering stalled jobs.
 
 ---
 
@@ -45,7 +45,7 @@ OxmqWorker<OrderPayload> worker = OxmqWorker.<OrderPayload>builder()
         .jedisPool(jedisPool)
         .payloadClass(OrderPayload.class)
         .concurrency(100)           // Up to 100 concurrent jobs executed simultaneously
-        .useVirtualThreads(true)    // Dispatched to lightweight Java 21 Loom threads
+        .useVirtualThreads(true)    // Dispatched to lightweight Java 21 Loom threads (or platform threads on Java 17)
         .processor(job -> handleOrder(job.getData()))
         .build();
 

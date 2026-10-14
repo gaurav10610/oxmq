@@ -1,6 +1,6 @@
 # What is OxMQ?
 
-**OxMQ** is an ultra-high-performance distributed message and job queue engine for **Java 21+** engineered with native **Project Loom Virtual Threads** and offering **100% wire and functional parity with BullMQ v5**.
+**OxMQ** is an ultra-high-performance distributed message and job queue engine for **Java 17+ and Java 21+** engineered with native **Project Loom Virtual Threads** and offering **100% wire and functional parity with BullMQ v5**.
 
 It bridges the distributed queue gap in the Java enterprise ecosystem, unlocking virtual thread concurrency while maintaining zero-protocol friction with Redis and BullMQ ecosystems (including [Bull-Board](https://github.com/felixmosh/bull-board)).
 
@@ -18,9 +18,9 @@ Historically, Java developers building distributed task processing faced an awkw
 
 ## ⚡ The Solution: OxMQ
 
-OxMQ resolves this by pairing **Redis atomic Lua scripts** with **Java 21 Virtual Threads**:
+OxMQ resolves this by pairing **Redis atomic Lua scripts** with **Java 21 Project Loom Virtual Threads** and **Java 17 LTS compatibility**:
 
-- **Native Loom Concurrency**: Every worker task executes on a lightweight Virtual Thread (`Executors.newVirtualThreadPerTaskExecutor()`). Virtual threads unmount from carrier threads during blocking I/O, allowing single worker nodes to comfortably handle thousands of concurrent in-flight jobs.
+- **Native Loom Concurrency with Java 17 Fallback**: Every worker task executes on a lightweight Virtual Thread on Java 21+ (`Executors.newVirtualThreadPerTaskExecutor()`). Virtual threads unmount from carrier threads during blocking I/O, allowing single worker nodes to comfortably handle thousands of concurrent in-flight jobs. On Java 17 LTS, OxMQ automatically falls back to an optimized platform thread pool via `DispatcherExecutorFactory` without requiring any code changes.
 - **49 Official BullMQ Lua Scripts**: Direct execution of battle-tested BullMQ v5 scripts for atomic job state transitions, locking, scheduling, and rate limiting.
 - **Full BullMQ Wire Parity**: Uses standard `{prefix}:{queue}:*` Redis keys and MessagePack serialization, allowing instant plug-and-play with **Bull-Board UI** and cross-language producers/workers.
 - **Spring Boot 3+ Integration**: Declarative `@OxmqListener` annotations, auto-configuration, and Spring Boot Actuator health checks.
@@ -31,7 +31,7 @@ OxMQ resolves this by pairing **Redis atomic Lua scripts** with **Java 21 Virtua
 
 ```mermaid
 graph TB
-    subgraph App["Application Layer (Java 21+)"]
+    subgraph App["Application Layer (Java 17+ / Java 21+)"]
         Producer["OxmqQueue&lt;T&gt;<br/>(Producer API)"]
         Flow["FlowProducer<br/>(DAG Workflows)"]
         SpringListener["@OxmqListener<br/>(Spring Boot 3)"]

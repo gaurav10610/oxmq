@@ -8,7 +8,7 @@ This document details the architectural design, Redis data structures, concurren
 
 OxMQ is engineered around 5 core pillars:
 1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via single-roundtrip Lua scripts.
-2. **Virtual Thread Native (Project Loom):** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread, enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
+2. **Virtual Thread Native with Java 17 Fallback:** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread (with automatic fallback to high-performance platform thread pools on Java 17 LTS via `DispatcherExecutorFactory`), enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
 3. **High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis call for fast database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
 4. **BullMQ v5 Wire-Compatibility:** Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
 5. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
@@ -131,9 +131,9 @@ sequenceDiagram
 
 ---
 
-## 4. Virtual Thread Concurrency Model
+## 4. Virtual Thread Concurrency Model (with Java 17 Graceful Fallback)
 
-Unlike traditional thread pools that exhaust operating system carrier threads when tasks perform blocking I/O (HTTP calls, DB queries, LLM inferences), OxMQ leverages Java 21 **Virtual Threads (Project Loom)**:
+Unlike traditional thread pools that exhaust operating system carrier threads when tasks perform blocking I/O (HTTP calls, DB queries, LLM inferences), OxMQ leverages Java 21 **Virtual Threads (Project Loom)** on JVM 21+, with automatic, zero-config fallback to platform thread pools on **Java 17 LTS** via [`DispatcherExecutorFactory`](/guide/virtual-threads):
 
 ```mermaid
 sequenceDiagram
