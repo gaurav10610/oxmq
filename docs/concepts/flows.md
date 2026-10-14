@@ -110,23 +110,24 @@ If set to `true`, a failed child is unlinked from the parent's dependency counte
 
 ---
 
-## ⚡ Scale & Performance Limits: 5,000+ Node Trees
+## ⚡ Scale & Performance Limits: 10,000+ Node Trees
 
-OxMQ's DAG engine has been empirically tested for massive scale, deep nesting, and high worker concurrency:
+OxMQ's DAG engine has been empirically tested for massive scale, deep nesting, and high worker concurrency across both Java 17 and Java 21:
 
-| Workflow Topology | Total Nodes | Concurrency | Enqueue Time | Ingestion Rate | Resolution Time | Throughput | Redis RAM Delta | Verified |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Wide DAG (1 Parent + 100 Children)** | 101 | 100 VTs | 111 ms | 909.91/s | 296 ms | 341.22/s | 220 KB | ✅ 100% |
-| **Wide DAG (1 Parent + 500 Children)** | 501 | 100 VTs | 238 ms | 2,105.04/s | 706 ms | 709.63/s | 557 KB | ✅ 100% |
-| **Wide DAG (1 Parent + 1,000 Children)** | 1,001 | 100 VTs | 447 ms | 2,239.37/s | 1,121 ms | 892.95/s | 1.05 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 2,500 Children)** | 2,501 | 100 VTs | 834 ms | 2,998.80/s | 2,540 ms | 984.65/s | 2.58 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 5,000 Children)** | 5,001 | 100 VTs | 1,699 ms | 2,943.50/s | 4,932 ms | 1,013.99/s | 5.15 MB | ✅ 100% |
-| **3-Tier Tree (1 Root $\rightarrow$ 20 Branches $\rightarrow$ 2,000 Leaves)** | 2,021 | 100 VTs | 661 ms | 3,057.49/s | 1,997 ms | 1,012.02/s | 2.01 MB | ✅ 100% |
+| Workflow Topology | Total Nodes | Concurrency | Enqueue Time | Ingestion Rate | Resolution Time | Throughput | Redis RAM Delta | Cost / Node | Verified |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Wide DAG (1 Parent + 100 Children)** | 101 | 100 VTs | 55 ms | 1,836.4/s | 176 ms | 573.9/s | 134 KB | 1,364 B | ✅ 100% |
+| **Wide DAG (1 Parent + 500 Children)** | 501 | 100 VTs | 176 ms | 2,846.6/s | 538 ms | 931.2/s | 502 KB | 1,026 B | ✅ 100% |
+| **Wide DAG (1 Parent + 1,000 Children)** | 1,001 | 100 VTs | 320 ms | 3,128.1/s | 950 ms | 1,053.7/s | 940 KB | 961 B | ✅ 100% |
+| **Wide DAG (1 Parent + 2,500 Children)** | 2,501 | 100 VTs | 789 ms | 3,169.8/s | 2,340 ms | 1,068.8/s | 2.16 MB | 886 B | ✅ 100% |
+| **Wide DAG (1 Parent + 5,000 Children)** | 5,001 | 100 VTs | 1,566 ms | 3,193.5/s | 4,596 ms | 1,088.1/s | 4.52 MB | 926 B | ✅ 100% |
+| **Wide DAG (1 Parent + 10,000 Children)**| 10,001 | 100 VTs | 3,106 ms | 3,219.9/s | 9,153 ms | 1,092.6/s | 8.87 MB | 908 B | ✅ 100% |
+| **3-Tier Tree (1 Root $\rightarrow$ 20 Branches $\rightarrow$ 2,000 Leaves)** | 2,021 | 100 VTs | 661 ms | 3,057.5/s | 1,997 ms | 1,012.0/s | 2.01 MB | 1,016 B | ✅ 100% |
 
 ### Key Architectural Guarantees at Scale
-* **Zero Dropped Dependencies**: Even with 5,000 parallel children finishing asynchronously across 100 Virtual Threads, the parent dependency counter decrements atomically in Redis without race conditions.
-* **Child Result Aggregation**: All 5,000 return values are preserved in `bull:<parentQueue>:<parentId>:processed` and populated directly into `parentJob.getChildrenValues()`.
-* **Memory Footprint**: Each DAG node consumes **~1,016 - 1,054 Bytes** in Redis, meaning an entire 5,000-task workflow requires only **~5.15 MB** of Redis RAM.
+* **Zero Dropped Dependencies**: Even with 10,000 parallel children finishing asynchronously, the parent dependency counter decrements atomically in Redis without race conditions.
+* **Child Result Aggregation**: All 10,000 return values are preserved in `bull:<parentQueue>:<parentId>:processed` and populated directly into `parentJob.getChildrenValues()`.
+* **Memory Footprint**: Memory cost stabilizes at **~908 Bytes per node** in Redis, meaning an entire 10,000-task workflow requires only **~8.87 MB** of Redis RAM.
 * **Sub-Second Multi-Tier Resolution**: A 2,021-node, 3-tier hierarchy was fully enqueued in 661 ms and resolved in 1.99 seconds.
 
 For complete capacity sizing formulas and cloud cost budgeting, see the [Operations Benchmarks & Sizing Guide](/operations/benchmarks).

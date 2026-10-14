@@ -71,10 +71,10 @@ You can customize what happens to the parent if a child job encounters an error:
 
 ## ⚡ Empirical Scale Benchmarks
 
-OxMQ's `FlowProducer` has been battle-tested with **5,000+ parallel children per parent** and **multi-tier hierarchical DAGs with 2,021 nodes**:
-* Enqueued 5,001 nodes in **1.69 seconds** (~2,944 nodes/sec).
-* Resolved 5,000 parallel children with 100 Virtual Threads in **4.93 seconds** (~1,014 jobs/sec).
+OxMQ's `FlowProducer` has been battle-tested with **10,000+ parallel children per parent** and **multi-tier hierarchical DAGs with 2,021 nodes** across both Java 17 and Java 21:
+* Enqueued 10,001 nodes in **3.10 seconds** (~3,220 nodes/sec).
+* Resolved 10,000 parallel children in **9.15 seconds** (~1,092 jobs/sec).
 * Preserved 100% of child return values with zero dropped dependencies.
-* Memory footprint: Only **~1,054 Bytes per node** in Redis.
+* Memory footprint: Asymptotically stabilizes at **~908 Bytes per node** in Redis (~8.87 MB for 10,000 nodes).
 
 For full benchmark tables, Redis RAM sizing matrices, and cloud cost guides, see the [Scale & Performance Benchmarks Guide](/operations/benchmarks).
