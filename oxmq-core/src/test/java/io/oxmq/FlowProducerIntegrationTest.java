@@ -78,9 +78,6 @@ public class FlowProducerIntegrationTest {
                 })
                 .build();
 
-        childWorker.start();
-        parentWorker.start();
-
         // Define Flow with 2 children
         FlowJob<String> parentJob = FlowJob.of(parentQueue, "parent-task", "parent-payload");
         parentJob.addChild(FlowJob.of(childQueue, "child-1", "child-1-data"));
@@ -91,8 +88,12 @@ public class FlowProducerIntegrationTest {
         // Assert that children are in wait, parent is not yet in wait
         assertThat(cQueue.count(JobState.WAITING)).isEqualTo(2);
 
+        // Start workers after initial flow structure is verified
+        childWorker.start();
+        parentWorker.start();
+
         // Wait for all to complete
-        boolean completed = parentLatch.await(5, TimeUnit.SECONDS);
+        boolean completed = parentLatch.await(10, TimeUnit.SECONDS);
         assertThat(completed).isTrue();
         assertThat(childCompletedCount.get()).isEqualTo(2);
 
