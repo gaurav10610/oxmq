@@ -12,7 +12,7 @@ A clear and concise description of what the bug is.
 
 **OxMQ & Environment Information:**
 - OxMQ Version: (e.g. 1.0.0-SNAPSHOT)
-- Java Version: (e.g. 21.0.2 OpenJDK)
+- Java Version: (e.g. 17.0.10 / 21.0.2 OpenJDK)
 - Spring Boot Version (if applicable): (e.g. 3.3.0)
 - Redis Version & Topology: (e.g. Redis 7.2 Standalone / Redis Cluster)
 - OS: (e.g. macOS 14.4 / Ubuntu 22.04)

@@ -83,7 +83,7 @@ OxMQ is designed with a clean 3-tier separation:
 
 ```mermaid
 flowchart TD
-    subgraph App["1. Java 21 Application Layer"]
+    subgraph App["1. Java 17+ / Java 21 Application Layer"]
         Producer["📤 <b>Producers &amp; DAG Workflows</b><br/><code>OxmqQueue</code> • <code>FlowProducer</code>"]
         Worker["⚡ <b>Virtual Thread Workers</b><br/><code>OxmqWorker</code> • <code>@OxmqListener</code>"]
     end
@@ -234,7 +234,7 @@ import io.oxmq.OxmqQueue;
 import io.oxmq.model.JobOptions;
 import java.time.Duration;
 
-// 1. Define your payload (Java 21 Records natively supported)
+// 1. Define your payload (Java 17/21 Records natively supported)
 public record EmailNotification(String to, String subject, String body) {}
 
 // 2. Initialize Queue
@@ -252,7 +252,7 @@ queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!"
         .build());
 ```
 
-### 2. Consume on Java 21 Virtual Threads
+### 2. Consume on Java 21 Virtual Threads (with Java 17 Platform Thread Support)
 
 ```java
 import io.oxmq.OxmqWorker;
@@ -261,7 +261,7 @@ import io.oxmq.OxmqWorker;
 OxmqWorker<EmailNotification> worker = OxmqWorker.<EmailNotification>builder()
     .queueName("notifications")
     .redisUri("redis://localhost:6379")
-    .concurrency(100) // 100 concurrent Virtual Threads!
+    .concurrency(100) // 100 concurrent Virtual Threads (or platform threads on Java 17)
     .processor(job -> {
         job.updateProgress(50);
         job.log("Dispatching email to " + job.getData().to());
@@ -370,28 +370,20 @@ Build complex multi-stage distributed pipelines where parent jobs automatically 
 FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
 
 // Define parallel child tasks
-FlowJobNode child1 = FlowJobNode.builder()
-    .queueName("video-chunks")
-    .name("encode-1080p")
-    .data(new VideoChunk("vid_1", "1080p"))
-    .build();
+FlowJob<VideoChunk> child1 = FlowJob.of(
+    "video-chunks", "encode-1080p", new VideoChunk("vid_1", "1080p"));
 
-FlowJobNode child2 = FlowJobNode.builder()
-    .queueName("video-chunks")
-    .name("encode-720p")
-    .data(new VideoChunk("vid_1", "720p"))
-    .build();
+FlowJob<VideoChunk> child2 = FlowJob.of(
+    "video-chunks", "encode-720p", new VideoChunk("vid_1", "720p"));
 
 // Define parent assembly job waiting on children
-FlowJobNode parentJob = FlowJobNode.builder()
-    .queueName("video-assembly")
-    .name("assemble-master")
-    .data(new VideoAssembly("vid_1"))
-    .children(List.of(child1, child2))
-    .build();
+FlowJob<VideoAssembly> parentJob = FlowJob.of(
+    "video-assembly", "assemble-master", new VideoAssembly("vid_1"))
+    .addChild(child1)
+    .addChild(child2);
 
 // Atomically enqueue the DAG into Redis
-flowProducer.add(parentJob);
+String rootJobId = flowProducer.add(parentJob);
 ```
 
 <p align="center">
@@ -454,10 +446,10 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 
 ## ⚖️ Architectural Comparison: OxMQ & BullMQ
  
-| Capability | 🐂 **OxMQ** (Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
+| Capability | 🐂 **OxMQ** (Java 17+ / Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
 | :--- | :--- | :--- |
-| **Runtime** | **Java 21+** (Project Loom) | **Node.js 16+** / TypeScript |
-| **Concurrency** | **Virtual Threads** (Unmounts on blocking I/O) | Single-Threaded Event Loop (Sandboxed workers for CPU) |
+| **Runtime** | **Java 17+ / Java 21+** (Project Loom on 21+) | **Node.js 16+** / TypeScript |
+| **Concurrency** | **Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop (Sandboxed workers for CPU) |
 | **Multi-Core Scaling** | Native JVM concurrency across all CPU cores | Multi-process worker clustering |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
 | **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy | Standard `bull:<queue>:*` hierarchy |

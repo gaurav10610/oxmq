@@ -40,39 +40,22 @@ For analytical databases like **ClickHouse**, **Snowflake**, or **Elasticsearch*
 [Batch marked COMPLETED in Redis]
 ```
 
-### High-Throughput Ingestion Example:
+### Spring Boot Declarative Batch Listener (`@OxmqBatchListener`)
+
+In Spring Boot 3+, you can consume atomic batches directly with `@OxmqBatchListener`:
 
 ```java
 @Component
 public class ClickHouseAuditWorker {
 
-    private final List<AuditEvent> buffer = new CopyOnWriteArrayList<>();
-    private final ScheduledExecutorService flusher = Executors.newSingleThreadScheduledExecutor();
-
     @Autowired
     private ClickHouseTemplate clickHouse;
 
-    @PostConstruct
-    public void init() {
-        // Flush buffer every 1 second if size threshold not reached
-        flusher.scheduleAtFixedRate(this::flushBuffer, 1, 1, TimeUnit.SECONDS);
-    }
-
-    @OxmqListener(queue = "audit-events", concurrency = 20)
-    public void onAuditEvent(Job<AuditEvent> job) {
-        buffer.add(job.getData());
-        if (buffer.size() >= 500) {
-            flushBuffer();
-        }
-    }
-
-    private synchronized void flushBuffer() {
-        if (buffer.isEmpty()) return;
-        List<AuditEvent> batch = new ArrayList<>(buffer);
-        buffer.clear();
-
-        // Perform fast JDBC bulk insert
-        clickHouse.batchInsert("INSERT INTO audit_logs VALUES (?, ?, ?)", batch);
+    @OxmqBatchListener(queue = "audit-events", batchSize = 100)
+    public void onAuditBatch(List<Job<AuditEvent>> batch) {
+        List<AuditEvent> events = batch.stream().map(Job::getData).toList();
+        // Perform fast JDBC or analytical DB bulk insert in 1 roundtrip
+        clickHouse.batchInsert("INSERT INTO audit_logs VALUES (?, ?, ?)", events);
     }
 }
 ```
@@ -81,10 +64,11 @@ public class ClickHouseAuditWorker {
 
 ## ⚡ Empirical Batch Worker Performance
 
-In our official benchmarks, `OxmqBatchWorker` with `batchSize=100` achieved **2,774.69 jobs/second** dequeue and resolution throughput, processing 10,000 jobs in just 3.6 seconds on a single node:
+In our empirical benchmarks, `OxmqBatchWorker` reached up to **2,918.9 jobs/second** (Java 17 LTS) and **2,886.8 jobs/second** (Java 21 LTS) peak throughput—a **2.6x multiplier** over single-job workers:
 
-* **Redis Network Efficiency**: Eliminates 99% of round-trips compared to 1-by-1 popping.
-* **Cost / Node**: ~693 Bytes in Redis.
-* **Peak JVM Heap**: Under 90 MB with Java 21 Virtual Threads.
+* **Production Sweet Spot (`batchSize = 100`)**: Delivers **2,853 – 2,896 jobs/second** with per-batch dispatch latency under **35 ms**.
+* **Redis Network Efficiency**: Eliminates 90–99% of round-trips compared to 1-by-1 popping.
+* **Cost / Node**: ~672 – 693 Bytes in Redis.
+* **Peak JVM Heap**: Under 80 MB with Virtual Threads (and < 70 MB on Java 17).
 
-For complete benchmark tables and capacity sizing guidance, see the [Scale & Performance Benchmarks Guide](/operations/benchmarks).
+For complete benchmark tables, sizing matrices, and inflection point analyses, see the [Scale & Performance Benchmarks Guide](/operations/benchmarks).

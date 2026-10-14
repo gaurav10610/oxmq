@@ -93,7 +93,7 @@ dependencies {
 
 ## 📝 2. Define Your Payload
 
-OxMQ works natively with Java 21 records and standard POJOs via Jackson:
+OxMQ works natively with Java 17/21 records and standard POJOs via Jackson:
 
 ```java
 package com.example.model;
@@ -151,9 +151,9 @@ public class OrderProducer {
 
 ---
 
-## 📥 4. Consume Jobs with Virtual Threads
+## 📥 4. Consume Jobs with Virtual Threads (Java 21+) / Platform Threads (Java 17)
 
-Create an `OxmqWorker` to execute tasks concurrently using Java 21 Virtual Threads:
+Create an `OxmqWorker` to execute tasks concurrently using Java 21 Virtual Threads (with automatic platform thread pool fallback on Java 17):
 
 ```java
 package com.example;
@@ -172,7 +172,7 @@ public class OrderWorker {
                 .queueName("order-invoices")
                 .jedisPool(jedisPool)
                 .payloadClass(OrderInvoice.class)
-                .concurrency(50) // 50 concurrent Virtual Threads
+                .concurrency(50) // 50 concurrent Virtual Threads (or platform threads on Java 17)
                 .lockDuration(Duration.ofSeconds(30))
                 .processor(job -> {
                     OrderInvoice invoice = job.getData();
@@ -202,6 +202,6 @@ public class OrderWorker {
 
 1. **Atomic Ingestion**: The producer invokes BullMQ's `addDelayedJob-6.lua` script, pushing the job into Redis with delayed maturity.
 2. **Auto-Promotion**: BullMQ Lua scripts check the Redis sorted set `bull:order-invoices:delayed` and atomically move matured jobs to `bull:order-invoices:wait`.
-3. **Virtual Thread Worker**: The `OxmqWorker` pulls ready jobs via `moveToActive-11.lua` and dispatches each job to an unpinned Java 21 Virtual Thread.
+3. **Virtual Thread Worker**: The `OxmqWorker` pulls ready jobs via `moveToActive-11.lua` and dispatches each job to an unpinned Virtual Thread (or platform thread pool on Java 17).
 4. **Heartbeat Lock Watchdog**: An automated background timer extends the job lock via `extendLock-2.lua` until task completion.
 5. **Completion & Cleanup**: `moveToFinished-14.lua` marks the job completed and persists the return value.

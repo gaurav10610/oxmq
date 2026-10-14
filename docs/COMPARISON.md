@@ -1,7 +1,7 @@
 # ⚖️ Architectural Comparison: OxMQ & BullMQ
-### *An Objective Engineering Evaluation of OxMQ (Java 21 Loom) and BullMQ (Node.js)*
+### *An Objective Engineering Evaluation of OxMQ (Java 17+ / Java 21 Loom) and BullMQ (Node.js)*
 
-**OxMQ** was created to bring the battle-tested, world-class queue architecture of **BullMQ** into the modern **Java 21+ enterprise ecosystem**.
+**OxMQ** was created to bring the battle-tested, world-class queue architecture of **BullMQ** into the modern **Java 17+ / Java 21+ enterprise ecosystem**.
 
 Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exact same Redis key hierarchy, it achieves 100% functional and wire compatibility with BullMQ while unlocking the advantages of Java 21's Project Loom Virtual Threads.
 
@@ -9,10 +9,10 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 
 ## 📊 Comprehensive Comparison Matrix
 
-| Feature / Capability | 🐂 **OxMQ** (Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
+| Feature / Capability | 🐂 **OxMQ** (Java 17+ / Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
 | :--- | :---: | :---: |
-| **Target Runtime** | **Java 21+** (JVM, OpenJDK, Temurin) | **Node.js 16+** / TypeScript |
-| **Concurrency Model** | **Project Loom Virtual Threads** | Single-Threaded Event Loop |
+| **Target Runtime** | **Java 17+ LTS** (OpenJDK, Temurin) — native **Java 21+ Project Loom** | **Node.js 16+** / TypeScript |
+| **Concurrency Model** | **Project Loom Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop |
 | **I/O Blocking Mechanics** | Virtual threads unmount from carrier threads on blocking I/O | Non-blocking async/await promises |
 | **Multi-Core CPU Scaling** | Natively concurrent across all JVM CPU cores | Requires spawning child OS processes ("sandboxed workers") |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
@@ -35,8 +35,8 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
   - Operates on Node.js's single-threaded event loop.
   - Excellent for high-volume non-blocking asynchronous network I/O.
   - However, if tasks perform heavy CPU work (e.g. image processing, cryptography, PDF generation, large JSON parsing), the single thread can become blocked. BullMQ solves this by spawning child OS processes ("sandboxed workers"), which introduces inter-process communication (IPC) overhead.
-* **OxMQ in Java 21**:
-  - Operates on native **Project Loom Virtual Threads** (`Executors.newVirtualThreadPerTaskExecutor()`).
+* **OxMQ in Java 17+ & Java 21+**:
+  - Operates on native **Project Loom Virtual Threads** on Java 21+ (`Executors.newVirtualThreadPerTaskExecutor()`) and dynamic platform thread pools on Java 17 LTS via `DispatcherExecutorFactory`.
   - When tasks perform blocking calls (JDBC database queries, third-party REST calls, blocking socket I/O), the virtual thread unmounts from its underlying OS carrier thread with near-zero memory footprint (~1 KB per thread).
   - CPU-bound tasks execute concurrently across all available CPU cores on the JVM without needing separate OS child processes.
 

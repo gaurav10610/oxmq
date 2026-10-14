@@ -35,8 +35,6 @@ package com.example.workflows;
 
 import io.oxmq.FlowProducer;
 import io.oxmq.model.FlowJob;
-import io.oxmq.model.FlowJobNode;
-import redis.clients.jedis.JedisPool;
 
 import java.util.List;
 
@@ -44,8 +42,8 @@ public class VideoWorkflowService {
 
     private final FlowProducer flowProducer;
 
-    public VideoWorkflowService(JedisPool jedisPool) {
-        this.flowProducer = new FlowProducer(jedisPool);
+    public VideoWorkflowService(String redisUri) {
+        this.flowProducer = new FlowProducer(redisUri);
     }
 
     public String createTranscodingPipeline(String rawVideoUrl, String videoId) {

@@ -2,7 +2,7 @@
 
 OxMQ is proud to build upon the groundbreaking architectural foundation of the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project and its community.
 
-By adopting BullMQ's official, battle-tested Lua scripts and proven Redis key conventions, OxMQ inherits years of production hardening across thousands of distributed systems worldwide. We express our sincere gratitude to the BullMQ open-source community for developing and sharing their world-class queue architecture under the permissive MIT license. OxMQ brings that proven foundation into the modern Java 21+ ecosystem with native Project Loom Virtual Threads.
+By adopting BullMQ's official, battle-tested Lua scripts and proven Redis key conventions, OxMQ inherits years of production hardening across thousands of distributed systems worldwide. We express our sincere gratitude to the BullMQ open-source community for developing and sharing their world-class queue architecture under the permissive MIT license. OxMQ brings that proven foundation into the modern Java 17+ / Java 21+ ecosystem with native Project Loom Virtual Threads.
 
 ---
 

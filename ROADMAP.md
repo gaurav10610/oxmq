@@ -1,6 +1,6 @@
 # 🗺️ OxMQ Strategic Roadmap (v1.1.0 — v2.0.0+)
 
-**Vision:** Elevate OxMQ from 100% BullMQ wire-parity to the **standard distributed job queue and durable workflow engine for Java 21+ and modern polyglot ecosystems**.
+**Vision:** Elevate OxMQ from 100% BullMQ wire-parity to the **standard distributed job queue and durable workflow engine for Java 17+ / Java 21+ and modern polyglot ecosystems**.
 
 ---
 
@@ -8,8 +8,8 @@
 
 OxMQ `v1.0.0` successfully delivered:
 - **100% BullMQ v5 wire & functional parity** with 49 official Lua scripts.
-- **Java 21 Project Loom Virtual Threads** for non-blocking concurrent worker scaling.
-- **Spring Boot 3 starter** with declarative `@OxmqListener` and Actuator telemetry.
+- **Java 17+ LTS baseline with native Java 21 Project Loom Virtual Threads** for non-blocking concurrent worker scaling.
+- **Spring Boot 3 starter** with declarative `@OxmqListener`, `@OxmqBatchListener`, and Actuator telemetry.
 - **Microsecond benchmarks** and polyglot Bull-Board interoperability.
 
 To drive mass developer adoption across startups and large enterprise organizations, OxMQ is expanding to solve the primary architectural and operational pain points of modern distributed task processing:

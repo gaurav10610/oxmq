@@ -15,7 +15,7 @@ All contributors and participants agree to abide by our [Code of Conduct](CODE_O
 ## 🛠️ Local Development Setup
 
 ### Prerequisites
-* **Java 21 LTS** or higher (OpenJDK, Temurin, Corretto, GraalVM)
+* **Java 17 LTS** or **Java 21 LTS+** (OpenJDK, Temurin, Corretto, GraalVM)
 * **Maven 3.9+**
 * **Docker & Docker Compose** (for running Redis 7 locally)
 * **Git**
@@ -54,20 +54,21 @@ OxMQ is structured into clean, decoupled Maven modules:
 
 ```
 oxmq/
-├── oxmq-core/                  # Core Lua scripts, connection management, Virtual Thread workers, FlowProducer
-├── oxmq-spring-boot-starter/   # Spring Boot 3 auto-configuration, @OxmqListener, Actuator health
-├── oxmq-benchmarks/            # JMH microbenchmarks for throughput & latency
-├── oxmq-examples/              # Example projects and showcase applications
-│   └── cloudbridge/            # Flagship showcase: Multi-cloud asset sync (GitHub, Dropbox, Box)
-└── docs/                       # Technical architecture, guides, and comparison docs
+├── oxmq-core/                            # Core Lua scripts, connection management, Virtual Thread workers, FlowProducer
+├── oxmq-spring-boot-starter/             # Spring Boot 3 auto-configuration, @OxmqListener, Actuator health
+├── oxmq-benchmarks/                      # JMH microbenchmarks for throughput & latency
+├── oxmq-examples/                        # Example projects and showcase applications
+│   ├── cloudbridge/                      # Flagship showcase: Multi-cloud asset sync (Java 21 Loom)
+│   └── oxmq-spring-boot-java17-example/  # Spring Boot 3 on Java 17 LTS baseline (annotation-driven)
+└── docs/                                 # Technical architecture, guides, and comparison docs
 ```
 
 ---
 
 ## 📐 Coding & Architectural Standards
 
-1. **Virtual Threads First**:
-   - Always leverage Java 21 Virtual Threads (`Thread.ofVirtual()`) for I/O dispatchers.
+1. **Virtual Threads First (with Java 17 Fallback)**:
+   - Always leverage `DispatcherExecutorFactory` which uses Java 21 Virtual Threads when running on Java 21+, with automatic graceful fallback to platform thread pools on Java 17 LTS.
    - Avoid `synchronized` blocks that pin carrier threads; use `ReentrantLock`, `Semaphore`, or atomic variables (`AtomicBoolean`, `AtomicLong`).
 
 2. **Redis & Lua Script Integrity**:
@@ -76,7 +77,7 @@ oxmq/
 
 3. **Wire Compatibility & Serialization**:
    - Payloads and options must serialize/deserialize cleanly via Jackson 2 (`JacksonJobSerializer`).
-   - Support Java 21 `record` classes natively.
+   - Support Java 17 and Java 21 `record` classes and standard POJOs natively.
 
 4. **Testing Rigor**:
    - Unit tests must be fast and deterministic.
