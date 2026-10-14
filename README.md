@@ -471,29 +471,44 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 
 ---
 
-## ⚡ Peak Scale & DAG Performance Benchmarks
+## ⚡ Peak Scale & DAG Performance Benchmarks (Java 17 & Java 21)
 
-OxMQ has been rigorously profiled on **Java 21 LTS** with **Project Loom Virtual Threads** against Redis 7 to measure absolute peak capacity, ingestion rates, resolution latencies, and memory footprints:
+OxMQ has been rigorously profiled on both **Java 17 LTS (Platform Threads)** and **Java 21 LTS (Project Loom Virtual Threads)** against Redis 7 to measure absolute peak throughput, capacity limits, and inflection points.
 
-| Benchmark Scenario | Total Nodes | Concurrency | Enqueue Time | Ingestion Rate | Resolution Time | Throughput | Redis RAM Delta | Cost / Node | Verified |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Wide DAG (1 Parent + 100 Children)** | 101 | 100 VTs | 111 ms | 909.91/s | 296 ms | 341.22/s | 220 KB | 2,234 B | ✅ 100% |
-| **Wide DAG (1 Parent + 500 Children)** | 501 | 100 VTs | 238 ms | 2,105.04/s | 706 ms | 709.63/s | 557 KB | 1,139 B | ✅ 100% |
-| **Wide DAG (1 Parent + 1,000 Children)** | 1,001 | 100 VTs | 447 ms | 2,239.37/s | 1,121 ms | 892.95/s | 1.05 MB | 1,072 B | ✅ 100% |
-| **Wide DAG (1 Parent + 2,500 Children)** | 2,501 | 100 VTs | 834 ms | 2,998.80/s | 2,540 ms | 984.65/s | 2.58 MB | 1,057 B | ✅ 100% |
-| **Wide DAG (1 Parent + 5,000 Children)** | 5,001 | 100 VTs | 1,699 ms | 2,943.50/s | 4,932 ms | 1,013.99/s | 5.15 MB | 1,054 B | ✅ 100% |
-| **3-Tier Tree (1 Root $\rightarrow$ 20 Branches $\rightarrow$ 2,000 Leaves)** | 2,021 | 100 VTs | 661 ms | 3,057.49/s | 1,997 ms | 1,012.02/s | 2.01 MB | 1,016 B | ✅ 100% |
-| **Flat Queue Ingestion (10,000 Jobs)** | 10,000 | 200 VTs | 3,173 ms | 3,151.59/s | 9,223 ms | 1,084.25/s | 6.57 MB | 672 B | ✅ 100% |
-| **Batch Dequeue (`batchSize=100`)** | 10,000 | 100 VTs | 3,188 ms | 3,136.76/s | 3,604 ms | 2,774.69/s | 6.77 MB | 693 B | ✅ 100% |
+### 🌳 Massive DAG Fan-Out Scaling (1 Parent + N Children up to 10,000 Nodes)
 
-### 💡 Production Sizing & Cost Matrix
-* **Redis Footprint**: Costs **~672 Bytes** per flat job and **~1,054 Bytes** per DAG tree node (including hash data, zsets, parent state, and child results).
-* **100,000 In-Flight Jobs**: Only **~67 MB - 105 MB** Redis RAM (easily runs on AWS ElastiCache `cache.t4g.micro` @ ~$12/month).
-* **1,000,000 In-Flight Jobs**: Only **~670 MB - 1.05 GB** Redis RAM (runs on AWS ElastiCache `cache.t4g.medium` @ ~$50/month).
-* **Loom Virtual Threads Efficiency**: Allocates **~2 KB** per worker task vs 1 MB for legacy OS platform threads (500x memory saving). 200 concurrent worker threads ran with only **89 MB peak JVM heap**.
-* **Massive DAG Reliability**: Zero dropped tasks or race conditions across 5,000+ parallel children with atomic parent unblocking and result propagation.
+| Children | Total Nodes | Java 17 Ingestion | Java 21 Ingestion | Java 17 Resolution | Java 21 Resolution | Redis RAM Delta | Cost / Node | Verified |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **100** | 101 | 1,836.4/s (55 ms) | 1,603.2/s (63 ms) | 573.9/s (176 ms) | 567.4/s (178 ms) | 134.6 KB | 1,364 B | ✅ 100% |
+| **500** | 501 | 2,609.4/s (192 ms) | 2,846.6/s (176 ms) | 926.1/s (541 ms) | 931.2/s (538 ms) | 502.4 KB | 1,026 B | ✅ 100% |
+| **1,000** | 1,001 | 3,128.1/s (320 ms) | 2,750.0/s (364 ms) | 1,053.7/s (950 ms) | 1,041.6/s (961 ms) | 940.1 KB | 961 B | ✅ 100% |
+| **2,500** | 2,501 | 3,169.8/s (789 ms) | 3,118.5/s (802 ms) | 1,068.8/s (2,340 ms) | 1,055.7/s (2,369 ms) | 2.11 MB | 886 B | ✅ 100% |
+| **5,000** | 5,001 | 3,177.3/s (1,574 ms) | 3,193.5/s (1,566 ms) | 1,088.1/s (4,596 ms) | 1,078.7/s (4,636 ms) | 4.42 MB | 926 B | ✅ 100% |
+| **7,500** | 7,501 | **3,194.6/s (2,348 ms)** | **3,230.4/s (2,322 ms)** | 1,090.7/s (6,877 ms) | 1,078.3/s (6,956 ms) | 6.47 MB | 904 B | ✅ 100% |
+| **10,000** | 10,001 | 3,165.9/s (3,159 ms) | 3,219.9/s (3,106 ms) | **1,092.6/s (9,153 ms)** | **1,084.1/s (9,225 ms)** | **8.66 MB** | **908 B** | ✅ 100% |
 
-*See our full [Operations & Sizing Guide](docs/operations/benchmarks.md) for detailed formulas and JMH instructions.*
+### 🚀 Peak Throughput & Inflection Points Summary
+
+* **Pure Engine Core Peak**: **1,118.1 jobs/s** (Java 17 @ 400 concurrency) / **1,112.1 jobs/s** (Java 21 @ 100 concurrency). Concurrency inflection point sits at $C=50-100$; beyond 100, single-connection Redis polling plateaus at ~1,110 jobs/s.
+* **Batch Dequeue Peak (`OxmqBatchWorker`)**: **2,918.9 jobs/s** (Java 17) / **2,886.8 jobs/s** (Java 21) — a **2.6x throughput multiplier** over single-job workers. Production sweet spot is `batchSize = 100` (2,853 – 2,896 jobs/s at <35 ms latency).
+* **Project Loom Concurrency Isolation (10ms Simulated I/O)**: Under blocking I/O across 800 concurrent workers, Java 21 OS thread count stays **strictly fixed at 31 threads** (Virtual Threads unmount in user space) vs Java 17 spawning up to 42 OS threads with higher native stack footprint.
+* **10,000-Node DAG Trees**: 10,001 total nodes ingested in **3.1 seconds** (~3,220 nodes/s) and fully executed/resolved in **9.1 seconds** (~1,092 jobs/s) with 100% atomic parent resolution and child return value propagation into `parentJob.getChildrenValues()`.
+* **Redis Footprint Stabilization**: Costs **~672 Bytes** per flat job and stabilizes at **~908 Bytes** per DAG tree node at scale ($\ge 2,500$ nodes).
+
+### 💡 Production Sizing & Capacity Matrix
+
+| In-Flight Job Scale | Workload Profile | Measured Cost / Node | Redis RAM Needed | Recommended Cloud Tier | Estimated Cost |
+| :--- | :--- | :---: | :---: | :--- | :---: |
+| **10,000 Jobs** | Standard Queue | ~672 Bytes | **~6.6 MB** | Redis Cloud Free (30 MB) / `cache.t4g.micro` | **$0 – $12/mo** |
+| **10,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~9.1 MB** | Redis Cloud Free (30 MB) / `cache.t4g.micro` | **$0 – $12/mo** |
+| **100,000 Jobs** | Standard Queue | ~672 Bytes | **~67.2 MB** | AWS `cache.t4g.micro` (0.5 GB) | **~$12/mo** |
+| **100,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~90.8 MB** | AWS `cache.t4g.micro` (0.5 GB) | **~$12/mo** |
+| **1,000,000 Jobs** | Standard Queue | ~672 Bytes | **~672 MB** | AWS `cache.t4g.small` (1.37 GB) | **~$25/mo** |
+| **1,000,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~908 MB** | AWS `cache.t4g.small` (1.37 GB) | **~$25/mo** |
+| **10,000,000 Jobs** | Standard Queue | ~672 Bytes | **~6.72 GB** | AWS `cache.m7g.large` (13.07 GB) | **~$170/mo** |
+| **10,000,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~9.08 GB** | AWS `cache.m7g.large` (13.07 GB) | **~$170/mo** |
+
+*See our full [Operations & Benchmarks Guide](docs/operations/benchmarks.md) for detailed charts, JMH instructions, and reproduction scripts.*
 
 ---
 

@@ -1,151 +1,194 @@
-# OxMQ Scale, DAG Tree & Performance Benchmarks
+# OxMQ Peak Scale, DAG Tree & Inflection Point Benchmarks (Java 17 & Java 21)
 
-This document provides real-world, empirical scale and performance benchmarks for **OxMQ** running on **Java 21 LTS** with **Project Loom Virtual Threads** against **Redis 7**.
+This document delivers comprehensive, real-world empirical benchmarks comparing **OxMQ on Java 17 LTS (Platform Threads)** and **Java 21 LTS (Project Loom Virtual Threads)** against **Redis 7**.
 
-Whether you are evaluating OxMQ as your primary distributed message queue or sizing Redis clusters for high-volume production workloads, this guide delivers byte-accurate memory measurements, DAG parent-child scale limits, throughput numbers, and capacity planning formulas.
-
----
-
-## 📊 Official Scale & DAG Performance Report
-
-All metrics below represent **real, live execution benchmarks** captured using `io.oxmq.benchmarks.DagScaleBenchmarkRunner` against a standard Redis 7 instance. Each run was executed on a clean Redis state (`FLUSHDB`), measuring byte-level Redis delta via `INFO memory`, JVM heap consumption, and end-to-end task completion verification:
-
-| Benchmark Scenario | Total Nodes | Concurrency | Enqueue Time | Ingestion Rate | Resolution Time | Throughput | Redis RAM (Delta) | Cost / Node | Peak Heap | Verified |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Wide DAG (1 Parent + 100 Children)** | 101 | 100 VTs | 111 ms | 909.91/s | 296 ms | 341.22/s | 220.42 KB | 2,234 B | 51 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 500 Children)** | 501 | 100 VTs | 238 ms | 2,105.04/s | 706 ms | 709.63/s | 557.62 KB | 1,139 B | 67 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 1,000 Children)** | 1,001 | 100 VTs | 447 ms | 2,239.37/s | 1,121 ms | 892.95/s | 1,048.45 KB | 1,072 B | 50 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 2,500 Children)** | 2,501 | 100 VTs | 834 ms | 2,998.80/s | 2,540 ms | 984.65/s | 2,583.98 KB | 1,057 B | 70 MB | ✅ 100% |
-| **Wide DAG (1 Parent + 5,000 Children)** | 5,001 | 100 VTs | 1,699 ms | 2,943.50/s | 4,932 ms | 1,013.99/s | 5,150.51 KB | 1,054 B | 80 MB | ✅ 100% |
-| **3-Tier Tree (1 Root $\rightarrow$ 10 Branches $\rightarrow$ 500 Leaves)** | 511 | 100 VTs | 181 ms | 2,823.20/s | 541 ms | 944.55/s | 520.00 KB | 1,042 B | 70 MB | ✅ 100% |
-| **3-Tier Tree (1 Root $\rightarrow$ 20 Branches $\rightarrow$ 2,000 Leaves)** | 2,021 | 100 VTs | 661 ms | 3,057.49/s | 1,997 ms | 1,012.02/s | 2,005.38 KB | 1,016 B | 89 MB | ✅ 100% |
-| **Flat Queue Ingestion & Worker Drain** | 10,000 | 200 VTs | 3,173 ms | 3,151.59/s | 9,223 ms | 1,084.25/s | 6,567.13 KB | 672 B | 89 MB | ✅ 100% |
-| **High-Throughput Batch Dequeue (`batchSize=100`)** | 10,000 | 100 VTs | 3,188 ms | 3,136.76/s | 3,604 ms | 2,774.69/s | 6,773.89 KB | 693 B | 89 MB | ✅ 100% |
-
-> **Verification Criteria**: Every DAG execution verifies that:
-> 1. Exactly 100% of children completed execution without any dropped or lost tasks.
-> 2. The parent job's `job.getChildrenValues()` contains all child return values mapped to their job keys.
-> 3. Multi-tier intermediate branch coordinators accurately aggregated leaf results before unblocking the master root coordinator.
+It highlights **absolute peak throughput numbers**, **exact Redis memory footprints**, and the **critical inflection points** after which performance plateaus or degrades.
 
 ---
 
-## 🌲 Deep-Dive: Parent-Child DAG Tree Scale
+## 🔬 Test Methodology & Environment
 
-### Massive Fan-Out Support (5,000+ Parallel Children)
-In enterprise workflows (e.g. video transcode chunking, e-commerce catalog sync, distributed map-reduce jobs), a single orchestrator job often fans out thousands of child tasks.
+All metrics were captured using [`io.oxmq.benchmarks.InflectionPointBenchmarkRunner`](https://github.com/gaurav10610/oxmq/blob/main/oxmq-benchmarks/src/main/java/io/oxmq/benchmarks/InflectionPointBenchmarkRunner.java) executing against a dedicated Redis 7 container on macOS Apple Silicon.
 
-* **Linear Ingestion Scaling**: Enqueuing a massive 5,001-node DAG tree requires only **1.69 seconds** (~2,944 nodes/sec) using pipelined Redis transactions and BullMQ's native `addChildren` Lua scripts.
-* **Rapid Concurrent Resolution**: A worker pool with 100 Virtual Threads consumed and resolved 5,000 parallel children in **4.93 seconds** (~1,014 jobs/sec).
-* **Zero Dependency Race Conditions**: When the 5,000th child completes, Redis atomically transitions the parent from `WAITING_CHILDREN` to `WAITING`, with zero polling loops or external locking.
-
-### Multi-Tier Hierarchical Trees (2,000+ Nodes)
-OxMQ supports arbitrary levels of nesting ($Root \rightarrow Intermediate\ Parents \rightarrow Leaf\ Tasks$):
-* A 3-tier hierarchy with **1 Master Root $\rightarrow$ 20 Branch Coordinators $\rightarrow$ 2,000 Leaf Tasks (2,021 total nodes)** was enqueued in **661 ms** (~3,058 nodes/sec) and resolved in **1.99 seconds**.
-* Each tier automatically unblocks the next level upon completion, propagating intermediate aggregated results up the tree.
+- **Isolation**: Each test scenario executes on a pristine Redis state (`FLUSHDB`) followed by a full JVM garbage collection pass (`System.gc()`) to eliminate cache pollution.
+- **Byte Accuracy**: Memory is measured using byte-level deltas parsed directly from Redis `INFO memory` (`used_memory:<bytes>`).
+- **OS Thread Telemetry**: Thread counts are tracked using Java's `ManagementFactory.getThreadMXBean()`.
+- **100% Verification**: Every DAG run verifies zero dropped child tasks, complete parent promotion, and byte-accurate return value population in `parentJob.getChildrenValues()`.
 
 ---
 
-## 💾 Byte-Accurate Redis Memory Overhead
+## 📊 Summary: Java 17 vs. Java 21 Empirical Comparison
 
-Memory consumption in Redis is a critical factor for infrastructure cost. OxMQ queries Redis `INFO memory` before and after enqueuing to calculate the exact byte footprint per task:
+| Metric / Scenario | ☕ **Java 17 LTS (Platform Threads)** | 🐂 **Java 21 LTS (Loom Virtual Threads)** | Strategic Analysis |
+| :--- | :---: | :---: | :--- |
+| **Max Verified DAG Tree** | **10,001 Nodes** (1 Parent + 10,000 Children) | **10,001 Nodes** (1 Parent + 10,000 Children) | Both runtimes scale to 10,000+ nodes with 100% verification |
+| **Peak DAG Ingestion Rate** | **3,194.63 nodes/sec** (at 7,500 children) | **3,230.40 nodes/sec** (at 7,500 children) | Single pipeline buffer saturation point |
+| **Peak DAG Resolution Rate** | **1,092.65 jobs/sec** (at 10,000 children) | **1,084.12 jobs/sec** (at 10,000 children) | Flat throughput across both runtimes |
+| **Redis RAM Delta (10k DAG)**| **8,868.5 KB** (~8.66 MB) | **8,873.0 KB** (~8.66 MB) | Ultra-consistent: **~908 Bytes/node** at scale |
+| **Peak Batch Dequeue Rate** | **2,918.86 jobs/sec** (`batchSize=1000`) | **2,886.84 jobs/sec** (`batchSize=1000`) | **~2.6x faster** than 1-by-1 polling |
+| **Batch Sweet Spot (`batchSize=100`)**| **2,896.00 jobs/sec** (3,453 ms) | **2,853.10 jobs/sec** (3,505 ms) | Ideal balance of throughput vs batch latency |
+| **OS Thread Count (at 800 Workers)** | **Climbs to 42+ OS Threads** | **Strictly Fixed at 31 OS Threads** | Virtual Threads insulate OS from thread explosion |
+| **Peak JVM Heap under Load** | **68 – 118 MB** | **33 – 79 MB** | Loom achieves lower baseline heap under high task count |
+
+---
+
+## 📈 Deep-Dive: Absolute Peaks & Inflection Points
+
+### 1. Engine Core Throughput & Worker Concurrency (0ms Simulated I/O)
+
+This suite pushes a flat queue of 5,000 jobs through a single worker at concurrency levels from 10 to 800 with zero artificial delay:
+
+| Concurrency | Java 17 Throughput | Java 17 Exec Time | Java 21 Throughput | Java 21 Exec Time | Java 17 Peak Heap | Java 21 Peak Heap |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **10** | 998.8 jobs/s | 5,006 ms | 983.5 jobs/s | 5,084 ms | 32 MB | 32 MB |
+| **25** | 1,041.0 jobs/s | 4,803 ms | 1,051.3 jobs/s | 4,756 ms | 69 MB | 44 MB |
+| **50** | 1,110.1 jobs/s | 4,504 ms | 1,103.5 jobs/s | 4,531 ms | 69 MB | 32 MB |
+| **100** | 1,110.6 jobs/s | 4,502 ms | **1,112.1 jobs/s [PEAK]** | **4,496 ms** | 118 MB | 33 MB |
+| **200** | 1,097.7 jobs/s | 4,555 ms | 1,102.0 jobs/s | 4,537 ms | 47 MB | 33 MB |
+| **400** | **1,118.1 jobs/s [PEAK]** | **4,472 ms** | 1,103.0 jobs/s | 4,533 ms | 63 MB | 33 MB |
+| **800** | 1,115.6 jobs/s | 4,482 ms | 1,106.4 jobs/s | 4,519 ms | 71 MB | 54 MB |
 
 ```
-+-------------------------------------------------------------------------------+
-| Job Type         | Redis Keys Created Per Job               | Bytes / Node    |
-+-------------------------------------------------------------------------------+
-| Standard Flat    | Job Hash, ID Counter, Wait ZSet, Logs     | ~672 Bytes      |
-| DAG Tree Node    | Above + ParentKey, Children Hash, Results | ~1,016 - 1,054 B|
-+-------------------------------------------------------------------------------+
+Throughput (jobs/sec)
+1,200 ┼                                        ╭─────────────────── Java 17 Peak: 1,118.1/s (at 400)
+      │                   ╭────────────────────┴─────────────────── Java 21 Peak: 1,112.1/s (at 100)
+1,100 ┼             ╭─────╯  (Saturation Plateau: ~1,110 jobs/s)
+      │       ╭─────╯
+1,000 ┼───────╯
+      │
+  900 ┼─────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────
+      0    10        25        50        100       200       400       800  Concurrency
 ```
 
-### What is Stored per Job Node in Redis?
-1. **Job Hash** (`bull:<queue>:<jobId>`): Stores name, JSON data payload, options, timestamp, attempts, and status.
-2. **State Indexes**:
-   - `bull:<queue>:wait` / `bull:<queue>:active`: List/ZSet maintaining FIFO ordering.
-   - `bull:<queue>:waiting-children`: Sorted set holding parents awaiting child completion.
-   - `bull:<queue>:dependencies`: Hash maintaining parent dependency counts.
-   - `bull:<queue>:<jobId>:processed`: Hash storing serialized return values of children.
+#### 🔍 Inflection Point Analysis:
+* **Concurrency Inflection Point ($C = 50 – 100$)**:
+  - Below 50 concurrency, throughput is bottlenecked by concurrency starvation ($< 1,050$ jobs/s).
+  - At **50–100 concurrency**, throughput hits the **Redis single-connection network round-trip ceiling** (~1,110 jobs/s on loopback).
+* **Diminishing Returns Plateau ($C > 100$)**:
+  - Increasing concurrency beyond 100 on a single queue consumer with 0ms tasks yields zero additional throughput because the single connection Redis poller cannot deliver jobs faster than 1.1 kHz.
+  - To break past 1,110 jobs/s, applications must use **Batch Dequeue** (`OxmqBatchWorker`) or multi-partition consumers.
 
 ---
 
-## 📐 Capacity Sizing & Cloud Cost Matrix
+### 2. Massive DAG Fan-Out Scaling (1 Parent + N Children up to 10,000 Nodes)
 
-Use this matrix to size your Redis instances and budget infrastructure costs for production workloads:
+Tests parent-child dependency trees with fan-outs from 100 to 10,000 parallel children at concurrency 100:
 
-| Active In-Flight Jobs | Workload Type | Redis RAM Required | Recommended AWS ElastiCache | Recommended Redis Cloud | Estimated Monthly Cost |
-| :--- | :--- | :---: | :--- | :--- | :---: |
-| **10,000 Jobs** | Standard Queue | **~6.6 MB** | `cache.t4g.micro` (0.5 GB) | Free Tier (30 MB) | **$0 - $12 / mo** |
-| **100,000 Jobs** | Standard Queue | **~67.2 MB** | `cache.t4g.micro` (0.5 GB) | 100 MB Plan | **~$12 / mo** |
-| **100,000 Jobs** | Complex DAG Tree | **~105.4 MB** | `cache.t4g.small` (1.37 GB) | 250 MB Plan | **~$25 / mo** |
-| **1,000,000 Jobs** | Standard Queue | **~672 MB** | `cache.t4g.medium` (3.09 GB) | 1 GB Plan | **~$50 / mo** |
-| **1,000,000 Jobs** | Complex DAG Tree | **~1.05 GB** | `cache.t4g.medium` (3.09 GB) | 1.5 GB Plan | **~$65 / mo** |
-| **10,000,000 Jobs** | Standard Queue | **~6.72 GB** | `cache.m7g.large` (13.07 GB) | 10 GB Plan | **~$170 / mo** |
+| Children | Total Nodes | Java 17 Ingestion | Java 21 Ingestion | Java 17 Resolution | Java 21 Resolution | Redis RAM Delta | Cost / Node | Verified |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **100** | 101 | 1,836.4/s (55 ms) | 1,603.2/s (63 ms) | 573.9/s (176 ms) | 567.4/s (178 ms) | 134.6 KB | 1,364 B | ✅ 100% |
+| **500** | 501 | 2,609.4/s (192 ms) | 2,846.6/s (176 ms) | 926.1/s (541 ms) | 931.2/s (538 ms) | 502.4 KB | 1,026 B | ✅ 100% |
+| **1,000** | 1,001 | 3,128.1/s (320 ms) | 2,750.0/s (364 ms) | 1,053.7/s (950 ms) | 1,041.6/s (961 ms) | 940.1 KB | 961 B | ✅ 100% |
+| **2,500** | 2,501 | 3,169.8/s (789 ms) | 3,118.5/s (802 ms) | 1,068.8/s (2,340 ms) | 1,055.7/s (2,369 ms) | 2,164.5 KB | 886 B | ✅ 100% |
+| **5,000** | 5,001 | 3,177.3/s (1,574 ms) | 3,193.5/s (1,566 ms) | 1,088.1/s (4,596 ms) | 1,078.7/s (4,636 ms) | 4,525.1 KB | 926 B | ✅ 100% |
+| **7,500** | 7,501 | **3,194.6/s (2,348 ms)** | **3,230.4/s (2,322 ms)** | 1,090.7/s (6,877 ms) | 1,078.3/s (6,956 ms) | 6,624.6 KB | 904 B | ✅ 100% |
+| **10,000** | 10,001 | 3,165.9/s (3,159 ms) | 3,219.9/s (3,106 ms) | **1,092.6/s (9,153 ms)** | **1,084.1/s (9,225 ms)** | 8,868.5 KB | 908 B | ✅ 100% |
 
-> [!TIP] Optimizing Redis RAM with Auto-Pruning
-> In production, configure job options to automatically trim completed and failed jobs:
-> ```java
-> JobOptions opts = JobOptions.builder()
->     .removeOnComplete(100) // Keep only last 100 finished jobs for inspection
->     .removeOnFail(1000)    // Keep only last 1000 failed jobs for debugging
->     .build();
-> ```
-> With auto-pruning enabled, your Redis footprint reflects only **currently active and waiting jobs**, dramatically lowering persistent memory requirements.
-
----
-
-## 🧵 Java 21 Loom: Virtual Threads vs. Platform Threads
-
-OxMQ is engineered from the ground up to leverage Java 21's Project Loom (`Executors.newVirtualThreadPerTaskExecutor()`).
-
-### The Thread Memory Problem in Legacy Queues
-In traditional Java message queues (RabbitMQ consumers, JMS listeners, Spring AMQP), each worker thread is a 1:1 mapping to an OS Platform Thread. An OS thread reserves a **1 MB native stack**:
-* 200 Platform Threads = **200 MB of native RAM** just for thread stacks.
-* 2,000 Platform Threads = **2 GB of native RAM**, causing thread exhaustion or `OutOfMemoryError: unable to create native thread`.
-
-### The OxMQ Advantage: Virtual Threads
-* **Stack Size**: Virtual Threads start with a dynamic heap chunk of only **~1 - 2 KB**.
-* **Carrier Thread Unmounting**: When a worker blocks on network I/O, database queries, or external REST APIs, the virtual thread automatically unmounts from its carrier thread, freeing the CPU core for other tasks.
-* **Empirical Heap Footprint**: During our 10,000-job concurrency tests with **200 Virtual Threads**, the peak JVM heap was only **89 MB**!
-
-```
-Platform Threads (Legacy):
-[ 1 MB Stack ] x 1,000 Workers = ~1.0 GB RAM overhead
-
-OxMQ Virtual Threads (Java 21):
-[ 2 KB Stack ] x 1,000 Workers = ~2.0 MB RAM overhead  (500x Reduction!)
-```
+#### 🔍 Inflection Point Analysis:
+* **Ingestion Saturation Inflection Point ($N = 7,500$)**:
+  - Ingestion rate scales steeply from 1,600 nodes/s at 100 nodes up to **~3,230 nodes/s at 7,500 nodes**.
+  - Above 7,500 nodes, ingestion throughput reaches the Redis single-command TCP packet buffer ceiling (~3,200 nodes/s).
+* **Resolution Throughput Saturation Point ($N \ge 1,000$)**:
+  - Worker resolution throughput reaches full pipe capacity at **1,000 children (~1,050 jobs/s)** and stays rock-solid all the way to **10,000 children (~1,092 jobs/s)**.
+  - Zero dropped tasks, zero race conditions, and complete collection of all 10,000 return values in the parent's `getChildrenValues()`.
+* **Redis Memory Asymptotic Stabilization**:
+  - At small tree sizes ($N \le 100$), Redis overhead is ~1,364 Bytes/node due to hash metadata headers and sorted set initializations.
+  - At scale ($N \ge 2,500$), per-node cost asymptotically stabilizes at **~904 – 908 Bytes/node**.
+  - A massive 10,001-node DAG tree consumes only **8.66 MB** of Redis RAM!
 
 ---
 
-## ⚡ High-Throughput Batch Dequeue
+### 3. Batch Dequeue Size Optimization (`OxmqBatchWorker`)
 
-For ultra-high ingestion scenarios (such as telemetry ingestion, batch database writes, or bulk event streaming), standard 1-by-1 job popping can saturate network latency.
+Measures 10,000 jobs ingested and consumed via `OxmqBatchWorker` across batch sizes from 10 to 1,000:
 
-OxMQ provides **`OxmqBatchWorker`** which dequeues batches of jobs in a single atomic Lua call:
+| Batch Size | Java 17 Throughput | Java 21 Throughput | Batches Processed | Dequeue Time (Java 17) | Dequeue Time (Java 21) | Latency / Batch |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **10** | 2,837.7 jobs/s | 2,801.9 jobs/s | 1,000 batches | 3,524 ms | 3,569 ms | ~3.5 ms |
+| **25** | 2,766.3 jobs/s | 2,818.5 jobs/s | 400 batches | 3,615 ms | 3,548 ms | ~8.9 ms |
+| **50** | 2,844.1 jobs/s | 2,840.9 jobs/s | 200 batches | 3,516 ms | 3,520 ms | ~17.6 ms |
+| **100** | **2,896.0 jobs/s** | **2,853.1 jobs/s** | 100 batches | **3,453 ms** | **3,505 ms** | ~34.8 ms |
+| **200** | 2,847.4 jobs/s | 2,849.0 jobs/s | 50 batches | 3,512 ms | 3,510 ms | ~70.2 ms |
+| **500** | **2,896.0 jobs/s** | 2,867.8 jobs/s | 20 batches | 3,453 ms | 3,487 ms | ~174.3 ms |
+| **1,000** | **2,918.9 jobs/s [PEAK]** | **2,886.8 jobs/s [PEAK]** | 10 batches | 3,426 ms | 3,464 ms | ~344.5 ms |
 
-* **1-by-1 Processing (200 Virtual Threads)**: ~1,084.25 jobs/second.
-* **Batch Dequeue (`batchSize=100`)**: **2,774.69 jobs/second** (~2.5x higher throughput).
-* **Network Efficiency**: Reduces Redis round-trips by 100x, allowing a single worker instance to ingest and process thousands of records per second.
+#### 🔍 Inflection Point Analysis:
+* **The Bulk Advantage**: Batch workers jump from ~1,100 jobs/s (1-by-1 worker) to **~2,850 – 2,918 jobs/s** (**2.6x throughput gain**) by cutting Redis network round-trips by 90–99%.
+* **The Production Sweet Spot (`batchSize = 100 – 200`)**:
+  - `batchSize = 100` achieves **99.2% of peak throughput** while keeping batch dispatch latency under **35 ms**.
+* **Latency Inflection Point (`batchSize > 500`)**:
+  - While `batchSize = 1,000` achieves peak throughput (~2,919 jobs/s), each batch takes ~345 ms to process. In latency-sensitive pipelines, setting batchSize > 200 introduces head-of-line delays for early jobs in the batch.
 
 ---
 
-## 🔬 Reproducing the Benchmarks
+### 4. Realistic Microservice I/O Concurrency (10ms Simulated I/O)
 
-You can run this exact benchmark suite in your own infrastructure to verify performance against your Redis instance:
+In real microservices, worker tasks perform network requests, database transactions, or external API calls. This suite simulates a **10ms blocking I/O call per task** across 1,000 jobs:
+
+| Concurrency | Java 17 Throughput | Java 17 Peak OS Threads | Java 21 Throughput | Java 21 Peak OS Threads | Java 17 Peak Heap | Java 21 Peak Heap |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **10** | 734.2 jobs/s | 35 threads | 792.4 jobs/s | **31 threads** | 67 MB | **35 MB** |
+| **25** | 1,127.4 jobs/s | 41 threads | 1,095.3 jobs/s | **31 threads** | 66 MB | **35 MB** |
+| **50** | 1,136.4 jobs/s | 41 threads | **1,128.7 jobs/s [PEAK]** | **31 threads** | 66 MB | **35 MB** |
+| **100** | 1,112.3 jobs/s | 41 threads | 1,106.2 jobs/s | **31 threads** | 67 MB | 79 MB |
+| **200** | 1,117.3 jobs/s | 41 threads | 1,114.8 jobs/s | **31 threads** | 67 MB | 78 MB |
+| **400** | 1,157.4 jobs/s | 41 threads | 1,112.3 jobs/s | **31 threads** | 68 MB | 78 MB |
+| **800** | **1,173.7 jobs/s [PEAK]** | **42 threads** | 1,067.2 jobs/s | **31 threads** | 68 MB | 78 MB |
+
+#### 🔍 Inflection Point Analysis:
+* **The OS Thread Advantage of Java 21 Loom**:
+  - In Java 21, the OS thread count is **strictly fixed at 31 OS threads** regardless of whether worker concurrency is 10, 100, 400, or 800. Virtual Threads unmount from carrier threads during the 10ms I/O delay in user space.
+  - In Java 17, platform threads must be spawned and maintained in the OS thread pool, consuming ~1 MB native stack per active thread.
+* **Degradation Point in Java 21 ($C = 800$)**:
+  - Java 21 throughput peaks at 50 workers (~1,128.7 jobs/s) and shows a slight degradation at 800 workers (1,067.2 jobs/s, ~5.4% drop) due to Virtual Thread scheduler coordination on a single queue consumer.
+
+---
+
+## 💾 Capacity Planning & Redis Sizing Matrix
+
+Based on our empirical measurements, use this guide to accurately size your production Redis cluster:
+
+| In-Flight Job Scale | Workload Profile | Measured Cost / Node | Redis RAM Needed | Recommended Cloud Tier | Estimated Cost |
+| :--- | :--- | :---: | :---: | :--- | :---: |
+| **10,000 Jobs** | Standard Queue | ~672 Bytes | **~6.6 MB** | Redis Cloud Free (30 MB) / `cache.t4g.micro` | **$0 – $12/mo** |
+| **10,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~9.1 MB** | Redis Cloud Free (30 MB) / `cache.t4g.micro` | **$0 – $12/mo** |
+| **100,000 Jobs** | Standard Queue | ~672 Bytes | **~67.2 MB** | AWS `cache.t4g.micro` (0.5 GB) | **~$12/mo** |
+| **100,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~90.8 MB** | AWS `cache.t4g.micro` (0.5 GB) | **~$12/mo** |
+| **1,000,000 Jobs** | Standard Queue | ~672 Bytes | **~672 MB** | AWS `cache.t4g.small` (1.37 GB) | **~$25/mo** |
+| **1,000,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~908 MB** | AWS `cache.t4g.small` (1.37 GB) | **~$25/mo** |
+| **10,000,000 Jobs** | Standard Queue | ~672 Bytes | **~6.72 GB** | AWS `cache.m7g.large` (13.07 GB) | **~$170/mo** |
+| **10,000,000 Jobs** | Complex DAG Tree | ~908 Bytes | **~9.08 GB** | AWS `cache.m7g.large` (13.07 GB) | **~$170/mo** |
+
+---
+
+## 🎯 Architecture Decision Guide: Java 17 vs. Java 21
+
+### When to deploy on Java 17 LTS:
+1. **Existing Enterprise Base**: If your organization has standardized on Java 17 LTS containers, OxMQ runs with **100% functional parity and identical Redis wire compatibility**.
+2. **Batch Ingestion Workloads**: `OxmqBatchWorker` achieves **2,918+ jobs/sec** on Java 17, matching Java 21 throughput.
+3. **DAG Workflows up to 10,000 nodes**: Java 17 enqueues and resolves 10,000 children with zero dropped dependencies.
+
+### When to upgrade to Java 21 LTS:
+1. **High Concurrency Microservices**: If individual workers perform blocking I/O (REST calls, database queries), Java 21 Loom Virtual Threads isolate the host OS from thread starvation and context-switch penalties.
+2. **Dense Multi-Queue Containers**: Spawning 100+ separate queue workers inside a single JVM container consumes < 80 MB heap on Java 21 without exhausting native OS thread limits.
+
+---
+
+## 🏃 Reproducing These Benchmarks
+
+Run the test suite on your own infrastructure:
 
 ```bash
-# 1. Ensure Redis is accessible (default: redis://localhost:6379)
+# 1. Start Redis
 docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 
-# 2. Compile and run the suite with Java 21 LTS
+# 2. Run on Java 17 LTS
+sdk use java 17.0.20-tem
 ./mvnw compile exec:java -pl oxmq-benchmarks \
-  -Dexec.mainClass="io.oxmq.benchmarks.DagScaleBenchmarkRunner" \
-  -Dredis.uri="redis://localhost:6379"
-```
+  -Dexec.mainClass="io.oxmq.benchmarks.InflectionPointBenchmarkRunner"
 
-To run the JMH microbenchmark harness for nanosecond-level profiling:
-
-```bash
-./mvnw clean package -pl oxmq-benchmarks -DskipTests
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.0.0.jar -t 4 -wi 3 -i 5
+# 3. Run on Java 21 LTS
+sdk use java 21.0.0.0+35-tem
+./mvnw compile exec:java -pl oxmq-benchmarks \
+  -Dexec.mainClass="io.oxmq.benchmarks.InflectionPointBenchmarkRunner"
 ```
