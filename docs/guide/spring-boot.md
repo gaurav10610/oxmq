@@ -79,49 +79,130 @@ dependencies {
 
 ## ⚙️ Configuration (`application.yml`)
 
-Configure Redis connection, thread concurrency, and stalled-job detection in `application.yml`:
+Configure Redis connection, worker defaults, and Actuator metrics in `application.yml`:
 
 ```yaml
 oxmq:
   redis:
-    host: localhost
-    port: 6379
-    timeout-ms: 2000
-    pool:
-      max-total: 64
-      max-idle: 32
-      min-idle: 8
-  worker:
-    virtual-threads: true           # Enable Java 21 Loom Virtual Threads
-    default-concurrency: 50         # Default concurrent workers per queue
-    stalled-interval-ms: 30000      # Check for stalled/crashed workers every 30s
-    lock-duration-ms: 30000         # Worker heartbeat lock duration
+    uri: redis://localhost:6379     # Redis connection URI
+  default-concurrency: 20           # Default worker concurrency
+  virtual-threads: true             # Enable Java 21 Loom Virtual Threads (falls back to platform threads on Java 17)
+  metrics-enabled: true             # Expose Micrometer meters
+
+app:
+  queues:
+    orders: orders-queue
+    audit: audit-queue
+    notifications: notifications-queue
+  concurrency:
+    orders: 10
 ```
 
 ---
 
-## 🎧 Declarative Listeners (`@OxmqListener`)
+## 🚀 Activation (`@EnableOxmq`)
 
-Annotate any Spring `@Component` method with `@OxmqListener`. OxMQ inspects method parameter types and automatically deserializes the incoming JSON payload into your record or class:
+Activate OxMQ in your Spring Boot application by adding `@EnableOxmq`:
 
 ```java
-package com.example.workers;
+@SpringBootApplication
+@EnableOxmq
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
 
-import io.oxmq.model.Job;
-import io.oxmq.spring.annotation.OxmqListener;
-import org.springframework.stereotype.Component;
+---
 
-public record EmailNotification(String to, String subject, String body) {}
+## 📨 Enqueueing with `OxmqTemplate`
 
+The starter provides `OxmqTemplate`—a Spring-idiomatic client following the Template Design Pattern (similar to `KafkaTemplate` / `RabbitTemplate`):
+
+```java
+@Service
+public class OrderService {
+
+    @Autowired
+    private OxmqTemplate oxmqTemplate;
+
+    public void createOrder(OrderDto order) {
+        // Enqueue with automatic JSON serialization
+        Job<OrderDto> job = oxmqTemplate.send("orders-queue", "process-order", order);
+
+        // Async enqueuing
+        oxmqTemplate.sendAsync("orders-queue", "process-order", order)
+                .thenAccept(j -> log.info("Enqueued: {}", j.getId()));
+
+        // Queue control
+        oxmqTemplate.pause("orders-queue");
+        oxmqTemplate.resume("orders-queue");
+    }
+}
+```
+
+---
+
+## 🎧 Declarative Listeners
+
+### 1. Method-Level Listener (`@OxmqListener`)
+
+Annotate any bean method with `@OxmqListener`. Supports property placeholders (`${app.queues.orders}`) and `@Header` metadata injection:
+
+```java
 @Component
-public class NotificationWorker {
+public class OrderListener {
 
-    @OxmqListener(queue = "notifications", concurrency = 100)
-    public void sendNotification(Job<EmailNotification> job) {
-        EmailNotification data = job.getData();
-        
-        // Virtual threads handle blocking network operations seamlessly
-        emailClient.send(data.to(), data.subject(), data.body());
+    @OxmqListener(
+        queue = "${app.queues.orders:orders-queue}",
+        concurrencyString = "${app.concurrency.orders:10}"
+    )
+    public String handleOrder(
+            OrderDto order,
+            @Header("jobId") String jobId,
+            @Header("timestamp") long timestamp
+    ) {
+        log.info("Processing order {} (jobId={})", order.orderId(), jobId);
+        // Automatically runs on Virtual Threads in Java 21+
+        return "SUCCESS";
+    }
+}
+```
+
+### 2. Batch Listener (`@OxmqBatchListener`)
+
+Consume chunks of jobs atomically in a single Redis roundtrip:
+
+```java
+@Component
+public class AuditListener {
+
+    @OxmqBatchListener(queue = "${app.queues.audit}", batchSize = 100)
+    public void handleAuditLogs(List<Job<AuditLogDto>> batch) {
+        log.info("Ingesting batch of {} records", batch.size());
+        // Batch DB insert or bulk indexing
+    }
+}
+```
+
+### 3. Class-Level Listener with Routing (`@OxmqListener` + `@OxmqHandler`)
+
+Patterned after Spring Kafka `@KafkaHandler`, routes multiple job types on a single queue:
+
+```java
+@Component
+@OxmqListener(queue = "${app.queues.notifications}", concurrency = 5)
+public class NotificationListener {
+
+    @OxmqHandler(name = "email")
+    public void handleEmail(NotificationDto email) {
+        emailService.send(email);
+    }
+
+    @OxmqHandler(name = "sms")
+    public void handleSms(NotificationDto sms) {
+        smsService.send(sms);
     }
 }
 ```
@@ -140,7 +221,6 @@ public void processPayment(Job<PaymentRequest> job) {
     PaymentRequest payment = job.getData();
 
     if (payment.amount() <= 0) {
-        // Fails immediately and moves job to FAILED state without retrying
         throw new UnrecoverableError("Invalid payment amount: " + payment.amount());
     }
 
@@ -163,7 +243,7 @@ OxMQ exposes real-time queue health and metrics through Spring Boot Actuator.
     "oxmq": {
       "status": "UP",
       "details": {
-        "notifications": {
+        "orders-queue": {
           "waiting": 12,
           "active": 3,
           "delayed": 0,

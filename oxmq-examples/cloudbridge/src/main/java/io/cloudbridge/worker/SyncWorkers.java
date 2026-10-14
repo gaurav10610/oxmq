@@ -10,6 +10,7 @@ import io.cloudbridge.dto.SyncRequest;
 import io.cloudbridge.service.SyncWorkflowService;
 import io.oxmq.model.Job;
 import io.oxmq.spring.annotation.OxmqListener;
+import io.oxmq.util.VirtualThreadSupport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -42,7 +43,7 @@ public class SyncWorkers {
         long start = System.currentTimeMillis();
 
         log.info("[VirtualThread: {}] Starting file transfer for [{}] ({} bytes) in parent [{}]",
-                Thread.currentThread().isVirtual() ? "V-Thread" : "Platform",
+                VirtualThreadSupport.isVirtual(Thread.currentThread()) ? "V-Thread" : "Platform",
                 payload.path(), payload.sizeBytes(), payload.parentJobId());
 
         // 1. Download stage (25% progress)

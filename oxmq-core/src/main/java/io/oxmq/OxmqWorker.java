@@ -8,7 +8,7 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.BullScripts;
-import io.oxmq.lua.LuaScript;
+import io.oxmq.concurrent.DispatcherExecutorFactory;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.exception.UnrecoverableError;
 import io.oxmq.metrics.OxmqMetrics;
@@ -70,6 +70,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
 
+    private final ExecutorService customExecutor;
     private ExecutorService dispatcherExecutor;
     private Thread pollerThread;
     private LockExtender lockExtender;
@@ -84,6 +85,7 @@ public class OxmqWorker<T> implements Worker<T> {
         this.payloadClass = builder.payloadClass;
         this.concurrency = Math.max(1, builder.concurrency);
         this.useVirtualThreads = builder.useVirtualThreads;
+        this.customExecutor = builder.customExecutor;
         this.lockDurationMs = builder.lockDurationMs;
         this.drainTimeoutMs = builder.drainTimeoutMs;
         this.pollIntervalMs = builder.pollIntervalMs;
@@ -115,14 +117,12 @@ public class OxmqWorker<T> implements Worker<T> {
             log.info("Starting OxMQ Worker [{}] for queue '{}' with concurrency {} (Virtual Threads: {})",
                     workerId, queueName, concurrency, useVirtualThreads);
 
-            if (useVirtualThreads) {
-                this.dispatcherExecutor = Executors.newVirtualThreadPerTaskExecutor();
-            } else {
-                this.dispatcherExecutor = Executors.newCachedThreadPool(r -> {
-                    Thread t = new Thread(r, "oxmq-worker-task-" + queueName);
-                    t.setDaemon(true);
-                    return t;
-                });
+            if (this.dispatcherExecutor == null) {
+                if (this.customExecutor != null) {
+                    this.dispatcherExecutor = this.customExecutor;
+                } else {
+                    this.dispatcherExecutor = DispatcherExecutorFactory.createExecutor(useVirtualThreads, "oxmq-worker-task-" + queueName);
+                }
             }
 
             this.lockExtender = new LockExtender(connectionManager.createDedicatedBinaryConnection(), bullScripts,
@@ -398,7 +398,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 stalledJobSentinel.close();
             }
 
-            if (dispatcherExecutor != null) {
+            if (dispatcherExecutor != null && customExecutor == null) {
                 dispatcherExecutor.shutdown();
                 try {
                     if (!dispatcherExecutor.awaitTermination(drainTimeoutMs, TimeUnit.MILLISECONDS)) {
@@ -425,6 +425,7 @@ public class OxmqWorker<T> implements Worker<T> {
         private Class<T> payloadClass;
         private int concurrency = 20;
         private boolean useVirtualThreads = true;
+        private ExecutorService customExecutor;
         private long lockDurationMs = 30_000;
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
@@ -472,6 +473,11 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> useVirtualThreads(boolean useVirtualThreads) {
             this.useVirtualThreads = useVirtualThreads;
+            return this;
+        }
+
+        public Builder<T> executor(ExecutorService customExecutor) {
+            this.customExecutor = customExecutor;
             return this;
         }
 

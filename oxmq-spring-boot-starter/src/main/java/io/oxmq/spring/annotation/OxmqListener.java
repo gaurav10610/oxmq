@@ -10,20 +10,25 @@ import java.lang.annotation.Target;
  * Marks a method as an OxMQ background job listener.
  * The method can accept {@code Job<T>} or the raw payload object {@code T}.
  */
-@Target({ElementType.METHOD, ElementType.ANNOTATION_TYPE})
+@Target({ElementType.METHOD, ElementType.TYPE, ElementType.ANNOTATION_TYPE})
 @Retention(RetentionPolicy.RUNTIME)
 @Documented
 public @interface OxmqListener {
 
     /**
-     * The name of the queue to listen to.
+     * The name of the queue to listen to. Supports property placeholders, e.g. {@code "${app.queue.name}"}.
      */
     String queue();
 
     /**
-     * Max concurrent jobs to process on Virtual Threads. Defaults to 20.
+     * Max concurrent jobs to process. Defaults to 20.
      */
     int concurrency() default 20;
+
+    /**
+     * Property placeholder for concurrency, e.g. {@code "${app.concurrency:20}"}.
+     */
+    String concurrencyString() default "";
 
     /**
      * Whether to execute jobs on Java 21 Virtual Threads (Loom). Defaults to true.

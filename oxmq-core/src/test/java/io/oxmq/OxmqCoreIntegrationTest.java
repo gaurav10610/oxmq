@@ -4,6 +4,7 @@ import io.lettuce.core.RedisClient;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
+import io.oxmq.util.VirtualThreadSupport;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -60,7 +61,7 @@ public class OxmqCoreIntegrationTest {
                 .pollIntervalMs(20)
                 .processor(job -> {
                     processedData.set(job.getData());
-                    isVirtualThread.set(Thread.currentThread().isVirtual());
+                    isVirtualThread.set(VirtualThreadSupport.isVirtual(Thread.currentThread()));
                     job.updateProgress(50);
                     job.log("Worker execution completed");
                     latch.countDown();
@@ -76,7 +77,7 @@ public class OxmqCoreIntegrationTest {
         boolean completed = latch.await(5, TimeUnit.SECONDS);
         assertThat(completed).isTrue();
         assertThat(processedData.get()).isEqualTo("hello-world");
-        assertThat(isVirtualThread.get()).isTrue();
+        assertThat(isVirtualThread.get()).isEqualTo(VirtualThreadSupport.isSupported());
 
         // Check Redis state
         TimeUnit.MILLISECONDS.sleep(200);

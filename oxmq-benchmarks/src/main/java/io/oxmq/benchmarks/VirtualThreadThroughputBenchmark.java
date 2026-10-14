@@ -1,7 +1,7 @@
 package io.oxmq.benchmarks;
 
+import io.oxmq.util.VirtualThreadSupport;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -27,7 +27,7 @@ public class VirtualThreadThroughputBenchmark {
 
     @Setup
     public void setup() {
-        virtualExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        virtualExecutor = VirtualThreadSupport.createDispatcherExecutor(true, "benchmark-vthread");
     }
 
     @TearDown

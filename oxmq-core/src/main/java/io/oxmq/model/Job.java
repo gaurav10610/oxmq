@@ -55,7 +55,7 @@ public class Job<T> {
      * Updates real-time progress percentage (0-100) and structured payload.
      */
     public void updateProgress(int percentage, Object payload) {
-        this.progress = Math.clamp(percentage, 0, 100);
+        this.progress = Math.min(100, Math.max(0, percentage));
         if (progressUpdater != null) {
             progressUpdater.accept(this.progress, payload);
         }

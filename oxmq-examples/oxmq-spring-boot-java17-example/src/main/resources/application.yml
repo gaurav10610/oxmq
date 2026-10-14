@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: oxmq-java17-showcase
+
+oxmq:
+  redis:
+    uri: ${OXMQ_REDIS_URI:redis://localhost:6379}
+  default-concurrency: 10
+  metrics-enabled: true
+
+app:
+  queues:
+    invoices: java17-invoices
+    audit: java17-audit-logs
+    notifications: java17-notifications
+  concurrency:
+    invoices: 8
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,oxmq
+  endpoint:
+    health:
+      show-details: always
