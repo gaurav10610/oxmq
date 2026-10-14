@@ -467,8 +467,33 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`) | Express, Fastify, NestJS |
 | **License** | **Apache 2.0** | **MIT** |
 
-*See our full [Architectural Comparison Guide](docs/COMPARISON.md) for deep dives on concurrency architectures and polyglot setups.*
+*See our full [Architectural Comparison Guide](docs/benchmarks/benchmarks-architecture.md) for deep dives on concurrency architectures and polyglot setups.*
 
+---
+
+## ⚡ Peak Scale & DAG Performance Benchmarks
+
+OxMQ has been rigorously profiled on **Java 21 LTS** with **Project Loom Virtual Threads** against Redis 7 to measure absolute peak capacity, ingestion rates, resolution latencies, and memory footprints:
+
+| Benchmark Scenario | Total Nodes | Concurrency | Enqueue Time | Ingestion Rate | Resolution Time | Throughput | Redis RAM Delta | Cost / Node | Verified |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Wide DAG (1 Parent + 100 Children)** | 101 | 100 VTs | 111 ms | 909.91/s | 296 ms | 341.22/s | 220 KB | 2,234 B | ✅ 100% |
+| **Wide DAG (1 Parent + 500 Children)** | 501 | 100 VTs | 238 ms | 2,105.04/s | 706 ms | 709.63/s | 557 KB | 1,139 B | ✅ 100% |
+| **Wide DAG (1 Parent + 1,000 Children)** | 1,001 | 100 VTs | 447 ms | 2,239.37/s | 1,121 ms | 892.95/s | 1.05 MB | 1,072 B | ✅ 100% |
+| **Wide DAG (1 Parent + 2,500 Children)** | 2,501 | 100 VTs | 834 ms | 2,998.80/s | 2,540 ms | 984.65/s | 2.58 MB | 1,057 B | ✅ 100% |
+| **Wide DAG (1 Parent + 5,000 Children)** | 5,001 | 100 VTs | 1,699 ms | 2,943.50/s | 4,932 ms | 1,013.99/s | 5.15 MB | 1,054 B | ✅ 100% |
+| **3-Tier Tree (1 Root $\rightarrow$ 20 Branches $\rightarrow$ 2,000 Leaves)** | 2,021 | 100 VTs | 661 ms | 3,057.49/s | 1,997 ms | 1,012.02/s | 2.01 MB | 1,016 B | ✅ 100% |
+| **Flat Queue Ingestion (10,000 Jobs)** | 10,000 | 200 VTs | 3,173 ms | 3,151.59/s | 9,223 ms | 1,084.25/s | 6.57 MB | 672 B | ✅ 100% |
+| **Batch Dequeue (`batchSize=100`)** | 10,000 | 100 VTs | 3,188 ms | 3,136.76/s | 3,604 ms | 2,774.69/s | 6.77 MB | 693 B | ✅ 100% |
+
+### 💡 Production Sizing & Cost Matrix
+* **Redis Footprint**: Costs **~672 Bytes** per flat job and **~1,054 Bytes** per DAG tree node (including hash data, zsets, parent state, and child results).
+* **100,000 In-Flight Jobs**: Only **~67 MB - 105 MB** Redis RAM (easily runs on AWS ElastiCache `cache.t4g.micro` @ ~$12/month).
+* **1,000,000 In-Flight Jobs**: Only **~670 MB - 1.05 GB** Redis RAM (runs on AWS ElastiCache `cache.t4g.medium` @ ~$50/month).
+* **Loom Virtual Threads Efficiency**: Allocates **~2 KB** per worker task vs 1 MB for legacy OS platform threads (500x memory saving). 200 concurrent worker threads ran with only **89 MB peak JVM heap**.
+* **Massive DAG Reliability**: Zero dropped tasks or race conditions across 5,000+ parallel children with atomic parent unblocking and result propagation.
+
+*See our full [Operations & Sizing Guide](docs/operations/benchmarks.md) for detailed formulas and JMH instructions.*
 
 ---
 

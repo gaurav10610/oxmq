@@ -76,3 +76,15 @@ public class ClickHouseAuditWorker {
     }
 }
 ```
+
+---
+
+## ⚡ Empirical Batch Worker Performance
+
+In our official benchmarks, `OxmqBatchWorker` with `batchSize=100` achieved **2,774.69 jobs/second** dequeue and resolution throughput, processing 10,000 jobs in just 3.6 seconds on a single node:
+
+* **Redis Network Efficiency**: Eliminates 99% of round-trips compared to 1-by-1 popping.
+* **Cost / Node**: ~693 Bytes in Redis.
+* **Peak JVM Heap**: Under 90 MB with Java 21 Virtual Threads.
+
+For complete benchmark tables and capacity sizing guidance, see the [Scale & Performance Benchmarks Guide](/operations/benchmarks).

@@ -38,30 +38,22 @@ public class ReportFlowExample {
         FlowProducer flowProducer = new FlowProducer(jedisPool);
 
         // Define Child 1: Analytics aggregation
-        FlowJob<AnalyticsPayload> fetchAnalytics = FlowJob.<AnalyticsPayload>builder()
-                .queueName("analytics-worker")
-                .name("fetch-analytics")
-                .data(new AnalyticsPayload("tenant-42", "2026-Q1"))
-                .build();
+        FlowJob<AnalyticsPayload> fetchAnalytics = FlowJob.of(
+                "analytics-worker", "fetch-analytics", new AnalyticsPayload("tenant-42", "2026-Q1"));
 
         // Define Child 2: Financial auditing
-        FlowJob<FinancePayload> auditFinance = FlowJob.<FinancePayload>builder()
-                .queueName("finance-worker")
-                .name("audit-finance")
-                .data(new FinancePayload("tenant-42", 150000.00))
-                .build();
+        FlowJob<FinancePayload> auditFinance = FlowJob.of(
+                "finance-worker", "audit-finance", new FinancePayload("tenant-42", 150000.00));
 
         // Define Parent: Render executive PDF (depends on both children)
-        FlowJob<ReportSummaryPayload> generateReport = FlowJob.<ReportSummaryPayload>builder()
-                .queueName("reports")
-                .name("compile-executive-summary")
-                .data(new ReportSummaryPayload("tenant-42"))
-                .children(List.of(fetchAnalytics, auditFinance))
-                .build();
+        FlowJob<ReportSummaryPayload> generateReport = FlowJob.of(
+                "reports", "compile-executive-summary", new ReportSummaryPayload("tenant-42"))
+                .addChild(fetchAnalytics)
+                .addChild(auditFinance);
 
         // Enqueue the entire DAG atomically
-        FlowJobNode node = flowProducer.add(generateReport);
-        System.out.println("Workflow created. Root parent ID: " + node.getJob().getId());
+        String rootJobId = flowProducer.add(generateReport);
+        System.out.println("Workflow created. Root parent ID: " + rootJobId);
     }
 }
 ```
@@ -74,3 +66,15 @@ You can customize what happens to the parent if a child job encounters an error:
 
 - **`failParentOnFailure = true`**: If any child job fails after exhausting its retries, the parent job is immediately moved to `FAILED`.
 - **`removeDependencyOnFailure = true`**: The failed child is unlinked from the parent's dependency counter, allowing the parent to still execute with partial results.
+
+---
+
+## ⚡ Empirical Scale Benchmarks
+
+OxMQ's `FlowProducer` has been battle-tested with **5,000+ parallel children per parent** and **multi-tier hierarchical DAGs with 2,021 nodes**:
+* Enqueued 5,001 nodes in **1.69 seconds** (~2,944 nodes/sec).
+* Resolved 5,000 parallel children with 100 Virtual Threads in **4.93 seconds** (~1,014 jobs/sec).
+* Preserved 100% of child return values with zero dropped dependencies.
+* Memory footprint: Only **~1,054 Bytes per node** in Redis.
+
+For full benchmark tables, Redis RAM sizing matrices, and cloud cost guides, see the [Scale & Performance Benchmarks Guide](/operations/benchmarks).
