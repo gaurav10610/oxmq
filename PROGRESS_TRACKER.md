@@ -1,9 +1,9 @@
 # 📊 OxMQ Master Progress Tracker
 
-**Project:** `OxMQ` — Distributed Job & Workflow Engine for Java 21+  
-**Target Release:** `v1.0.0` GA  
+**Project:** `OxMQ` — Distributed Job & Workflow Engine for Java 17+ and Java 21+  
+**Target Release:** `v1.1.0` GA  
 **License:** Apache 2.0 (100% Open Source, No Paywalls)  
-**Last Updated:** September 2026  
+**Last Updated:** October 2026  
 
 ---
 
@@ -17,10 +17,11 @@
 | **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
 | **M5: Flagship Showcase Application** | `CloudBridge` multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web dashboard, `FlowProducer` DAGs, and Virtual Threads | 🟢 Done | `100%` | `v0.5.0` |
 | **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, Documentation & SEO optimization, GitHub Release `v1.0.0` with packaged JAR artifacts, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
-| **M7: Zero-Friction DX & Tooling** | `oxmq-spring-boot-starter-ui` (Embedded Dashboard), `oxmq-testcontainers` (JUnit 5 extension), OpenTelemetry Distributed Tracing | 🟡 Planned | `0%` | `v1.1.0` |
-| **M8: Enterprise Reliability & Outbox** | `oxmq-outbox` (Transactional Outbox for Spring/JPA), DLQ Webhook/Slack Alerting & Replay, Redis Cluster Hash-Tags | ⚪ Planned | `0%` | `v1.2.0` |
-| **M9: Kotlin & Cloud-Native** | `oxmq-kotlin` (Coroutines DSL), GraalVM Native Image (AOT) hints, Quarkus extension | ⚪ Planned | `0%` | `v1.3.0` |
-| **M10: AI Orchestration & Durable Sagas** | AI Dual-Rate Limiter (RPM + TPM token buckets), SSE Progress Streaming, Checkpointed Step Sagas | ⚪ Planned | `0%` | `v2.0.0` |
+| **M7: Java 17+ LTS & 10,000 DAG Scale** | Java 17 baseline support with Loom fallback, annotation-driven `@OxmqListener` & `@OxmqBatchListener`, 10k DAG tree scale benchmarks, Java 17 Spring Boot showcase app | 🟢 Done | `100%` | `v1.1.0` |
+| **M8: Zero-Friction DX & Tooling** | `oxmq-spring-boot-starter-ui` (Embedded Dashboard), `oxmq-testcontainers` (JUnit 5 extension), OpenTelemetry Distributed Tracing | 🟡 In Progress | `0%` | `v1.2.0` |
+| **M9: Enterprise Reliability & Outbox** | `oxmq-outbox` (Transactional Outbox for Spring/JPA), DLQ Webhook/Slack Alerting & Replay, Redis Cluster Hash-Tags | ⚪ Planned | `0%` | `v1.3.0` |
+| **M10: Kotlin & Cloud-Native** | `oxmq-kotlin` (Coroutines DSL), GraalVM Native Image (AOT) hints, Quarkus extension | ⚪ Planned | `0%` | `v1.4.0` |
+| **M11: AI Orchestration & Durable Sagas** | AI Dual-Rate Limiter (RPM + TPM token buckets), SSE Progress Streaming, Checkpointed Step Sagas | ⚪ Planned | `0%` | `v2.0.0` |
 
 ---
 
