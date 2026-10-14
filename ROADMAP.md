@@ -171,9 +171,10 @@ graph TD
 | Release | Focus Area | Key Deliverables | Status |
 | :---: | :--- | :--- | :---: |
 | **`v1.0.0`** | **Core Foundation & Wire Parity** | • 49 BullMQ Lua scripts<br/>• Loom Virtual Threads dispatcher<br/>• `FlowProducer` DAGs & Batch dequeue<br/>• Spring Boot 3 starter & Bull-Board interoperability | 🟢 Released |
-| **`v1.1.0`** | **Zero-Friction DX & Tooling** | • `oxmq-spring-boot-starter-ui` (Zero-Node.js Dashboard)<br/>• `oxmq-testcontainers` (JUnit 5 extension)<br/>• W3C OpenTelemetry Distributed Tracing | 🟡 Planned |
-| **`v1.2.0`** | **Enterprise Reliability** | • `oxmq-outbox` (Transactional Outbox for Spring/JPA)<br/>• DLQ Webhook / Slack Alerts & Human-in-the-loop replay<br/>• Redis Cluster hash-tag audit & Valkey 8 certification | ⚪ Planned |
-| **`v1.3.0`** | **Kotlin & Cloud-Native** | • `oxmq-kotlin` Coroutines DSL<br/>• GraalVM Native Image (AOT) hints & verification<br/>• Quarkus Extension exploration | ⚪ Planned |
+| **`v1.1.0`** | **Java 17+ LTS & Scale Hardening** | • Java 17 LTS baseline + Java 21 Loom graceful fallback<br/>• Annotation-driven `@OxmqListener`, `@OxmqBatchListener`, `@OxmqHandler`<br/>• 10,000-node DAG scale benchmarks & memory inflection analysis<br/>• Dedicated Spring Boot 3 Java 17 showcase module | 🟢 Released |
+| **`v1.2.0`** | **Zero-Friction DX & Tooling** | • `oxmq-spring-boot-starter-ui` (Zero-Node.js Dashboard)<br/>• `oxmq-testcontainers` (JUnit 5 extension)<br/>• W3C OpenTelemetry Distributed Tracing | 🟡 In Progress |
+| **`v1.3.0`** | **Enterprise Reliability** | • `oxmq-outbox` (Transactional Outbox for Spring/JPA)<br/>• DLQ Webhook / Slack Alerts & Human-in-the-loop replay<br/>• Redis Cluster hash-tag audit & Valkey 8 certification | ⚪ Planned |
+| **`v1.4.0`** | **Kotlin & Cloud-Native** | • `oxmq-kotlin` Coroutines DSL<br/>• GraalVM Native Image (AOT) hints & verification<br/>• Quarkus Extension exploration | ⚪ Planned |
 | **`v2.0.0`** | **AI Orchestration & Sagas** | • AI Dual-Rate Limiter (RPM + TPM token buckets)<br/>• SSE Progress Streaming endpoints<br/>• Durable Checkpointed Step Sagas | ⚪ Planned |
 
 ---

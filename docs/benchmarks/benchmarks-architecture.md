@@ -93,5 +93,5 @@ You can execute the scale runner directly on your machines:
   -Dexec.mainClass="io.oxmq.benchmarks.InflectionPointBenchmarkRunner"
 
 # Run JMH microbenchmarks
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.0.0.jar
+java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.1.0.jar
 ```
