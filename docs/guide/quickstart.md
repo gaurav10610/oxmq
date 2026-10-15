@@ -118,18 +118,15 @@ import com.example.model.OrderInvoice;
 import io.oxmq.OxmqQueue;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
-import redis.clients.jedis.JedisPool;
 
 import java.time.Duration;
 
 public class OrderProducer {
     public static void main(String[] args) {
-        JedisPool jedisPool = new JedisPool("localhost", 6379);
-
         // Build the Queue
         OxmqQueue<OrderInvoice> queue = OxmqQueue.<OrderInvoice>builder()
                 .name("order-invoices")
-                .jedisPool(jedisPool)
+                .redisUri("redis://localhost:6379")
                 .payloadClass(OrderInvoice.class)
                 .build();
 
@@ -160,17 +157,14 @@ package com.example;
 
 import com.example.model.OrderInvoice;
 import io.oxmq.OxmqWorker;
-import redis.clients.jedis.JedisPool;
 
 import java.time.Duration;
 
 public class OrderWorker {
     public static void main(String[] args) throws InterruptedException {
-        JedisPool jedisPool = new JedisPool("localhost", 6379);
-
         OxmqWorker<OrderInvoice> worker = OxmqWorker.<OrderInvoice>builder()
                 .queueName("order-invoices")
-                .jedisPool(jedisPool)
+                .redisUri("redis://localhost:6379")
                 .payloadClass(OrderInvoice.class)
                 .concurrency(50) // 50 concurrent Virtual Threads (or platform threads on Java 17)
                 .lockDuration(Duration.ofSeconds(30))

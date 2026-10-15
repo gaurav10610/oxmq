@@ -40,20 +40,32 @@ public class OxmqQueue<T> implements Queue<T> {
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final Class<T> payloadClass;
+    private final io.oxmq.backend.QueueBackend backend;
 
     public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
                      JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
+        this(name, connectionManager, scriptManager, serializer, metrics, payloadClass, null);
+    }
+
+    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
         this.name = Objects.requireNonNull(name, "Queue name must not be null");
         this.prefix = "bull:" + name;
         this.queueKeys = new QueueKeys("bull", name);
-        this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
+        this.connectionManager = connectionManager;
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.metrics = metrics != null ? metrics : new OxmqMetrics();
         this.payloadClass = payloadClass;
+        this.backend = backend != null ? backend : new io.oxmq.backend.RedisQueueBackend(this.queueKeys, this.connectionManager, this.scriptManager, this.bullScripts);
 
         registerGauges();
+    }
+
+    @Override
+    public io.oxmq.backend.QueueBackend getBackend() {
+        return backend;
     }
 
     public static <T> Builder<T> builder() {
@@ -264,10 +276,17 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public void retry(String jobId) {
+        retry(jobId, io.oxmq.model.RetryOptions.defaults());
+    }
+
+    @Override
+    public void retry(String jobId, io.oxmq.model.RetryOptions options) {
         Objects.requireNonNull(jobId, "jobId must not be null");
+        io.oxmq.model.RetryOptions opts = options != null ? options : io.oxmq.model.RetryOptions.defaults();
         String state = getState(jobId);
         if ("failed".equals(state) || "completed".equals(state)) {
-            bullScripts.reprocessJob(connectionManager.getBinaryConnection(), queueKeys, jobId, state, false, true, true);
+            bullScripts.reprocessJob(connectionManager.getBinaryConnection(), queueKeys, jobId, state, false,
+                    opts.isResetAttemptsMade(), opts.isResetAttemptsStarted());
         } else {
             bullScripts.retryJob(connectionManager.getBinaryConnection(), queueKeys, jobId, "0", false);
         }
@@ -369,8 +388,129 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     @Override
+    public String upsertJobScheduler(String schedulerId, String cronPattern, String jobName, T data, JobOptions opts) {
+        Objects.requireNonNull(schedulerId, "schedulerId must not be null");
+        Objects.requireNonNull(jobName, "jobName must not be null");
+        Objects.requireNonNull(cronPattern, "cronPattern must not be null");
+        long nextMillis = System.currentTimeMillis();
+        String serializedData = serializer.serialize(data);
+        JobOptions options = opts != null ? opts : JobOptions.defaults();
+        return backend.addJobScheduler(schedulerId, nextMillis, jobName, serializedData, options.toMap(), null, cronPattern, null);
+    }
+
+    @Override
+    public long retryJobs(io.oxmq.model.RetryJobsOptions options) {
+        io.oxmq.model.RetryJobsOptions opts = options != null ? options : io.oxmq.model.RetryJobsOptions.defaults();
+        return retryJobs(opts.getState(), opts.getCount(), opts.getTimestamp());
+    }
+
+    @Override
+    public long retryJobs(JobState state, int count, Long timestamp) {
+        String stateStr = state != null ? state.name().toLowerCase() : "failed";
+        int batchCount = count > 0 ? count : 1000;
+        long ts = timestamp != null ? timestamp : System.currentTimeMillis();
+        long iterations = 0;
+        Long cursor;
+        do {
+            cursor = backend.moveJobsToWait(stateStr, batchCount, ts);
+            iterations++;
+        } while (cursor != null && cursor == 1L);
+        return iterations;
+    }
+
+    @Override
+    public long promoteJobs(int count) {
+        return backend.promoteJobs(count);
+    }
+
+    @Override
+    public void trimEvents(long maxLength) {
+        backend.trimEvents(maxLength);
+    }
+
+    @Override
+    public Map<Integer, Long> getCountsPerPriority(int... priorities) {
+        if (priorities == null || priorities.length == 0) {
+            return Map.of();
+        }
+        List<Long> counts = backend.getCountsPerPriority(priorities);
+        Map<Integer, Long> map = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < priorities.length; i++) {
+            map.put(priorities[i], i < counts.size() ? counts.get(i) : 0L);
+        }
+        return map;
+    }
+
+    @Override
+    public Map<JobState, List<String>> getRanges(JobState[] states, long start, long end, boolean asc) {
+        if (states == null || states.length == 0) {
+            return Map.of();
+        }
+        String[] stateNames = new String[states.length];
+        for (int i = 0; i < states.length; i++) {
+            stateNames[i] = states[i] == JobState.WAITING ? "wait" : states[i].name().toLowerCase();
+        }
+        List<List<String>> raw = backend.getRanges(start, end, asc, stateNames);
+        Map<JobState, List<String>> result = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < states.length; i++) {
+            result.put(states[i], i < raw.size() ? raw.get(i) : List.of());
+        }
+        return result;
+    }
+
+    @Override
+    public io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId) {
+        return backend.getDependencyCounts(jobId);
+    }
+
+    @Override
+    public boolean removeChildDependency(String jobId, String parentKey) {
+        return backend.removeChildDependency(jobId, parentKey);
+    }
+
+    @Override
+    public void removeUnprocessedChildren(String jobId) {
+        backend.removeUnprocessedChildren(jobId);
+    }
+
+    @Override
+    public Map<String, Object> getJobScheduler(String schedulerId) {
+        List<Object> raw = backend.getJobScheduler(schedulerId);
+        Map<String, Object> map = new java.util.LinkedHashMap<>();
+        if (raw != null && raw.size() >= 2) {
+            if (raw.get(0) instanceof Map<?, ?> m) {
+                m.forEach((k, v) -> map.put(k != null ? k.toString() : "", v));
+            }
+            if (raw.get(1) != null) {
+                map.put("nextTimestamp", raw.get(1));
+            }
+        }
+        return map;
+    }
+
+    @Override
+    public long getJobSchedulersCount() {
+        return backend.getJobSchedulersCount();
+    }
+
+    @Override
+    public boolean isMaxed() {
+        return backend.isMaxed();
+    }
+
+    @Override
+    public long removeOrphanedJobs(List<String> candidateJobIds) {
+        Long removed = backend.removeOrphanedJobs(candidateJobIds);
+        return removed != null ? removed : 0L;
+    }
+
+    public io.oxmq.backend.QueueBackend getBackend() {
+        return backend;
+    }
+
+    @Override
     public void close() {
-        connectionManager.close();
+        backend.close();
     }
 
     public static class Builder<T> {
@@ -382,6 +522,7 @@ public class OxmqQueue<T> implements Queue<T> {
         private JobSerializer serializer;
         private OxmqMetrics metrics;
         private Class<T> payloadClass;
+        private io.oxmq.backend.QueueBackend backend;
 
         public Builder<T> name(String name) {
             this.name = name;
@@ -400,6 +541,11 @@ public class OxmqQueue<T> implements Queue<T> {
 
         public Builder<T> connectionManager(RedisConnectionManager connectionManager) {
             this.connectionManager = connectionManager;
+            return this;
+        }
+
+        public Builder<T> backend(io.oxmq.backend.QueueBackend backend) {
+            this.backend = backend;
             return this;
         }
 
@@ -424,7 +570,7 @@ public class OxmqQueue<T> implements Queue<T> {
         }
 
         public OxmqQueue<T> build() {
-            if (connectionManager == null) {
+            if (backend == null && connectionManager == null) {
                 if (redisClient != null) {
                     connectionManager = new RedisConnectionManager(redisClient);
                 } else if (redisUri != null) {
@@ -433,7 +579,7 @@ public class OxmqQueue<T> implements Queue<T> {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
             }
-            return new OxmqQueue<>(name, connectionManager, scriptManager, serializer, metrics, payloadClass);
+            return new OxmqQueue<>(name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
         }
     }
 }

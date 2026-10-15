@@ -81,6 +81,15 @@ end
   Function to deduplicate a job.
 ]]
 --[[
+  Function to recover a stale deduplication key.
+  When the existing deduplication key has no expiry (simple mode, or
+  keepLastIfActive after the key was persisted), it should disappear
+  when the winning job finishes. If that job key no longer exists
+  because of an outage, the deduplication key is stale, so we discard it
+  and start a new deduplication window with the incoming job.
+  Returns true if the stale key was recovered, false otherwise.
+]]
+--[[
   Function to set the deduplication key for a job.
   Uses TTL from deduplication opts if provided.
 ]]
@@ -91,6 +100,23 @@ local function setDeduplicationKey(deduplicationKey, jobId, deduplicationOpts)
     else
         rcall('SET', deduplicationKey, jobId)
     end
+end
+local function recoverStaleDeduplicationKey(deduplicationKey, prefix, currentDeduplicatedJobId, jobId,
+    deduplicationId, deduplicationOpts)
+    if currentDeduplicatedJobId and rcall('PTTL', deduplicationKey) == -1 and
+        rcall('EXISTS', prefix .. currentDeduplicatedJobId) == 0 then
+        rcall('DEL', deduplicationKey)
+        -- Discard any pending next-job payload stored for the stale winner,
+        -- otherwise it would be resurrected when this job finalizes.
+        rcall('DEL', prefix .. "dn:" .. deduplicationId)
+        if deduplicationOpts['keepLastIfActive'] then
+            rcall('SET', deduplicationKey, jobId)
+        else
+            setDeduplicationKey(deduplicationKey, jobId, deduplicationOpts)
+        end
+        return true
+    end
+    return false
 end
 --[[
   Function to store a deduplicated next job if the existing job is active
@@ -158,6 +184,10 @@ local function deduplicateJobWithoutReplace(deduplicationId, deduplicationOpts, 
         if deduplicationOpts['extend'] then
             local currentDeduplicatedJobId = rcall('GET', deduplicationKey)
             if currentDeduplicatedJobId then
+                if recoverStaleDeduplicationKey(deduplicationKey, prefix, currentDeduplicatedJobId,
+                    jobId, deduplicationId, deduplicationOpts) then
+                    return
+                end
                 if storeDeduplicatedNextJob(deduplicationOpts, currentDeduplicatedJobId, prefix,
                     deduplicationId, jobName, jobData, fullOpts, eventsKey, maxEvents, jobId,
                     parentKey, parentData, parentDependenciesKey, repeatJobKey) then
@@ -191,6 +221,10 @@ local function deduplicateJobWithoutReplace(deduplicationId, deduplicationOpts, 
     end
     if deduplicationKeyExists then
         local currentDeduplicatedJobId = rcall('GET', deduplicationKey)
+        if recoverStaleDeduplicationKey(deduplicationKey, prefix, currentDeduplicatedJobId,
+            jobId, deduplicationId, deduplicationOpts) then
+            return
+        end
         if storeDeduplicatedNextJob(deduplicationOpts, currentDeduplicatedJobId, prefix,
             deduplicationId, jobName, jobData, fullOpts, eventsKey, maxEvents, jobId,
             parentKey, parentData, parentDependenciesKey, repeatJobKey) then
@@ -230,6 +264,10 @@ local function deduplicateJob(deduplicationOpts, jobId, delayedKey, deduplicatio
                 local isRemoved = removeDelayedJob(delayedKey, deduplicationKey, eventsKey, maxEvents,
                     currentDeduplicatedJobId, jobId, deduplicationId, prefix)
                 if isRemoved then
+                    -- Discard any pending next-job payload stored while the replaced
+                    -- job was active, otherwise it would be resurrected when the
+                    -- incoming job finalizes.
+                    rcall('DEL', prefix .. "dn:" .. deduplicationId)
                     if deduplicationOpts['keepLastIfActive'] then
                         rcall('SET', deduplicationKey, jobId)
                     else
@@ -242,6 +280,10 @@ local function deduplicateJob(deduplicationOpts, jobId, delayedKey, deduplicatio
                     end
                     return
                 else
+                    if recoverStaleDeduplicationKey(deduplicationKey, prefix, currentDeduplicatedJobId,
+                        jobId, deduplicationId, deduplicationOpts) then
+                        return
+                    end
                     storeDeduplicatedNextJob(deduplicationOpts, currentDeduplicatedJobId, prefix,
                         deduplicationId, jobName, jobData, fullOpts, eventsKey, maxEvents, jobId,
                         parentKey, parentData, parentDependenciesKey, repeatJobKey)

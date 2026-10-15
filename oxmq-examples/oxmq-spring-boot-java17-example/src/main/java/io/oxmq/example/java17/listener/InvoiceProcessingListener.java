@@ -36,6 +36,12 @@ public class InvoiceProcessingListener {
         log.info("Processing invoice [{}] (jobId={}, name={}, timestamp={}) for customer: {}",
                 request.invoiceId(), jobId, jobName, timestamp, request.customerEmail());
 
+        if (request.invoiceId().contains("postpone") && !processedInvoices.containsKey(request.invoiceId() + "-postponed")) {
+            processedInvoices.put(request.invoiceId() + "-postponed", new InvoiceResult(request.invoiceId(), "POSTPONED", 0, 0));
+            log.info("Invoice [{}] requested postponement, throwing DelayedException for 2 seconds (skipAttempt: true)", request.invoiceId());
+            throw new io.oxmq.exception.DelayedException(java.time.Duration.ofSeconds(2));
+        }
+
         double tax = Math.round(request.amount() * 0.18 * 100.0) / 100.0;
         double total = request.amount() + tax;
 

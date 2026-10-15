@@ -89,6 +89,10 @@ public class FlowProducer implements Closeable {
 
         } else {
             // Parent node: schedule into waiting-children state
+            if (node.getOpts() != null && node.getOpts().getDeduplicationId() != null && !node.getOpts().getDeduplicationId().isBlank()) {
+                throw new IllegalArgumentException(
+                    "Deduplication options cannot be set on parent DAG nodes (node '" + node.getName() + "'); set on leaf nodes only.");
+            }
             String parentId = bullScripts.addParentJob(
                 connectionManager.getBinaryConnection(),
                 queueKeys,

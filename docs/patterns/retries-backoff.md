@@ -66,12 +66,51 @@ public void parseDocument(Job<DocRequest> job) {
 
 ---
 
+## ⏸️ Worker Postponement without Failing Attempt (`DelayedException`)
+
+When downstream systems signal rate limits or require cool-off, throw `DelayedException`. The job is moved to `delayed` without consuming an attempt or recording failure reasons:
+
+```java
+import io.oxmq.exception.DelayedException;
+
+if (downstreamThrottled()) {
+    // Postpone for 15 seconds; attemptsMade remains unchanged!
+    throw new DelayedException(Duration.ofSeconds(15));
+}
+```
+
+---
+
 ## 🔁 Replaying Failed Jobs (Dead-Letter Replay)
 
 When an issue is fixed in production (e.g. downstream service restored), re-queue failed jobs back to `WAITING`:
 
 ```java
-// Re-queue specific failed job
-queue.retry(failedJobId);
+// Re-queue specific failed job with options
+queue.retry(failedJobId, RetryOptions.builder()
+    .resetAttemptsMade(true)
+    .resetAttemptsStarted(true)
+    .build());
 ```
-BullMQ's `reprocessJob-7.lua` script removes the job from `failed`, clears the previous error message, and pushes it back onto `wait`.
+
+BullMQ's **`reprocessJob-9.lua`** script clears previous errors, checks job priority, and automatically places prioritized jobs back into the priority sorted set (`KEYS[8] prioritized`) so priority ordering is strictly preserved!
+
+---
+
+## 📦 Cluster-Wide Bulk Retries (`retryJobs`)
+
+Retry batches of failed or completed jobs across your queue with a single atomic Redis roundtrip:
+
+```java
+import io.oxmq.model.RetryJobsOptions;
+
+// Bulk retry up to 500 failed jobs
+long retriedCount = queue.retryJobs(RetryJobsOptions.builder()
+    .state("failed")
+    .count(500)
+    .resetAttemptsMade(true)
+    .build()
+);
+```
+
+BullMQ's **`moveJobsToWait-8.lua`** atomically moves the jobs to `wait` and automatically re-attaches parent-child dependencies if any retried jobs belong to DAG workflows.

@@ -83,3 +83,31 @@ if (removed) {
 }
 ```
 BullMQ's `removeJobScheduler-3.lua` script removes both the scheduler metadata hash and the next pending job from the `delayed` sorted set atomically.
+
+---
+
+## 🔍 Querying Registered Schedulers
+
+Inspect active schedulers and their next execution time:
+
+```java
+// 1. Fetch metadata and next execution timestamp
+Map<String, Object> schedulerMeta = queue.getJobScheduler("nightly-billing-run");
+System.out.println("Next run timestamp: " + schedulerMeta.get("nextTimestamp"));
+
+// 2. Count total registered schedulers
+long count = queue.getJobSchedulersCount();
+System.out.println("Active recurring schedulers: " + count);
+```
+
+---
+
+## 🚀 Bulk Delayed Job Promotion (`promoteJobs`)
+
+Promote a batch of delayed jobs immediately to the waiting queue in a single atomic Redis operation:
+
+```java
+// Promote up to 100 delayed jobs to WAITING immediately
+long promotedCount = queue.promoteJobs(100);
+System.out.println("Promoted " + promotedCount + " jobs to waiting queue.");
+```

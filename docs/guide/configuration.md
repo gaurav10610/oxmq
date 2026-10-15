@@ -70,9 +70,9 @@ If you are using `oxmq-core` in a pure Java application without Spring:
 ```java
 OxmqQueue<MyPayload> queue = OxmqQueue.<MyPayload>builder()
     .name("orders")                         // Required: Queue name
-    .jedisPool(jedisPool)                   // Required: Jedis connection pool
-    .payloadClass(MyPayload.class)          // Required: JSON serialization target class
-    .prefix("bull")                         // Optional: Redis key prefix (default: "bull")
+    .redisUri("redis://localhost:6379")     // Redis connection URI (or .redisClient(...) / .connectionManager(...))
+    .payloadClass(MyPayload.class)          // Target payload class
+    .backend(customBackend)                 // Optional: Pluggable QueueBackend (default: RedisQueueBackend)
     .build();
 ```
 
@@ -81,11 +81,11 @@ OxmqQueue<MyPayload> queue = OxmqQueue.<MyPayload>builder()
 ```java
 OxmqWorker<MyPayload> worker = OxmqWorker.<MyPayload>builder()
     .queueName("orders")                    // Required: Queue name
-    .jedisPool(jedisPool)                   // Required: Jedis connection pool
-    .payloadClass(MyPayload.class)          // Required: Payload target class
+    .redisUri("redis://localhost:6379")     // Redis connection URI (or .redisClient(...) / .connectionManager(...))
+    .payloadClass(MyPayload.class)          // Payload target class
     .prefix("bull")                         // Optional: Key prefix (default: "bull")
     .concurrency(50)                        // Optional: Max concurrent jobs (default: 20)
-    .useVirtualThreads(true)                // Optional: Enable Loom (default: true)
+    .useVirtualThreads(true)                // Optional: Enable Loom (default: true, fallback on Java 17)
     .lockDuration(Duration.ofSeconds(30))   // Optional: Lock TTL (default: 30s)
     .stalledInterval(Duration.ofSeconds(30))// Optional: Check stalled workers interval
     .maxStalledCount(1)                     // Optional: Max times a stalled job can recover
