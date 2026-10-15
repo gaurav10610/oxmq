@@ -194,6 +194,41 @@ public class OxmqTemplate {
     }
 
     /**
+     * Retries failed or completed jobs in bulk on the specified queue.
+     */
+    public long retryJobs(String queueName, io.oxmq.model.RetryJobsOptions options) {
+        return getQueue(queueName).retryJobs(options);
+    }
+
+    /**
+     * Promotes delayed jobs in bulk to waiting state on the specified queue.
+     */
+    public long promoteJobs(String queueName, int count) {
+        return getQueue(queueName).promoteJobs(count);
+    }
+
+    /**
+     * Gets job count breakdown per priority on the specified queue.
+     */
+    public java.util.Map<Integer, Long> getCountsPerPriority(String queueName, int... priorities) {
+        return getQueue(queueName).getCountsPerPriority(priorities);
+    }
+
+    /**
+     * Retrieves child dependency counts for a parent job in a DAG workflow.
+     */
+    public io.oxmq.model.JobDependencyCounts getDependencyCounts(String queueName, String jobId) {
+        return getQueue(queueName).getDependencyCounts(jobId);
+    }
+
+    /**
+     * Trims the telemetry/event stream of the specified queue.
+     */
+    public void trimEvents(String queueName, long maxLength) {
+        getQueue(queueName).trimEvents(maxLength);
+    }
+
+    /**
      * Returns the FlowProducer instance for orchestrating parent-child DAG workflows.
      */
     public FlowProducer getFlowProducer() {

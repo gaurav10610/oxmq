@@ -504,10 +504,6 @@ public class OxmqQueue<T> implements Queue<T> {
         return removed != null ? removed : 0L;
     }
 
-    public io.oxmq.backend.QueueBackend getBackend() {
-        return backend;
-    }
-
     @Override
     public void close() {
         backend.close();

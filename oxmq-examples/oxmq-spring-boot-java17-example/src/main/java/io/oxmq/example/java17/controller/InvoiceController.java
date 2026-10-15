@@ -116,7 +116,8 @@ public class InvoiceController {
             @PathVariable String queueName,
             @RequestParam(defaultValue = "100") int count
     ) {
-        long iterations = oxmqTemplate.getQueue(queueName).retryJobs(
+        long iterations = oxmqTemplate.retryJobs(
+                queueName,
                 new io.oxmq.model.RetryJobsOptions(io.oxmq.model.JobState.FAILED, count, null)
         );
         return ResponseEntity.ok(Map.of("queue", queueName, "status", "RETRIED", "iterations", iterations));
@@ -127,13 +128,13 @@ public class InvoiceController {
             @PathVariable String queueName,
             @RequestParam(defaultValue = "100") int count
     ) {
-        long iterations = oxmqTemplate.getQueue(queueName).promoteJobs(count);
+        long iterations = oxmqTemplate.promoteJobs(queueName, count);
         return ResponseEntity.ok(Map.of("queue", queueName, "status", "PROMOTED", "iterations", iterations));
     }
 
     @GetMapping("/queues/{queueName}/priority-counts")
     public ResponseEntity<Map<Integer, Long>> getPriorityCounts(@PathVariable String queueName) {
-        Map<Integer, Long> counts = oxmqTemplate.getQueue(queueName).getCountsPerPriority(1, 2, 5, 10);
+        Map<Integer, Long> counts = oxmqTemplate.getCountsPerPriority(queueName, 1, 2, 5, 10);
         return ResponseEntity.ok(counts);
     }
 }
