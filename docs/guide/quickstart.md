@@ -32,7 +32,7 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
     </dependency>
 </dependencies>
 ```
@@ -44,7 +44,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.1.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.2.0")
 }
 ```
 
@@ -61,7 +61,7 @@ dependencies {
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
     </dependency>
 </dependencies>
 
@@ -81,13 +81,13 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-core:1.1.0")
+    implementation("io.oxmq:oxmq-core:1.2.0")
 }
 ```
 
 :::
 
-> 💡 **Standalone JARs:** You can also download pre-built binaries directly from [GitHub Releases v1.1.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.1.0).
+> 💡 **Standalone JARs:** You can also download pre-built binaries directly from [GitHub Releases v1.2.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.2.0).
 
 ---
 

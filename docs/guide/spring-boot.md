@@ -20,7 +20,7 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, declarat
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
     </dependency>
 </dependencies>
 ```
@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.1.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.2.0")
 }
 ```
 
@@ -49,7 +49,7 @@ dependencies {
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
     </dependency>
 </dependencies>
 
@@ -69,7 +69,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-spring-boot-starter:1.1.0")
+    implementation("io.oxmq:oxmq-spring-boot-starter:1.2.0")
 }
 ```
 

@@ -6,7 +6,7 @@
 
     <groupId>io.oxmq</groupId>
     <artifactId>oxmq-parent</artifactId>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <packaging>pom</packaging>
 
     <name>OxMQ :: Parent</name>
