@@ -6,12 +6,13 @@ This document details the architectural design, Redis data structures, concurren
 
 ## 1. High-Level System Architecture
 
-OxMQ is engineered around 5 core pillars:
-1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via single-roundtrip Lua scripts.
+OxMQ is engineered around 6 core pillars:
+1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via official BullMQ Lua scripts with single-roundtrip ACID guarantees.
 2. **Virtual Thread Native with Java 17 Fallback:** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread (with automatic fallback to high-performance platform thread pools on Java 17 LTS via `DispatcherExecutorFactory`), enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
 3. **High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis call for fast database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
-4. **BullMQ v5 Wire-Compatibility:** Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
-5. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
+4. **100% BullMQ v6 Wire & Script Parity:** Reuses official, battle-tested BullMQ v6 Lua scripts with zero custom Lua code. Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
+5. **Pluggable Storage Backend (`QueueBackend`):** Mirrors BullMQ v6's internal backend abstraction (`io.oxmq.backend.QueueBackend`), decoupling high-level queue operations from the Lettuce Redis connection driver (`RedisQueueBackend`).
+6. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
 
 ```mermaid
 graph TB
@@ -233,7 +234,7 @@ graph LR
 
 ## 7. Official BullMQ Lua Script Engine & Key Topology
 
-OxMQ directly incorporates all 49 official standalone Lua scripts from **BullMQ v5**. By executing the exact same Lua state transitions as BullMQ, OxMQ guarantees 100% wire and functional compatibility:
+OxMQ directly incorporates the complete suite of **49 official standalone Lua scripts from BullMQ v6**. By executing the exact same Lua state transitions as BullMQ, OxMQ guarantees 100% wire and functional compatibility:
 
 ### Key Topology (`QueueKeys`)
 | Key | Redis Type | Purpose |
@@ -247,6 +248,14 @@ OxMQ directly incorporates all 49 official standalone Lua scripts from **BullMQ 
 | `bull:<queue>:<jobId>` | HASH | Job metadata, payload, opts, stacktrace, progress |
 | `bull:<queue>:<jobId>:lock` | STRING | Worker ownership token with lock lease TTL |
 | `bull:<queue>:events` | STREAM / PUBSUB | Real-time state transition events |
+| `bull:<queue>:dn:<dedupId>` | STRING | `keepLastIfActive` deduplication buffer storing latest payload |
+| `bull:<queue>:pc` | ZSET | Priority counter set for prioritized jobs |
+
+### BullMQ v6 Architectural Enhancements in OxMQ
+1. **Priority-Preserving Retries (`reprocessJob-9.lua`)**: Re-queuing failed or completed jobs checks if `priority > 0` and atomically adds the job back to the priority sorted set (`KEYS[8] prioritized`, `KEYS[9] pc`), ensuring high-priority jobs jump ahead upon dead-letter replay.
+2. **DAG Child Dependency Re-attachment (`moveJobsToWait-8.lua`)**: In bulk retries, the script detects parent linkages (`parentKey`) and atomically restores retried child jobs to `parentKey:dependencies`, preventing premature parent job resolution.
+3. **Zero-Attempt Worker Postponement (`moveToDelayed-11.lua`)**: Accepts `skipAttempt: true` (ARGV[6]), enabling workers to defer execution via `DelayedException` without burning attempt budgets.
+4. **Deduplication Buffer Re-queueing (`moveToFinished-14.lua`)**: Automatically checks the `dn:<dedupId>` key and re-dispatches the last deduplicated job upon active task completion.
 
 ### MessagePack Binary Protocol (`BullMsgPack`)
 BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpack(ARGV[i])`. OxMQ encodes these options into binary MessagePack format using Jackson's MessagePack format and maps key names using BullMQ's option compression table (`fpof` for `failParentOnFailure`, `cpof` for `continueParentOnFailure`, `idof` for `ignoreDependencyOnFailure`, etc.).

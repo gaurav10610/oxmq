@@ -20,6 +20,7 @@ public class Job<T> {
     private JobOptions opts = new JobOptions();
     private int progress = 0;
     private int attemptsMade = 0;
+    private int attemptsStarted = 0;
     private long timestamp = System.currentTimeMillis();
     private Long processedOn;
     private Long finishedOn;
@@ -118,6 +119,14 @@ public class Job<T> {
 
     public void setAttemptsMade(int attemptsMade) {
         this.attemptsMade = attemptsMade;
+    }
+
+    public int getAttemptsStarted() {
+        return attemptsStarted;
+    }
+
+    public void setAttemptsStarted(int attemptsStarted) {
+        this.attemptsStarted = attemptsStarted;
     }
 
     public long getTimestamp() {

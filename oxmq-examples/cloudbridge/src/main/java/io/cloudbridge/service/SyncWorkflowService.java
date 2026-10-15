@@ -199,6 +199,15 @@ public class SyncWorkflowService {
         resp.put("isCompleted", isCompleted);
         resp.put("finishedOn", parentJob.getFinishedOn());
         resp.put("returnvalue", parentJob.getReturnvalue());
+
+        io.oxmq.model.JobDependencyCounts depCounts = orchestrationQueue.getDependencyCounts(syncId);
+        resp.put("dependencyCounts", Map.of(
+                "processed", depCounts.processed(),
+                "unprocessed", depCounts.unprocessed(),
+                "failed", depCounts.failed(),
+                "ignored", depCounts.ignored()
+        ));
+
         resp.put("files", childFiles);
 
         return resp;

@@ -92,4 +92,48 @@ public class InvoiceController {
         Job<?> job = oxmqTemplate.getJob(queueName, jobId);
         return job != null ? ResponseEntity.ok(job) : ResponseEntity.notFound().build();
     }
+
+    @PostMapping("/invoices/dedup-keeplast")
+    public ResponseEntity<Map<String, Object>> submitInvoiceWithKeepLast(@RequestBody InvoiceRequest request) {
+        Job<InvoiceRequest> job = oxmqTemplate.getQueue(invoiceQueue, InvoiceRequest.class).add(
+                "process-invoice",
+                request,
+                io.oxmq.model.JobOptions.builder()
+                        .deduplication(io.oxmq.model.DeduplicationOptions.ofKeepLastIfActive("invoice-" + request.invoiceId()))
+                        .build()
+        );
+        return ResponseEntity.ok(Map.of(
+                "jobId", job.getId(),
+                "queue", invoiceQueue,
+                "invoiceId", request.invoiceId(),
+                "deduplication", "keepLastIfActive",
+                "status", "QUEUED"
+        ));
+    }
+
+    @PostMapping("/queues/{queueName}/retry-bulk")
+    public ResponseEntity<Map<String, Object>> retryBulk(
+            @PathVariable String queueName,
+            @RequestParam(defaultValue = "100") int count
+    ) {
+        long iterations = oxmqTemplate.getQueue(queueName).retryJobs(
+                new io.oxmq.model.RetryJobsOptions(io.oxmq.model.JobState.FAILED, count, null)
+        );
+        return ResponseEntity.ok(Map.of("queue", queueName, "status", "RETRIED", "iterations", iterations));
+    }
+
+    @PostMapping("/queues/{queueName}/promote-bulk")
+    public ResponseEntity<Map<String, Object>> promoteBulk(
+            @PathVariable String queueName,
+            @RequestParam(defaultValue = "100") int count
+    ) {
+        long iterations = oxmqTemplate.getQueue(queueName).promoteJobs(count);
+        return ResponseEntity.ok(Map.of("queue", queueName, "status", "PROMOTED", "iterations", iterations));
+    }
+
+    @GetMapping("/queues/{queueName}/priority-counts")
+    public ResponseEntity<Map<Integer, Long>> getPriorityCounts(@PathVariable String queueName) {
+        Map<Integer, Long> counts = oxmqTemplate.getQueue(queueName).getCountsPerPriority(1, 2, 5, 10);
+        return ResponseEntity.ok(counts);
+    }
 }

@@ -72,6 +72,25 @@ local function isQueuePausedOrMaxed(queueMetaKey, activeKey)
   end
   return false
 end
+--[[
+  Function to move a retried child back to its parent's dependencies.
+  This does not move a parent that has already left waiting-children back to that state.
+]]
+local function moveChildBackToParentDependencies(jobKey, prevState)
+  local parentKey = rcall("HGET", jobKey, "parentKey")
+  if parentKey and rcall("EXISTS", parentKey) == 1 then
+    if prevState == "failed" then
+      if rcall("ZREM", parentKey .. ":unsuccessful", jobKey) == 1 or
+        rcall("HDEL", parentKey .. ":failed", jobKey) == 1 then
+        rcall("SADD", parentKey .. ":dependencies", jobKey)
+      end
+    else
+      if rcall("HDEL", parentKey .. ":processed", jobKey) == 1 then
+        rcall("SADD", parentKey .. ":dependencies", jobKey)
+      end
+    end
+  end
+end
 local metaKey = KEYS[6]
 local isPausedOrMaxed = isQueuePausedOrMaxed(metaKey, KEYS[7])
 local jobs = rcall('ZRANGEBYSCORE', KEYS[3], 0, timestamp, 'LIMIT', 0, maxCount)
@@ -80,11 +99,13 @@ if (#jobs > 0) then
         for i, key in ipairs(jobs) do
             local jobKey = KEYS[1] .. key
             rcall("HDEL", jobKey, "finishedOn", "processedOn", "failedReason")
+            moveChildBackToParentDependencies(jobKey, ARGV[3])
         end
     elseif ARGV[3] == "completed" then
         for i, key in ipairs(jobs) do
             local jobKey = KEYS[1] .. key
             rcall("HDEL", jobKey, "finishedOn", "processedOn", "returnvalue")
+            moveChildBackToParentDependencies(jobKey, ARGV[3])
         end
     end
     local maxEvents = getOrSetMaxEvents(metaKey)

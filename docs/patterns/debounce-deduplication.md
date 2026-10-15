@@ -37,6 +37,30 @@ queue.add(
 );
 ```
 
+### Option C: `keepLastIfActive` Deduplication Buffering (BullMQ v6 Parity)
+
+In standard deduplication, if a job with the same deduplication ID is currently running (`ACTIVE`), any new incoming job is rejected/dropped.
+
+With **`keepLastIfActive`**, OxMQ buffers the latest submitted payload in Redis key `dn:<deduplicationId>` while the current job is active. When the currently executing job completes or fails, BullMQ's `moveToFinished-14.lua` automatically re-enqueues the buffered job with the latest payload!
+
+```java
+import io.oxmq.model.DeduplicationOptions;
+
+queue.add(
+    "generate-report",
+    reportPayload,
+    JobOptions.builder()
+        .deduplication(DeduplicationOptions.builder()
+            .id("user_report_101")
+            .keepLastIfActive(true)  // Buffer latest update while running
+            .ttlMs(60_000L)          // 60-second dedup window
+            .build())
+        .build()
+);
+```
+
+This pattern is ideal for cache warming, invoice recalculations, or document synchronization where incoming updates during processing should trigger one final execution with the latest state.
+
 ---
 
 ## ⏳ Debounce Window (Trailing Edge)

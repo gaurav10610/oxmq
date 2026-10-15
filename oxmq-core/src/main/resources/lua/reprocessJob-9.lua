@@ -8,6 +8,8 @@
     KEYS[5] meta
     KEYS[6] active key
     KEYS[7] marker key
+    KEYS[8] prioritized key
+    KEYS[9] priority counter key
     ARGV[1] job.id
     ARGV[2] (job.opts.lifo ? 'R' : 'L') + 'PUSH'
     ARGV[3] propVal - failedReason/returnvalue
@@ -38,6 +40,23 @@ local function addJobInTargetList(targetKey, markerKey, pushCmd, isPausedOrMaxed
   addBaseMarkerIfNeeded(markerKey, isPausedOrMaxed)
 end
 --[[
+  Function to add job considering priority.
+]]
+-- Includes
+--[[
+  Function to get priority score.
+]]
+local function getPriorityScore(priority, priorityCounterKey)
+  local prioCounter = rcall("INCR", priorityCounterKey)
+  return priority * 0x100000000 + prioCounter % 0x100000000
+end
+local function addJobWithPriority(markerKey, prioritizedKey, priority, jobId, priorityCounterKey,
+  isPausedOrMaxed)
+  local score = getPriorityScore(priority, priorityCounterKey)
+  rcall("ZADD", prioritizedKey, score, jobId)
+  addBaseMarkerIfNeeded(markerKey, isPausedOrMaxed)
+end
+--[[
   Function to get max events value or set by default 10000.
 ]]
 local function getOrSetMaxEvents(metaKey)
@@ -64,6 +83,25 @@ local function isQueuePausedOrMaxed(queueMetaKey, activeKey)
   end
   return false
 end
+--[[
+  Function to move a retried child back to its parent's dependencies.
+  This does not move a parent that has already left waiting-children back to that state.
+]]
+local function moveChildBackToParentDependencies(jobKey, prevState)
+  local parentKey = rcall("HGET", jobKey, "parentKey")
+  if parentKey and rcall("EXISTS", parentKey) == 1 then
+    if prevState == "failed" then
+      if rcall("ZREM", parentKey .. ":unsuccessful", jobKey) == 1 or
+        rcall("HDEL", parentKey .. ":failed", jobKey) == 1 then
+        rcall("SADD", parentKey .. ":dependencies", jobKey)
+      end
+    else
+      if rcall("HDEL", parentKey .. ":processed", jobKey) == 1 then
+        rcall("SADD", parentKey .. ":dependencies", jobKey)
+      end
+    end
+  end
+end
 local jobKey = KEYS[1]
 if rcall("EXISTS", jobKey) == 1 then
   local jobId = ARGV[1]
@@ -77,20 +115,14 @@ if rcall("EXISTS", jobKey) == 1 then
     end
     rcall("HDEL", jobKey, "finishedOn", "processedOn", ARGV[3], unpack(attributesToRemove))
     local isPausedOrMaxed = isQueuePausedOrMaxed(KEYS[5], KEYS[6])
-    addJobInTargetList(KEYS[4], KEYS[7], ARGV[2], isPausedOrMaxed, jobId)
-    local parentKey = rcall("HGET", jobKey, "parentKey")
-    if parentKey and rcall("EXISTS", parentKey) == 1 then
-      if ARGV[4] == "failed" then
-        if rcall("ZREM", parentKey .. ":unsuccessful", jobKey) == 1 or
-          rcall("HDEL", parentKey .. ":failed", jobKey) == 1 then
-          rcall("SADD", parentKey .. ":dependencies", jobKey)
-        end
-      else
-        if rcall("HDEL", parentKey .. ":processed", jobKey) == 1 then
-          rcall("SADD", parentKey .. ":dependencies", jobKey)
-        end
-      end
+    local priority = tonumber(rcall("HGET", jobKey, "priority")) or 0
+    -- Standard or priority add
+    if priority == 0 then
+      addJobInTargetList(KEYS[4], KEYS[7], ARGV[2], isPausedOrMaxed, jobId)
+    else
+      addJobWithPriority(KEYS[7], KEYS[8], priority, jobId, KEYS[9], isPausedOrMaxed)
     end
+    moveChildBackToParentDependencies(jobKey, ARGV[4])
     local maxEvents = getOrSetMaxEvents(KEYS[5])
     -- Emit waiting event
     rcall("XADD", KEYS[2], "MAXLEN", "~", maxEvents, "*", "event", "waiting",

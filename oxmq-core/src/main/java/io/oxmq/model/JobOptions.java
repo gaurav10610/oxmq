@@ -22,6 +22,7 @@ public class JobOptions {
     private boolean lifo = false;
     private String deduplicationId;
     private long deduplicationTtlMs = 0;
+    private boolean keepLastIfActive = false;
     private int keepLogs = 0;
     private boolean failParentOnFailure = false;
     private boolean removeDependencyOnFailure = false;
@@ -127,6 +128,14 @@ public class JobOptions {
         this.deduplicationTtlMs = deduplicationTtlMs;
     }
 
+    public boolean isKeepLastIfActive() {
+        return keepLastIfActive;
+    }
+
+    public void setKeepLastIfActive(boolean keepLastIfActive) {
+        this.keepLastIfActive = keepLastIfActive;
+    }
+
     public int getKeepLogs() {
         return keepLogs;
     }
@@ -187,11 +196,15 @@ public class JobOptions {
         if (parentKey != null) map.put("parentKey", parentKey);
         if (deduplicationId != null && !deduplicationId.isBlank()) {
             map.put("deduplicationId", deduplicationId);
-            if (deduplicationTtlMs > 0) {
-                map.put("deduplication", Map.of("id", deduplicationId, "ttl", deduplicationTtlMs));
-            } else {
-                map.put("deduplication", Map.of("id", deduplicationId));
+            Map<String, Object> dedupMap = new HashMap<>();
+            dedupMap.put("id", deduplicationId);
+            if (deduplicationTtlMs > 0 && !keepLastIfActive) {
+                dedupMap.put("ttl", deduplicationTtlMs);
             }
+            if (keepLastIfActive) {
+                dedupMap.put("keepLastIfActive", true);
+            }
+            map.put("deduplication", dedupMap);
         }
         if (keepLogs > 0) map.put("keepLogs", keepLogs);
         if (failParentOnFailure) map.put("failParentOnFailure", true);
@@ -302,6 +315,26 @@ public class JobOptions {
         public Builder deduplication(String deduplicationId, Duration ttl) {
             options.setDeduplicationId(deduplicationId);
             options.setDeduplicationTtlMs(ttl.toMillis());
+            return this;
+        }
+
+        public Builder deduplication(String deduplicationId, boolean keepLastIfActive) {
+            options.setDeduplicationId(deduplicationId);
+            options.setKeepLastIfActive(keepLastIfActive);
+            return this;
+        }
+
+        public Builder deduplication(DeduplicationOptions dedup) {
+            if (dedup != null) {
+                options.setDeduplicationId(dedup.getId());
+                options.setDeduplicationTtlMs(dedup.getTtlMs());
+                options.setKeepLastIfActive(dedup.isKeepLastIfActive());
+            }
+            return this;
+        }
+
+        public Builder keepLastIfActive(boolean keepLastIfActive) {
+            options.setKeepLastIfActive(keepLastIfActive);
             return this;
         }
 

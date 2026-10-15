@@ -58,6 +58,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private final long drainTimeoutMs;
     private final long pollIntervalMs;
     private final int maxStalledCount;
+    private final int maxStartedAttempts;
 
     private final RedisConnectionManager connectionManager;
     private final LuaScriptManager scriptManager;
@@ -90,6 +91,7 @@ public class OxmqWorker<T> implements Worker<T> {
         this.drainTimeoutMs = builder.drainTimeoutMs;
         this.pollIntervalMs = builder.pollIntervalMs;
         this.maxStalledCount = builder.maxStalledCount;
+        this.maxStartedAttempts = builder.maxStartedAttempts;
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
@@ -222,6 +224,15 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
+        } catch (io.oxmq.exception.DelayedException de) {
+            bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                    job.getId(), workerId, de.getDelayMs(), true);
+            log.debug("Job {} [id: {}] moved to delayed state via DelayedException (delay: {} ms, skipAttempt: true)",
+                    job.getName(), job.getId(), de.getDelayMs());
+        } catch (io.oxmq.exception.WaitingException we) {
+            log.debug("Job {} [id: {}] moved to wait state via WaitingException", job.getName(), job.getId());
+        } catch (io.oxmq.exception.WaitingChildrenException wce) {
+            log.debug("Job {} [id: {}] moved to waiting-children state via WaitingChildrenException", job.getName(), job.getId());
         } catch (Throwable t) {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
@@ -249,6 +260,10 @@ public class OxmqWorker<T> implements Worker<T> {
 
         boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
                                   (error.getCause() instanceof UnrecoverableError);
+
+        if (maxStartedAttempts > 0 && job.getAttemptsStarted() >= maxStartedAttempts) {
+            isUnrecoverable = true;
+        }
 
         JobOptions opts = job.getOpts();
         int maxAttempts = opts != null && opts.getAttempts() > 0 ? opts.getAttempts() : 1;
@@ -281,6 +296,7 @@ public class OxmqWorker<T> implements Worker<T> {
         String dataStr = fields.get("data");
         String optsStr = fields.get("opts");
         String attemptsStr = fields.get("attemptsMade");
+        String attemptsStartedStr = fields.get("attemptsStarted");
         String timestampStr = fields.get("timestamp");
         String parentKeyStr = fields.get("parentKey");
 
@@ -290,6 +306,7 @@ public class OxmqWorker<T> implements Worker<T> {
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
         if (timestampStr != null) {
             long ts = Long.parseLong(timestampStr);
             job.setTimestamp(ts);
@@ -430,6 +447,7 @@ public class OxmqWorker<T> implements Worker<T> {
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
         private int maxStalledCount = 2;
+        private int maxStartedAttempts = 0;
         private int rateLimitMax = 0;
         private Duration rateLimitDuration = null;
         private LuaScriptManager scriptManager;
@@ -508,6 +526,11 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> maxStalledCount(int maxStalledCount) {
             this.maxStalledCount = maxStalledCount;
+            return this;
+        }
+
+        public Builder<T> maxStartedAttempts(int maxStartedAttempts) {
+            this.maxStartedAttempts = maxStartedAttempts;
             return this;
         }
 

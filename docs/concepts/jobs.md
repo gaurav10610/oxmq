@@ -17,7 +17,8 @@ In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 | `timestamp` | `long` | Epoch millisecond timestamp when the job was enqueued. |
 | `processedOn` | `long` | Timestamp when a worker claimed the job and entered `ACTIVE`. |
 | `finishedOn` | `long` | Timestamp when the job finished execution (`COMPLETED` or `FAILED`). |
-| `attemptsMade`| `int` | Number of times the job has been executed so far. |
+| `attemptsMade`| `int` | Number of times the job has finished an execution attempt. |
+| `attemptsStarted`| `int` | Number of times a worker has picked up the job to start executing. |
 | `returnvalue` | `JSON String` | Value returned by the worker upon successful completion. |
 | `failedReason`| `String` | Error message or exception description if the job failed. |
 | `stacktrace` | `JSON Array` | Full Java exception stack trace for debugging. |
@@ -125,3 +126,29 @@ if (user.isSuspended()) {
 ```
 
 OxMQ catches `UnrecoverableError` and immediately moves the job to `FAILED`, bypassing remaining attempts.
+
+---
+
+## ⏸️ Worker-Driven Postponement (`DelayedException`)
+
+In BullMQ v6, a worker can postpone execution without consuming an attempt count or marking the attempt as failed. In OxMQ, simply throw `DelayedException`:
+
+```java
+import io.oxmq.exception.DelayedException;
+
+if (!paymentGatewayReady()) {
+    // Postpone execution for 10 seconds without incrementing attemptsMade!
+    throw new DelayedException(Duration.ofSeconds(10));
+}
+```
+
+Behind the scenes, OxMQ catches `DelayedException` and executes BullMQ's `moveToDelayed-11.lua` with `skipAttempt: true`. The job transitions back to `DELAYED` without exhausting attempts or recording failure reasons.
+
+---
+
+## 🛑 Dynamic Job Parking (`WaitingException` & `WaitingChildrenException`)
+
+Workers can dynamically yield and park execution when waiting for external conditions or dependent child trees:
+
+- **`WaitingException`**: Moves the job back to `WAITING` state to be retried after other queued jobs.
+- **`WaitingChildrenException`**: Parks a job in `WAITING_CHILDREN` until dependencies complete.

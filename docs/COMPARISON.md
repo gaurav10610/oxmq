@@ -15,12 +15,15 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Concurrency Model** | **Project Loom Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop |
 | **I/O Blocking Mechanics** | Virtual threads unmount from carrier threads on blocking I/O | Non-blocking async/await promises |
 | **Multi-Core CPU Scaling** | Natively concurrent across all JVM CPU cores | Requires spawning child OS processes ("sandboxed workers") |
-| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
-| **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy | Standard `bull:<queue>:*` hierarchy |
+| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ v6 Lua scripts (zero custom scripts)** | **Official BullMQ v6 Lua scripts** |
+| **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy (including `dn:` & `pc`) | Standard `bull:<queue>:*` hierarchy |
 | **Job Lifecycle States** | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED |
-| **Parent-Child DAG Workflows** | Built-in `FlowProducer` | Built-in `FlowProducer` |
+| **Parent-Child DAG Workflows** | Built-in `FlowProducer` (leaf-only dedup, auto-reattachment) | Built-in `FlowProducer` (leaf-only dedup, auto-reattachment) |
 | **Sliding-Window Rate Limiting**| Built-in token bucket with `groupKey` | Built-in token bucket with `groupKey` |
-| **Job Deduplication & Debounce** | Built-in (`jobId` & `deduplicationId` windows) | Built-in (`jobId` & deduplication) |
+| **Job Deduplication & Buffering**| Built-in (`jobId`, `deduplicationId`, `keepLastIfActive` buffer) | Built-in (`jobId`, `deduplicationId`, `keepLastIfActive` buffer) |
+| **Worker Postponement** | `DelayedException` (zero attempt consumption) | `DelayedError` (skipAttempt) |
+| **Priority Preservation on Retry**| Yes (`reprocessJob-9.lua`) | Yes (`reprocessJob-9.lua`) |
+| **Storage Backend Contract** | Pluggable `QueueBackend` (`RedisQueueBackend`) | Pluggable `IQueueBackend` (`RedisBackend`) |
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |

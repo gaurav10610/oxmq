@@ -139,9 +139,89 @@ public interface Queue<T> extends Closeable {
     String upsertJobScheduler(String schedulerId, java.time.Duration every, String jobName, T data, JobOptions opts);
 
     /**
+     * Upserts a recurring job scheduler using a standard cron expression.
+     */
+    String upsertJobScheduler(String schedulerId, String cronPattern, String jobName, T data, JobOptions opts);
+
+    /**
      * Removes a recurring job scheduler and its next scheduled job.
      */
     boolean removeJobScheduler(String schedulerId);
+
+    /**
+     * Retries failed or completed jobs in bulk, moving them back to the wait queue and restoring DAG parent dependencies.
+     */
+    long retryJobs(io.oxmq.model.RetryJobsOptions options);
+
+    /**
+     * Retries failed or completed jobs in bulk with state, count, and timestamp limit.
+     */
+    long retryJobs(JobState state, int count, Long timestamp);
+
+    /**
+     * Promotes delayed jobs in bulk to wait status.
+     */
+    long promoteJobs(int count);
+
+    /**
+     * Retries a single job with options (resetAttemptsMade, resetAttemptsStarted).
+     */
+    void retry(String jobId, io.oxmq.model.RetryOptions options);
+
+    /**
+     * Trims the event stream to approximately maxLength.
+     */
+    void trimEvents(long maxLength);
+
+    /**
+     * Gets job counts breakdown per priority bucket.
+     */
+    java.util.Map<Integer, Long> getCountsPerPriority(int... priorities);
+
+    /**
+     * Gets paginated job IDs across multiple states in an atomic round-trip.
+     */
+    java.util.Map<JobState, List<String>> getRanges(JobState[] states, long start, long end, boolean asc);
+
+    /**
+     * Retrieves child dependency counts for a parent job in a DAG workflow.
+     */
+    io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId);
+
+    /**
+     * Removes a child dependency from its parent job.
+     */
+    boolean removeChildDependency(String jobId, String parentKey);
+
+    /**
+     * Removes unstarted children of a parent job.
+     */
+    void removeUnprocessedChildren(String jobId);
+
+    /**
+     * Retrieves recurring job scheduler metadata and next execution timestamp.
+     */
+    java.util.Map<String, Object> getJobScheduler(String schedulerId);
+
+    /**
+     * Gets the total count of registered recurring job schedulers.
+     */
+    long getJobSchedulersCount();
+
+    /**
+     * Checks if the queue has reached its concurrency limit.
+     */
+    boolean isMaxed();
+
+    /**
+     * Removes orphaned job keys not referenced in any active or completed state set.
+     */
+    long removeOrphanedJobs(List<String> candidateJobIds);
+
+    /**
+     * Retrieves the underlying storage backend.
+     */
+    io.oxmq.backend.QueueBackend getBackend();
 
     @Override
     void close();

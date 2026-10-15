@@ -108,6 +108,51 @@ If set to `true`, a failed child is unlinked from the parent's dependency counte
 
 ---
 
+## 🔒 Leaf-Only Deduplication in DAGs
+
+In BullMQ v6 and OxMQ, **deduplication is restricted exclusively to leaf jobs** in DAG workflows. 
+- Attempting to set `deduplicationId` or `DeduplicationOptions` on a parent or intermediate workflow node throws `IllegalArgumentException`.
+- This strict contract prevents orphaned dependencies or ambiguous workflow resolution where multiple disparate parent jobs might attempt to claim the exact same deduplicated child node.
+
+---
+
+## 🔄 DAG Child Auto-Reattachment on Bulk Retry
+
+When retrying failed child tasks across your cluster, BullMQ v6's `moveJobsToWait-8.lua` atomically re-attaches retried child jobs to their parent's `:dependencies` set:
+
+```java
+// Retrying failed child jobs automatically preserves parent DAG dependencies
+long retried = queue.retryJobs(RetryJobsOptions.builder()
+    .state("failed")
+    .count(50)
+    .resetAttemptsMade(true)
+    .build()
+);
+```
+
+This guarantees that parent jobs in `WAITING_CHILDREN` will never resolve prematurely before all retried children finish executing.
+
+---
+
+## 📊 Inspecting & Managing DAG Dependencies
+
+OxMQ exposes detailed child dependency queries and programmatic management:
+
+```java
+// 1. Query dependency counts breakdown
+JobDependencyCounts counts = queue.getDependencyCounts(parentJobId);
+System.out.println("Processed: " + counts.processed());
+System.out.println("Unprocessed: " + counts.unprocessed());
+System.out.println("Failed: " + counts.failed());
+System.out.println("Ignored: " + counts.ignored());
+
+// 2. Programmatically unlink a child dependency
+queue.removeChildDependency(parentJobId, "bull:child-queue:child_101");
+
+// 3. Remove all unstarted children of a parent job
+queue.removeUnprocessedChildren(parentJobId);
+```
+
 ## ⚡ Scale & Performance Limits: 10,000+ Node Trees
 
 OxMQ's DAG engine has been empirically tested for massive scale, deep nesting, and high worker concurrency across both Java 17 and Java 21:

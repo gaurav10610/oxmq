@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "OxMQ"
   text: "Distributed Queue Engine for Java 17+ & Java 21 Loom"
-  tagline: "100% wire and functional parity with BullMQ v5. Powered by Project Loom Virtual Threads on Java 21+ with Java 17 LTS support."
+  tagline: "100% wire and functional parity with BullMQ v6. Powered by Project Loom Virtual Threads on Java 21+ with Java 17 LTS support."
   image:
     src: /assets/oxmq-logo.png
     alt: OxMQ Logo
@@ -24,8 +24,8 @@ features:
     title: Project Loom Virtual Threads
     details: Replace heavy OS threads with lightweight Virtual Threads on Java 21+ (automatic fallback to platform thread pools on Java 17). Handle thousands of concurrent blocking I/O jobs without pool starvation.
   - icon: ⚡
-    title: 100% BullMQ v5 Parity
-    details: Direct execution of 49 official BullMQ Lua scripts for atomic Redis state transitions, rate limiting, and parent-child workflows.
+    title: 100% BullMQ v6 Parity
+    details: Direct execution of official BullMQ v6 Lua scripts for atomic Redis state transitions, rate limiting, and parent-child workflows with zero custom Lua code.
   - icon: 🍃
     title: Spring Boot 3+ Native Starter
     details: Declarative @OxmqListener annotations, auto-configured connection pools, automated lifecycle management, and Actuator metrics.
