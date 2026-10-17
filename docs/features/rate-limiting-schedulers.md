@@ -11,7 +11,7 @@ Limit job execution rates across distributed worker clusters without relying on 
 ```java
 OxmqWorker<WebhookPayload> worker = OxmqWorker.<WebhookPayload>builder()
         .queueName("external-webhooks")
-        .jedisPool(jedisPool)
+        .redisUri("redis://localhost:6379")
         .rateLimit(RateLimit.builder()
                 .max(100)                      // Max 100 jobs
                 .duration(Duration.ofSeconds(1)) // Per 1-second window

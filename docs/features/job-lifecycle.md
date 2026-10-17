@@ -55,13 +55,24 @@ When a job fails, OxMQ calculates the next attempt time and moves the job into t
 
 ---
 
-## 🛠️ Dynamic Job Operations
+## 🛠️ Dynamic Job Operations & Lifecycle Inspection
 
-OxMQ supports dynamic in-flight job modifications:
+OxMQ supports dynamic in-flight job modifications and state inspection:
 
 ```java
-// Check current state across all Redis sets
-JobState state = queue.getState(jobId);
+// Check typed lifecycle state
+JobState state = queue.getJobState(jobId);
+
+// Fast atomic completion checks via isFinished-3.lua
+boolean completed = queue.isCompleted(jobId);
+boolean failed = queue.isFailed(jobId);
+
+// Inspect loaded job
+Job<MyPayload> job = queue.getJob(jobId);
+if (job != null) {
+    JobState s = job.getState();
+    boolean isDone = job.isCompleted();
+}
 
 // Dynamically adjust delay
 queue.changeDelay(jobId, Duration.ofMinutes(10));
@@ -75,3 +86,53 @@ queue.promote(jobId);
 // Retrieve execution logs
 List<String> logs = queue.getJobLogs(jobId, 0, 50);
 ```
+
+---
+
+## 🗑️ Retention Policies (`KeepJobs`)
+
+Redis memory is valuable. BullMQ and OxMQ allow you to configure granular retention rules for completed and failed jobs so that Redis trims old jobs automatically without external cleanup cron jobs:
+
+```java
+// 1. Remove immediately upon successful completion
+JobOptions removeImmediate = JobOptions.builder()
+    .removeOnComplete(true)
+    .build();
+
+// 2. Keep at most the latest 500 completed jobs
+JobOptions keepCount = JobOptions.builder()
+    .removeOnComplete(500)
+    .build();
+
+// 3. Keep at most 1,000 jobs OR jobs newer than 7 days
+JobOptions retention = JobOptions.builder()
+    .removeOnComplete(KeepJobs.of(1000, Duration.ofDays(7)))
+    .removeOnFail(KeepJobs.count(5000)) // Keep up to 5,000 failed jobs for debugging
+    .build();
+
+queue.add("process-order", orderData, retention);
+```
+
+---
+
+## ⏳ Request-Reply: Waiting for Job Completion (`waitUntilFinished`)
+
+In modern microservices, you often want to enqueue an asynchronous background job and await its final result synchronously or reactively (e.g. inside a REST controller or RPC gateway):
+
+```java
+// Enqueue the job
+Job<InvoiceRequest> job = queue.add("generate-invoice", request);
+
+// 1. Synchronously await result with timeout (blocks calling thread/virtual thread)
+Object result = job.waitUntilFinished(queue.getQueueEvents(), Duration.ofSeconds(10));
+
+// 2. Asynchronously await result via CompletableFuture
+CompletableFuture<Object> future = job.waitUntilFinishedAsync(queue.getQueueEvents());
+future.thenAccept(res -> log.info("Invoice generated: {}", res));
+
+// 3. Or directly from OxmqTemplate in Spring Boot
+Object templateResult = oxmqTemplate.waitUntilFinished("invoices", job.getId(), Duration.ofSeconds(10));
+```
+
+> ⚡ **Zero Race Conditions**: Under the hood, OxMQ checks `isFinished-3.lua` first. If the job finished before the listener was attached, the result is returned immediately without waiting for the timeout!
+

@@ -26,24 +26,46 @@ public class FlowProducer implements Closeable {
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
     private final JobSerializer serializer;
+    private final String defaultPrefix;
 
     public FlowProducer(String redisUri) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer());
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null);
+    }
+
+    public FlowProducer(String redisUri, String defaultPrefix) {
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
     }
 
     public FlowProducer(RedisClient redisClient) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer());
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null);
+    }
+
+    public FlowProducer(RedisClient redisClient, String defaultPrefix) {
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer());
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix) {
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
+        this(connectionManager, scriptManager, serializer, null);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
+        this.defaultPrefix = defaultPrefix;
+    }
+
+    public String getDefaultPrefix() {
+        return defaultPrefix;
     }
 
     /**
@@ -57,9 +79,27 @@ public class FlowProducer implements Closeable {
         return addNode(root, null, null);
     }
 
+    /**
+     * Atomically/sequentially adds multiple workflow DAG trees into Redis.
+     *
+     * @param roots List of root FlowJob trees
+     * @return List of generated root Job IDs
+     */
+    public java.util.List<String> addBulk(java.util.List<FlowJob<?>> roots) {
+        if (roots == null || roots.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<String> parentIds = new java.util.ArrayList<>(roots.size());
+        for (FlowJob<?> root : roots) {
+            parentIds.add(add(root));
+        }
+        return parentIds;
+    }
+
     private String addNode(FlowJob<?> node, String parentKey, Map<String, Object> parentObj) {
         String queueName = node.getQueueName();
-        QueueKeys queueKeys = new QueueKeys("bull", queueName);
+        String nodePrefix = node.getPrefix() != null && !node.getPrefix().isBlank() ? node.getPrefix() : defaultPrefix;
+        QueueKeys queueKeys = new QueueKeys(nodePrefix, queueName);
         long now = System.currentTimeMillis();
 
         String customJobId = node.getOpts() != null ? node.getOpts().getJobId() : null;

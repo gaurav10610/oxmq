@@ -27,19 +27,21 @@ Create an `OxmqQueueEvents` instance and register callbacks:
 ```java
 package com.example;
 
-import io.oxmq.events.OxmqQueueEvents;
-import redis.clients.jedis.JedisPool;
+import io.oxmq.QueueEvents;
+import java.time.Duration;
 
 public class EventNotificationService {
 
-    public static void main(String[] args) {
-        JedisPool jedisPool = new JedisPool("localhost", 6379);
+    public static void main(String[] args) throws Exception {
+        QueueEvents events = QueueEvents.builder()
+                .queueName("orders")
+                .redisUri("redis://localhost:6379")
+                .build()
+                .start();
 
-        OxmqQueueEvents events = new OxmqQueueEvents("orders", jedisPool);
-
-        // Job claimed by a worker
-        events.onActive(jobId -> {
-            System.out.println("⚡ Job claimed: " + jobId);
+        // Job placed in wait queue
+        events.onWaiting(jobId -> {
+            System.out.println("⏳ Job queued: " + jobId);
         });
 
         // In-flight progress update (e.g. 25%, 50%, 75%)
@@ -48,27 +50,22 @@ public class EventNotificationService {
         });
 
         // Job successfully completed
-        events.onCompleted((jobId, returnvalue) -> {
+        var completedListener = (java.util.function.BiConsumer<String, Object>) (jobId, returnvalue) -> {
             System.out.println("✅ Job completed: " + jobId + ", output: " + returnvalue);
-        });
+        };
+        events.onCompleted(completedListener);
 
         // Job failed (exhausted retries or non-recoverable error)
         events.onFailed((jobId, failedReason) -> {
             System.err.println("❌ Job failed: " + jobId + ", reason: " + failedReason);
         });
 
-        // Worker stalled
-        events.onStalled(jobId -> {
-            System.err.println("⚠️ Worker stalled for job: " + jobId);
-        });
+        // Unregister listener when no longer needed
+        events.off("completed", (jobId, payload) -> {});
 
-        // Queue completely drained
-        events.onDrained(() -> {
-            System.out.println("🎉 Queue is empty!");
-        });
-
-        // Start listening in background
-        events.start();
+        // Await job finish synchronously or reactively
+        Object result = events.waitUntilFinished("job-123", Duration.ofSeconds(10));
+        System.out.println("Job 123 finished with result: " + result);
 
         // Register shutdown hook
         Runtime.getRuntime().addShutdownHook(new Thread(events::close));

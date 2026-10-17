@@ -16,9 +16,12 @@ import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,16 +45,11 @@ public class OxmqQueue<T> implements Queue<T> {
     private final Class<T> payloadClass;
     private final io.oxmq.backend.QueueBackend backend;
 
-    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
-                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
-        this(name, connectionManager, scriptManager, serializer, metrics, payloadClass, null);
-    }
-
-    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+    public OxmqQueue(String prefix, String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
                      JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
         this.name = Objects.requireNonNull(name, "Queue name must not be null");
-        this.prefix = "bull:" + name;
-        this.queueKeys = new QueueKeys("bull", name);
+        this.queueKeys = new QueueKeys(prefix, name);
+        this.prefix = this.queueKeys.getQualifiedName();
         this.connectionManager = connectionManager;
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
@@ -61,6 +59,16 @@ public class OxmqQueue<T> implements Queue<T> {
         this.backend = backend != null ? backend : new io.oxmq.backend.RedisQueueBackend(this.queueKeys, this.connectionManager, this.scriptManager, this.bullScripts);
 
         registerGauges();
+    }
+
+    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
+        this(null, name, connectionManager, scriptManager, serializer, metrics, payloadClass, null);
+    }
+
+    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
+        this(null, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
     }
 
     @Override
@@ -85,6 +93,10 @@ public class OxmqQueue<T> implements Queue<T> {
 
     public String getPrefix() {
         return prefix;
+    }
+
+    public String getNamespace() {
+        return queueKeys.getPrefix();
     }
 
     public QueueKeys getQueueKeys() {
@@ -163,6 +175,9 @@ public class OxmqQueue<T> implements Queue<T> {
         if (returnStr != null) job.setReturnvalue(returnStr);
         if (failedStr != null) job.setFailedReason(failedStr);
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+
+        String stateStr = getState(jobId);
+        job.setState(JobState.fromBullMqState(stateStr));
 
         try {
             Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":processed");
@@ -505,12 +520,118 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     @Override
+    public JobState getJobState(String jobId) {
+        return JobState.fromBullMqState(getState(jobId));
+    }
+
+    @Override
+    public boolean isCompleted(String jobId) {
+        List<Object> res = isFinished(jobId, false);
+        if (!res.isEmpty() && res.get(0) instanceof Number num) {
+            return num.intValue() == 1;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean isFailed(String jobId) {
+        List<Object> res = isFinished(jobId, false);
+        if (!res.isEmpty() && res.get(0) instanceof Number num) {
+            return num.intValue() == 2;
+        }
+        return false;
+    }
+
+    @Override
+    public List<Object> isFinished(String jobId, boolean fetchValue) {
+        if (jobId == null || jobId.isBlank()) {
+            return List.of();
+        }
+        return backend.isFinished(jobId, fetchValue);
+    }
+
+    private volatile QueueEvents internalQueueEvents;
+
+    public synchronized QueueEvents getQueueEvents() {
+        if (internalQueueEvents == null) {
+            internalQueueEvents = QueueEvents.builder()
+                    .prefix(queueKeys.getPrefix())
+                    .queueName(name)
+                    .connectionManager(connectionManager)
+                    .serializer(serializer)
+                    .build()
+                    .start();
+        }
+        return internalQueueEvents;
+    }
+
+    @Override
+    public Object waitUntilFinished(String jobId, Duration timeout) throws Exception {
+        return waitUntilFinished(jobId, getQueueEvents(), timeout);
+    }
+
+    @Override
+    public Object waitUntilFinished(String jobId, QueueEvents events, Duration timeout) throws Exception {
+        List<Object> finishedCheck = isFinished(jobId, true);
+        if (finishedCheck != null && !finishedCheck.isEmpty()) {
+            int status = ((Number) finishedCheck.get(0)).intValue();
+            if (status == 1) {
+                Object val = finishedCheck.size() > 1 ? finishedCheck.get(1) : null;
+                if (val instanceof byte[] b) {
+                    return new String(b, StandardCharsets.UTF_8);
+                }
+                return val;
+            } else if (status == 2) {
+                Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
+                String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
+                throw new RuntimeException(reason);
+            } else if (status == -1) {
+                throw new IllegalArgumentException("Job " + jobId + " does not exist in queue " + name);
+            }
+        }
+        return events.waitUntilFinished(jobId, timeout);
+    }
+
+    @Override
+    public CompletableFuture<Object> waitUntilFinishedAsync(String jobId) {
+        return waitUntilFinishedAsync(jobId, getQueueEvents());
+    }
+
+    @Override
+    public CompletableFuture<Object> waitUntilFinishedAsync(String jobId, QueueEvents events) {
+        List<Object> finishedCheck = isFinished(jobId, true);
+        if (finishedCheck != null && !finishedCheck.isEmpty()) {
+            int status = ((Number) finishedCheck.get(0)).intValue();
+            if (status == 1) {
+                Object val = finishedCheck.size() > 1 ? finishedCheck.get(1) : null;
+                if (val instanceof byte[] b) {
+                    val = new String(b, StandardCharsets.UTF_8);
+                }
+                return CompletableFuture.completedFuture(val);
+            } else if (status == 2) {
+                Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
+                String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
+                return CompletableFuture.failedFuture(new RuntimeException(reason));
+            } else if (status == -1) {
+                return CompletableFuture.failedFuture(new IllegalArgumentException("Job " + jobId + " does not exist in queue " + name));
+            }
+        }
+        return events.waitUntilFinishedAsync(jobId);
+    }
+
+    @Override
     public void close() {
+        if (internalQueueEvents != null) {
+            try {
+                internalQueueEvents.close();
+            } catch (Exception ignored) {}
+        }
         backend.close();
     }
 
     public static class Builder<T> {
         private String name;
+        private String prefix;
         private RedisConnectionManager connectionManager;
         private RedisClient redisClient;
         private String redisUri;
@@ -522,6 +643,11 @@ public class OxmqQueue<T> implements Queue<T> {
 
         public Builder<T> name(String name) {
             this.name = name;
+            return this;
+        }
+
+        public Builder<T> prefix(String prefix) {
+            this.prefix = prefix;
             return this;
         }
 
@@ -575,7 +701,7 @@ public class OxmqQueue<T> implements Queue<T> {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
             }
-            return new OxmqQueue<>(name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
+            return new OxmqQueue<>(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
         }
     }
 }

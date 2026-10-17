@@ -1,12 +1,21 @@
 package io.oxmq.spring;
 
+import io.oxmq.client.QueueKeys;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.core.env.Environment;
 
 /**
  * Configuration properties for OxMQ in Spring Boot.
  */
 @ConfigurationProperties(prefix = "oxmq")
 public class OxmqProperties {
+
+    /**
+     * Service-level namespace prefix for all queues, workers, and events.
+     * When left unspecified, automatically defaults to ${spring.application.name} if configured,
+     * or "bull" for standard default wire-compatibility.
+     */
+    private String prefix;
 
     /**
      * Redis connection properties.
@@ -27,6 +36,36 @@ public class OxmqProperties {
      * Whether Micrometer metrics are enabled.
      */
     private boolean metricsEnabled = true;
+
+    public String getPrefix() {
+        return prefix;
+    }
+
+    public void setPrefix(String prefix) {
+        this.prefix = prefix;
+    }
+
+    /**
+     * Resolves the effective service namespace prefix following the strict precedence hierarchy:
+     * <ol>
+     *   <li>Explicit {@code oxmq.prefix} property</li>
+     *   <li>{@code spring.application.name} if configured in Environment</li>
+     *   <li>{@code OXMQ_PREFIX} environment variable / {@code -Doxmq.prefix} system property</li>
+     *   <li>Fallback default {@code "bull"}</li>
+     * </ol>
+     */
+    public String resolvePrefix(Environment env) {
+        if (prefix != null && !prefix.isBlank()) {
+            return prefix.trim();
+        }
+        if (env != null) {
+            String appName = env.getProperty("spring.application.name");
+            if (appName != null && !appName.isBlank()) {
+                return appName.trim();
+            }
+        }
+        return QueueKeys.resolvePrefix(null);
+    }
 
     public Redis getRedis() {
         return redis;

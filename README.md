@@ -5,20 +5,21 @@
 <h1 align="center" style="font-size: 2.8rem; font-weight: 800; margin-top: 0.5rem; margin-bottom: 0.5rem; letter-spacing: -0.5px;">OxMQ</h1>
 
 <p align="center">
-  <b>The High-Performance Distributed Job Queue &amp; DAG Workflow Engine for Java 17+ &amp; Java 21 Loom</b><br/>
-  <i>The BullMQ of Java • 100% Free &amp; Open Source (Apache 2.0) • Native Bull-Board UI Parity • Batch Dequeue • 100% Annotation-Driven Spring Boot 3</i>
+  <b>The Enterprise Distributed Job Queue &amp; DAG Workflow Engine for Java 17+ &amp; Java 21 Loom</b><br/>
+  <i>The BullMQ of Java • 100% Free &amp; Open Source (Apache 2.0) • Native Context Isolation • Virtual Threads • Batch Dequeue • Spring Boot 3 Starter • Bull-Board UI Parity</i>
 </p>
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.2.0"><img src="https://img.shields.io/badge/Release-v1.2.0-blue.svg" alt="Release v1.2.0"></a>
-  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.2.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/Release-v1.3.0-blue.svg" alt="Release v1.3.0"></a>
+  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.3.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-6.2%2B%20%7C%207.x-red.svg" alt="Redis"></a>
   <a href="https://openjdk.org/projects/loom/"><img src="https://img.shields.io/badge/Concurrency-Virtual%20Threads%20(Loom)-brightgreen.svg" alt="Virtual Threads"></a>
-  <a href="https://bullmq.io/"><img src="https://img.shields.io/badge/BullMQ-Wire%20Compatible-blueviolet.svg" alt="BullMQ Compatible"></a>
+  <a href="docs/guide/namespacing.md"><img src="https://img.shields.io/badge/Multi--Tenancy-Context%20Isolation-blueviolet.svg" alt="Context Isolation"></a>
+  <a href="https://bullmq.io/"><img src="https://img.shields.io/badge/BullMQ-Wire%20Compatible-magenta.svg" alt="BullMQ Compatible"></a>
   <a href="https://grafana.com/"><img src="https://img.shields.io/badge/Grafana-Dashboard%20Included-F46800.svg" alt="Grafana"></a>
 </p>
 
@@ -33,8 +34,9 @@ Every major engineering ecosystem has an undisputed gold standard for background
 
 **What about Java?**  
 Until now, Java microservices have lacked a native, lightweight Redis distributed job queue built specifically for Java 21 Project Loom:
-1. **Heavy OS Thread Pools**: Traditional Java background processors allocate standard platform threads (~1MB stack per thread). When tasks perform blocking I/O (HTTP calls, DB queries, LLM calls), thread pools quickly become saturated.
-2. **The Polyglot BullMQ Gap**: Teams using BullMQ in TypeScript/Node had no direct equivalent in Java sharing the same Redis key conventions and Lua scripts for seamless polyglot architectures.
+1. **Heavy OS Thread Pools**: Traditional Java background processors allocate standard platform threads (~1MB stack per thread). When tasks perform blocking I/O (HTTP calls, DB queries, LLM API invocations), thread pools quickly become saturated, exhausting memory and collapsing under load.
+2. **The Shared Redis Multi-Tenancy Collision**: In distributed microservice topologies, services sharing a single Redis instance inevitably collide on identical queue names (`orders`, `notifications`, `invoices`), causing workers to cross-consume confidential jobs.
+3. **The Polyglot BullMQ Gap**: Teams running BullMQ in TypeScript/Node had no direct equivalent in Java sharing the same Redis key conventions, Lua scripts, and Bull-Board web dashboard for seamless polyglot architectures.
 
 ---
 
@@ -42,11 +44,24 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 
 **OxMQ brings the gold standard of BullMQ to Java 21 Project Loom (Virtual Threads) and Redis:**
 
-* **🧵 Java 21 Virtual Threads (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** per JVM node with $< 2\text{KB}$ memory per task and zero OS carrier thread blocking.
-* **💯 100% Free & Open Source (Apache 2.0):** Complex Parent-Child DAG Workflows, Sliding-Window Token-Bucket Rate Limiting, Dynamic Queues, and Sub-second Delays with zero paywalls.
+* **🧵 Java 21 Virtual Threads (Project Loom):** Execute **1,000+ to 10,000+ concurrent I/O-bound workers** per JVM node with $< 2\text{KB}$ memory per task and zero OS carrier thread blocking. Full automatic fallback to optimized platform daemon pools on Java 17 LTS.
+* **🏢 Native Context Isolation & Multi-Tenancy:** Run dozens of microservices or SaaS tenants on a shared Redis cluster with total data isolation and zero worker cross-talk. Features the **"Define Once at Service Level, Inherit Everywhere"** pattern (`spring.application.name`).
+* **💯 100% Free & Open Source (Apache 2.0):** Complex Parent-Child DAG Workflows, Sliding-Window Token-Bucket Rate Limiting, Dynamic Queues, and Sub-second Delays with zero enterprise paywalls.
 * **⚡ High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in a single Redis roundtrip via Lua script, eliminating per-task network roundtrips for high-volume database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
-* **🌐 BullMQ Wire-Compatibility:** Uses BullMQ's standard Redis schema for seamless polyglot interoperability (Java $\leftrightarrow$ Node.js $\leftrightarrow$ Python) and **instant compatibility with the [Bull-Board Web UI](https://github.com/felixmosh/bull-board)**.
+* **🌐 BullMQ Wire-Compatibility:** Uses BullMQ's standard Redis schema and 49 official Lua scripts for seamless polyglot interoperability (Java $\leftrightarrow$ Node.js $\leftrightarrow$ Python) and **instant compatibility with the [Bull-Board Web UI](https://github.com/felixmosh/bull-board)**.
 * **🍃 Zero-Config Spring Boot 3 Starter:** Declarative `@OxmqListener` annotations, automated worker lifecycle management, Actuator health checks, and native Micrometer telemetry out-of-the-box.
+
+---
+
+## 💼 Real-World Enterprise Use Cases & Problems Solved
+
+| Enterprise Use Case | The Challenge Without OxMQ | How OxMQ Solves It | Key Developer Benefit |
+| :--- | :--- | :--- | :--- |
+| **🛒 E-Commerce & Checkout Pipelines** | Platform thread exhaustion during slow payment gateway calls; duplicate orders under retries. | Virtual Threads prevent carrier thread blocking during payment I/O; atomic `jobId` deduplication buffers idempotency; delayed queues handle cart expiration. | 10x higher concurrent checkout throughput with zero duplicate charges. |
+| **🤖 LLM & Generative AI Pipelines** | Document chunking requires fanning out 100+ embedding calls; external LLM APIs (OpenAI, Claude) throw HTTP 429 rate limit errors. | `FlowProducer` fans out parallel child embeddings and aggregates parent context; sliding-window token-bucket limiter (`groupKey`) strictly enforces requests/tokens per minute. | Zero HTTP 429 rate limit bans; 100% atomic parent-child workflow resolution. |
+| **📊 High-Volume Financial & Audit Ingestion** | Dequeueing 10,000 audit logs individually causes 10,000 network roundtrips, choking Redis and DB transaction pools. | `OxmqBatchWorker` atomically drains up to $N$ jobs in a single roundtrip via Lua script for JDBC bulk `executeBatch()` or Elasticsearch bulk indexing. | **2.6x throughput multiplier** (~2,900 jobs/s) with amortized Redis I/O. |
+| **🏢 Multi-Tenant SaaS on Shared Redis** | Microservices sharing a Redis cluster accidentally cross-consume each other's jobs when queue names collide (`orders`, `tasks`). | Native **Context Isolation**: queues, deduplication sets, and streams are prefixed with `{service:queue}` using Redis Cluster hash tags. | Zero cross-talk; define once via `spring.application.name`, inherit everywhere. |
+| **🌐 Polyglot Microservices** | Node.js frontend uses BullMQ, but Java backend cannot inspect, consume, or retry the same queues. | 100% wire-format and Lua script parity allows Node.js to enqueue tasks and Java Loom workers to process them, all monitored via **Bull-Board**. | Single unified task fabric across TypeScript, Java, and Python services. |
 
 ---
 
@@ -55,13 +70,16 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | Feature | Architecture & Implementation | Key Developer Value |
 | :--- | :--- | :--- |
 | **🚀 Virtual Thread Concurrency** | Java 21 Project Loom native dispatcher (`OxmqWorker`) | **10,000+ concurrent I/O workers** on a single node with $< 2\text{KB}$ memory per task and zero OS thread pool starvation. |
-| **🌲 Parent-Child DAG Workflows** | Atomic dependency tree resolution via `FlowProducer` | **100% Free & Open Source**: Parent jobs await parallel child completion with automatic return value propagation. |
+| **🏢 Context Isolation & Multi-Tenancy** | Service-level namespacing with strict 7-tier precedence & Redis hash-tags | Run multiple microservices or SaaS tenants on a shared Redis instance with zero worker cross-talk, isolated deduplication, and cross-service messaging (`toService`). |
+| **🌲 Parent-Child DAG Workflows** | Atomic dependency tree resolution via `FlowProducer` | **100% Free & Open Source**: Parent jobs await parallel child completion with automatic return value propagation into `parentJob.getChildrenValues()`. |
 | **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **Amortized network roundtrips** for high-volume batch ingestion into ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake. |
-| **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances. |
+| **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances with dynamic `groupKey`. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling, `jobId` hashing, and `keepLastIfActive` buffer | Millisecond-accurate delayed job triggers and debounced deduplication windows with automated active buffer re-queueing. |
+| **⏳ Request-Reply Awaiting** | Synchronous & async job completion awaiting (`job.waitUntilFinished`) | Zero-race `isFinished-3.lua` checking allows REST/RPC gateways to await async worker output with microsecond-accurate timeout enforcement. |
+| **🗑️ Granular Retention Policy** | Auto-trimming completed and failed sets (`KeepJobs`) | Retain jobs by count (`removeOnComplete(500)`) or age (`KeepJobs.of(1000, 7_DAYS)`), or prune immediately (`removeOnComplete(true)`). |
 | **⏸️ Worker Postponement** | `DelayedException` with `skipAttempt: true` (`moveToDelayed-11.lua`) | Defer job execution without consuming attempt count or recording failure reasons. |
-| **📡 Progress & Pub/Sub Events** | Real-time percentage progress & `QueueEvents` listener | Live percentage updates (`job.updateProgress(n)`), step logs, and Redis Pub/Sub event streaming for real-time WebSocket UIs. |
+| **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, dynamic listener unregistration (`events.off`), and stream events. |
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
 | **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
@@ -79,31 +97,101 @@ Jobs transition atomically across Redis lists and sorted sets via single-roundtr
 
 ---
 
-## 🏛️ System Architecture
+## 🏢 Context Isolation & Multi-Tenant Namespacing
 
-OxMQ is designed with a clean 3-tier separation:
+OxMQ solves multi-service Redis sharing through the **"Define Once at Service Level, Inherit Everywhere"** pattern:
+
+```yaml
+# application.yml
+spring:
+  application:
+    name: billing-service  # Automatically prefixes all queues as billing-service:queueName:*
+
+oxmq:
+  redis:
+    uri: redis://shared-redis-cluster:6379
+  virtual-threads: true
+```
+
+### 1. Automatic Service Inheritance
+All declarative listeners in this service automatically operate strictly inside `billing-service`:
+
+```java
+@Component
+public class InvoiceListener {
+
+    // Automatically namespaced: {billing-service:invoices}:*
+    @OxmqListener(queue = "invoices")
+    public void processInvoice(InvoiceDto invoice) {
+        // Billing workers will NEVER process invoices from shipping-service!
+    }
+}
+```
+
+### 2. Explicit Cross-Service Dispatch (`toService`)
+Need to submit a job to a queue owned by another microservice on the same Redis cluster?
+
+```java
+@Service
+public class OrderService {
+
+    @Autowired
+    private OxmqTemplate oxmqTemplate;
+
+    public void checkout(OrderDto order) {
+        // 1. Process internally in order-service namespace
+        oxmqTemplate.send("internal-audit", order);
+
+        // 2. Cross-service dispatch into shipping-service namespace!
+        oxmqTemplate.toService("shipping-service")
+                .send("dispatch-queue", new ShippingOrder(order.id(), order.items()));
+    }
+}
+```
+
+### 3. Plain Java Service Gateway (`OxmqClient`)
+
+```java
+OxmqClient billingClient = OxmqClient.builder()
+        .prefix("billing-service")
+        .redisUri("redis://shared-redis:6379")
+        .build();
+
+// All queues, workers, and workflows inherit "billing-service"
+OxmqQueue<InvoiceDto> queue = billingClient.queue("invoices", InvoiceDto.class);
+
+// Fluent cross-service switching:
+OxmqClient shippingClient = billingClient.forService("shipping-service");
+shippingClient.queue("dispatch", ShippingOrder.class).add("pkg-1", order);
+```
+
+*For complete details on Redis cluster hash-tags and the 7-tier precedence hierarchy, read our [Context Isolation & Namespacing Guide](docs/guide/namespacing.md).*
+
+---
+
+## 🏛️ System Architecture
 
 ```mermaid
 flowchart TD
     subgraph App["1. Java 17+ / Java 21 Application Layer"]
-        Producer["📤 <b>Producers &amp; DAG Workflows</b><br/><code>OxmqQueue</code> • <code>FlowProducer</code>"]
-        Worker["⚡ <b>Virtual Thread Workers</b><br/><code>OxmqWorker</code> • <code>@OxmqListener</code>"]
+        Producer["📤 <b>Producers &amp; DAG Workflows</b><br/><code>OxmqQueue</code> • <code>FlowProducer</code> • <code>OxmqClient</code>"]
+        Worker["⚡ <b>Virtual Thread Workers</b><br/><code>OxmqWorker</code> • <code>@OxmqListener</code> • <code>OxmqBatchWorker</code>"]
     end
 
     subgraph Redis["2. Redis Storage (BullMQ Wire-Compatible)"]
-        Queues[("📋 <b>Queues &amp; Sorted Sets</b><br/>wait • active • delayed • completed • failed")]
-        Lua["🔒 <b>Atomic Lua Scripts</b><br/>Atomic Pop • Complete • Locks • Rate Limits"]
+        Queues[("📋 <b>Namespaced Queues &amp; Sets</b><br/>{prefix:queue}:wait • active • delayed • completed • failed")]
+        Lua["🔒 <b>49 Atomic Lua Scripts</b><br/>Atomic Pop • Complete • Locks • Rate Limits • DAG Resolution"]
     end
 
     subgraph Monitoring["3. Observability &amp; Dashboards"]
-        BullBoard["🖥️ <b>Bull-Board Web UI</b><br/>Real-Time Queue Dashboard"]
-        Prometheus["📈 <b>Micrometer Telemetry</b><br/>Prometheus &amp; Grafana (p99 Timers)"]
+        BullBoard["🖥️ <b>Bull-Board Web UI</b><br/>Real-Time Multi-Service Queue Dashboard"]
+        Prometheus["📈 <b>Micrometer Telemetry</b><br/>Prometheus &amp; Grafana (p99 Timers &amp; Gauges)"]
     end
 
     Producer -->|Enqueue Jobs| Queues
     Worker <-->|Lock, Pop &amp; Complete| Queues
     Queues <-->|Atomic State Changes| Lua
-    Queues -.->|Pub/Sub Events| BullBoard
+    Queues -.->|Redis Streams| BullBoard
     Worker -.->|Metrics Export| Prometheus
 ```
 
@@ -111,7 +199,7 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.2.0).
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.3.0).
 
 ### Option 1: JitPack (Recommended — Zero-Auth)
 
@@ -131,14 +219,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
 </dependencies>
 ```
@@ -151,9 +239,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.2.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.3.0")
     // or for Spring Boot 3 microservices:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.2.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.3.0")
 }
 ```
 
@@ -163,7 +251,6 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
 
 #### Maven (`pom.xml` & `~/.m2/settings.xml`)
 ```xml
-<!-- In your pom.xml -->
 <repositories>
     <repository>
         <id>github</id>
@@ -175,14 +262,14 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
     <!-- or for Spring Boot 3: -->
     <!--
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
     -->
 </dependencies>
@@ -201,35 +288,11 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
 > </settings>
 > ```
 
-#### Gradle (`build.gradle.kts`)
-```kotlin
-repositories {
-    mavenCentral()
-    maven {
-        url = uri("https://maven.pkg.github.com/gaurav10610/oxmq")
-        credentials {
-            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
-            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
-        }
-    }
-}
-
-dependencies {
-    implementation("io.oxmq:oxmq-core:1.2.0")
-    // implementation("io.oxmq:oxmq-spring-boot-starter:1.2.0")
-}
-```
-
-### Option 3: Pre-built Release JARs
-Direct download links from [GitHub Releases v1.2.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.2.0):
-- [`oxmq-core-1.2.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.2.0/oxmq-core-1.2.0.jar)
-- [`oxmq-spring-boot-starter-1.2.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.2.0/oxmq-spring-boot-starter-1.2.0.jar)
-
 ---
 
 ## 🚀 60-Second Quickstart
 
-### 1. Produce Jobs (5 Lines of Code)
+### 1. Produce Jobs (Java 17+ Records Supported)
 
 ```java
 import io.oxmq.OxmqQueue;
@@ -245,12 +308,14 @@ OxmqQueue<EmailNotification> queue = OxmqQueue.<EmailNotification>builder()
     .redisUri("redis://localhost:6379")
     .build();
 
-// 3. Enqueue with 5s delay, 3 retries, and exponential backoff
-queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!", "Hello Alice!"),
+// 3. Enqueue with 5s delay, 3 retries, exponential backoff, and automatic Redis retention trimming
+Job<EmailNotification> job = queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!", "Hello Alice!"),
     JobOptions.builder()
         .delay(Duration.ofSeconds(5))
         .attempts(3)
         .exponentialBackoff(Duration.ofSeconds(1))
+        .removeOnComplete(KeepJobs.count(500))               // Retain latest 500 completed jobs
+        .removeOnFail(KeepJobs.of(1000, Duration.ofDays(7))) // Retain failed jobs for up to 7 days
         .build());
 ```
 
@@ -277,13 +342,23 @@ OxmqWorker<EmailNotification> worker = OxmqWorker.<EmailNotification>builder()
 worker.start();
 ```
 
+### 3. Request-Reply: Await Job Completion (`waitUntilFinished`)
+
+```java
+// Synchronously or reactively await execution result with timeout enforcement:
+Object deliveryStatus = job.waitUntilFinished(queue.getQueueEvents(), Duration.ofSeconds(10));
+System.out.println("Job output: " + deliveryStatus); // "DELIVERED"
+
+// Fast state inspection
+JobState state = queue.getJobState(job.getId()); // COMPLETED
+boolean isDone = queue.isCompleted(job.getId());  // true
+```
+
 ---
 
 ## 🍃 Spring Boot 3 Starter (`oxmq-spring-boot-starter`)
 
 OxMQ provides first-class, **100% annotation-driven** autoconfiguration for Spring Boot 3 on **Java 17 LTS and Java 21+**:
-
-### 1. Enable in Application
 
 ```java
 @SpringBootApplication
@@ -295,27 +370,7 @@ public class OrderApplication {
 }
 ```
 
-### 2. Enqueue with `OxmqTemplate` (Template Pattern)
-
-```java
-@Service
-public class OrderService {
-
-    @Autowired
-    private OxmqTemplate oxmqTemplate;
-
-    public void submitOrder(OrderDto order) {
-        // Enqueue with automatic JSON serialization
-        Job<OrderDto> job = oxmqTemplate.send("orders", "process-order", order);
-        
-        // Pause or resume queues dynamically
-        oxmqTemplate.pause("orders");
-        oxmqTemplate.resume("orders");
-    }
-}
-```
-
-### 3. Declarative Listeners & Parameter Injection
+### Declarative Listeners & Parameter Injection
 
 #### Method-Level Listener (`@OxmqListener`)
 ```java
@@ -341,7 +396,7 @@ public class AuditWorker {
 
     @OxmqBatchListener(queue = "audit-logs", batchSize = 100)
     public void processAuditBatch(List<Job<AuditLogDto>> batch) {
-        // Bulk JDBC insert / Elasticsearch batch indexing
+        // Bulk JDBC insert / Elasticsearch batch indexing in a single transaction
     }
 }
 ```
@@ -434,15 +489,15 @@ docker compose up -d
 
 ---
 
-## 🖥️ Instant Bull-Board Web UI
+## 🖥️ Instant Bull-Board Web UI (Multi-Service Support)
 
-Because OxMQ matches BullMQ's standard Redis schema, you can also run Bull-Board standalone via `npx`:
+Because OxMQ matches BullMQ's standard Redis schema, you can run Bull-Board standalone via `npx`:
 
 ```bash
 npx @bull-board/cli --redis redis://localhost:6379 --queues notifications,order-events,file-transfer-queue
 ```
 
-Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and view live step logs!
+For multi-service architectures, Bull-Board visualizes custom prefixes using `displayName` badges (e.g. `[Billing] Invoices` and `[Shipping] Invoices`). See our [Bull-Board Multi-Service Guide](docs/interop/bull-board.md).
 
 ---
 
@@ -453,15 +508,16 @@ Open `http://localhost:3000` to inspect queues, active jobs, retry failures, and
 | **Runtime** | **Java 17+ / Java 21+** (Project Loom on 21+) | **Node.js 16+** / TypeScript |
 | **Concurrency** | **Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop (Sandboxed workers for CPU) |
 | **Multi-Core Scaling** | Native JVM concurrency across all CPU cores | Multi-process worker clustering |
+| **Context Isolation** | **Native Service-Level Namespacing** (`spring.application.name`) | Per-queue `prefix` configuration |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
-| **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy | Standard `bull:<queue>:*` hierarchy |
+| **Redis Key Topology** | Standard `{prefix}:{queue}:*` hierarchy with hash-tags | Standard `{prefix}:{queue}:*` hierarchy |
 | **DAG Workflows** | Built-in `FlowProducer` | Built-in `FlowProducer` |
 | **Rate Limiting** | Built-in token bucket with `groupKey` | Built-in token bucket with `groupKey` |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`) | Express, Fastify, NestJS |
 | **License** | **Apache 2.0** | **MIT** |
 
-*See our full [Architectural Comparison Guide](docs/benchmarks/benchmarks-architecture.md) for deep dives on concurrency architectures and polyglot setups.*
+*See our full [Architectural Comparison Guide](docs/COMPARISON.md) for deep dives on concurrency architectures and polyglot setups.*
 
 ---
 
@@ -511,6 +567,7 @@ OxMQ has been rigorously profiled on both **Java 17 LTS (Platform Threads)** and
 Explore our comprehensive technical guides in [`docs/`](docs/):
 
 * 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
+* 🏢 **[Context Isolation & Namespacing Guide](docs/guide/namespacing.md)**: Deep dive on shared Redis multi-tenancy, service-level auto-inheritance, and Redis Cluster hash-tags.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
 * ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ (Java 21 Loom) and BullMQ (Node.js).
 * 🎮 **[CloudBridge Showcase](oxmq-examples/cloudbridge/README.md)**: Real-world multi-cloud backup microservice with live Web UI and DAG execution.

@@ -62,6 +62,8 @@ public interface QueueBackend extends Closeable {
 
     String getState(String jobId);
 
+    List<Object> isFinished(String jobId, boolean fetchValue);
+
     List<Long> getCounts(String... types);
 
     List<Long> getCountsPerPriority(int... priorities);
