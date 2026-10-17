@@ -1,13 +1,13 @@
-# ⚖️ Architectural Comparison: OxMQ & BullMQ
-### *An Objective Engineering Evaluation of OxMQ (Java 17+ / Java 21 Loom) and BullMQ (Node.js)*
+# ⚖️ Architectural Comparison: OxMQ & The Queue Ecosystem
+### *An Objective Engineering Evaluation of OxMQ (Java 17+ / Java 21 Loom) as the Premier Java Alternative to BullMQ*
 
 **OxMQ** was created to bring the battle-tested, world-class queue architecture of **BullMQ** into the modern **Java 17+ / Java 21+ enterprise ecosystem**.
 
-Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exact same Redis key hierarchy, it achieves 100% functional and wire compatibility with BullMQ while unlocking the advantages of Java 21's Project Loom Virtual Threads.
+Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exact same Redis key hierarchy, it achieves 100% functional and wire compatibility with BullMQ while unlocking the high-throughput advantages of Java 21's Project Loom Virtual Threads and enterprise Context Isolation.
 
 ---
 
-## 📊 Comprehensive Comparison Matrix
+## 📊 Comprehensive Comparison Matrix: OxMQ vs. BullMQ
 
 | Feature / Capability | 🐂 **OxMQ** (Java 17+ / Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
 | :--- | :---: | :---: |
@@ -15,19 +15,39 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Concurrency Model** | **Project Loom Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop |
 | **I/O Blocking Mechanics** | Virtual threads unmount from carrier threads on blocking I/O | Non-blocking async/await promises |
 | **Multi-Core CPU Scaling** | Natively concurrent across all JVM CPU cores | Requires spawning child OS processes ("sandboxed workers") |
-| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ v6 Lua scripts (zero custom scripts)** | **Official BullMQ v6 Lua scripts** |
+| **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts (zero custom scripts)** | **Official BullMQ Lua scripts** |
+| **Multi-Service Context Isolation** | **Native service-level namespace auto-inheritance (`oxmq.namespace`)** | Manual `prefix` configuration on every queue |
+| **Request-Reply Pattern** | **Native `waitUntilFinished` & `waitUntilFinishedAsync` (Redis Streams)** | `Job.waitUntilFinished` (Redis Streams) |
+| **Memory Retention (`KeepJobs`)** | **Built-in `KeepJobs` (`count`, `ageSeconds`, `limit`) via `moveToFinished-14.lua`** | Built-in `keepJobs` via `moveToFinished-14.lua` |
 | **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy (including `dn:` & `pc`) | Standard `bull:<queue>:*` hierarchy |
 | **Job Lifecycle States** | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED |
-| **Parent-Child DAG Workflows** | Built-in `FlowProducer` (leaf-only dedup, auto-reattachment) | Built-in `FlowProducer` (leaf-only dedup, auto-reattachment) |
+| **Parent-Child DAG Workflows** | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) |
 | **Sliding-Window Rate Limiting**| Built-in token bucket with `groupKey` | Built-in token bucket with `groupKey` |
 | **Job Deduplication & Buffering**| Built-in (`jobId`, `deduplicationId`, `keepLastIfActive` buffer) | Built-in (`jobId`, `deduplicationId`, `keepLastIfActive` buffer) |
 | **Worker Postponement** | `DelayedException` (zero attempt consumption) | `DelayedError` (skipAttempt) |
 | **Priority Preservation on Retry**| Yes (`reprocessJob-9.lua`) | Yes (`reprocessJob-9.lua`) |
 | **Storage Backend Contract** | Pluggable `QueueBackend` (`RedisQueueBackend`) | Pluggable `IQueueBackend` (`RedisBackend`) |
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
-| **Web Dashboard** | Native **Bull-Board UI** compatibility | Native **Bull-Board UI** compatibility |
-| **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |
+| **Web Dashboard** | Native **Bull-Board UI** compatibility (Zero Node.js code) | Native **Bull-Board UI** compatibility |
+| **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, `@OxmqBatchListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |
 | **License** | **Apache 2.0** | **MIT** |
+
+---
+
+## 🌐 The Broader Distributed Queue Landscape
+
+When evaluating task processing in enterprise systems, teams frequently compare OxMQ to brokers like **Kafka**, **RabbitMQ**, and Python's **Celery**:
+
+| Dimension | OxMQ (Java 17/21) | BullMQ (Node.js) | Celery (Python) | Kafka / RabbitMQ |
+| :--- | :---: | :---: | :---: | :---: |
+| **Primary Domain** | Distributed Jobs & DAGs | Distributed Jobs & DAGs | Background Tasks | Event Streaming / Messaging |
+| **Delayed Execution** | 🟢 Native (Redis ZSET) | 🟢 Native (Redis ZSET) | 🟡 In-memory ETA | ❌ Requires custom DLX / plugins |
+| **Parent-Child DAGs** | 🟢 Native `FlowProducer` | 🟢 Native `FlowProducer` | 🟡 Canvas primitives | ❌ External orchestrator needed |
+| **Rate Limiting** | 🟢 Token Bucket + Grouping | 🟢 Token Bucket + Grouping | 🟡 External extension | ❌ Downstream consumer throttling |
+| **Request-Reply** | 🟢 Native `waitUntilFinished` | 🟢 Native `waitUntilFinished` | 🟡 Backend result polling | ❌ Complex correlation ID routing |
+| **Web UI** | 🟢 Instant Bull-Board UI | 🟢 Instant Bull-Board UI | 🟡 Flower | 🟡 Confluent / RabbitMQ Mgmt |
+| **Concurrency Engine** | 🟢 Virtual Threads (Loom) | 🟡 Single-thread Event Loop | 🔴 Gevent / Fork processes | 🟢 Multi-threaded consumers |
+| **Operational Simplicity** | 🟢 Reuses existing Redis | 🟢 Reuses existing Redis | 🟡 Requires Redis + Result DB | 🔴 Heavy broker cluster maintenance |
 
 ---
 
@@ -45,7 +65,16 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 
 ---
 
-### 2. Polyglot Interoperability
+### 2. Multi-Service Microservice Namespacing
+* **BullMQ**:
+  - Requires manually passing `{ prefix: 'my-service' }` when instantiating every `Queue`, `Worker`, and `QueueEvents` instance across your codebase.
+* **OxMQ**:
+  - Automatically derives the namespace from `spring.application.name` or `oxmq.namespace` in `application.yml`.
+  - Guarantees zero cross-service collision on shared Redis clusters while preserving Redis Cluster single-slot hash tags (`{prefix:queueName}`).
+
+---
+
+### 3. Polyglot Interoperability
 * **Shared Redis Topology**:
   - OxMQ and BullMQ share the identical Redis key schema, sorted sets, lists, hashes, and streams.
   - This unlocks seamless cross-language workflows: a Node.js frontend can enqueue jobs into Redis with BullMQ, and an OxMQ worker in Java can process them with Virtual Threads, or vice versa.
@@ -65,7 +94,7 @@ OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq
 ./mvnw clean test-compile -pl oxmq-benchmarks
 
 # Run benchmarks against your local or remote Redis instance
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.0.0.jar
+java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.3.0.jar
 ```
 
 ---

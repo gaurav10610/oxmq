@@ -66,8 +66,19 @@ public class VideoWorkflowService {
                 .addChild(transcode1080p)
                 .addChild(extractAudio);
 
-        // Atomically submit entire workflow to Redis
+        // Option A: Atomically submit a single workflow tree to Redis
         return flowProducer.add(packageStream);
+    }
+
+    public List<String> createBatchTranscodingPipelines(List<PackageRequest> requests) {
+        List<FlowJob<?>> batchTrees = requests.stream().map(req -> {
+            FlowJob<TranscodeRequest> c1 = FlowJob.of("transcoder", "720p", new TranscodeRequest(req.videoId(), "720p"));
+            FlowJob<TranscodeRequest> c2 = FlowJob.of("transcoder", "1080p", new TranscodeRequest(req.videoId(), "1080p"));
+            return FlowJob.of("packager", "compile", req).addChild(c1).addChild(c2);
+        }).toList();
+
+        // Option B: Atomically submit multiple DAG workflow trees in 1 roundtrip!
+        return flowProducer.addBulk(batchTrees);
     }
 }
 ```
