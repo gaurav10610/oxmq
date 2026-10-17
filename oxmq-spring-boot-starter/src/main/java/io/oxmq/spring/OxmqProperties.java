@@ -44,9 +44,23 @@ public class OxmqProperties {
     private DefaultJobOptions defaultJobOptions = new DefaultJobOptions();
 
     /**
+     * Whether to wrap queue keys in Redis Cluster hash-tags ({prefix:queueName}) to guarantee
+     * single-slot collocation on Redis Cluster and avoid CROSSSLOT errors.
+     */
+    private boolean clusterHashTags = false;
+
+    /**
      * Whether Micrometer metrics are enabled.
      */
     private boolean metricsEnabled = true;
+
+    public boolean isClusterHashTags() {
+        return clusterHashTags;
+    }
+
+    public void setClusterHashTags(boolean clusterHashTags) {
+        this.clusterHashTags = clusterHashTags;
+    }
 
     public int getMaxLenEvents() {
         return maxLenEvents;

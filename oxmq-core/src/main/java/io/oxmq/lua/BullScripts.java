@@ -260,6 +260,37 @@ public class BullScripts {
         return result != null && result == 1L;
     }
 
+    public List<String> extendLocks(StatefulRedisConnection<String, byte[]> connection,
+                                    QueueKeys keys, List<String> jobIds, List<String> tokens, int durationMs) {
+        if (jobIds == null || jobIds.isEmpty()) {
+            return List.of();
+        }
+        String[] redisKeys = new String[] {
+            keys.getKey("stalled")
+        };
+
+        byte[] baseKeyBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] tokensBytes = BullMsgPack.pack(tokens);
+        byte[] jobIdsBytes = BullMsgPack.pack(jobIds);
+        byte[] durationBytes = String.valueOf(durationMs).getBytes(StandardCharsets.UTF_8);
+
+        List<Object> rawResult = scriptManager.evalBinary(connection, LuaScript.EXTEND_LOCKS,
+            ScriptOutputType.MULTI, redisKeys, baseKeyBytes, tokensBytes, jobIdsBytes, durationBytes);
+
+        if (rawResult == null || rawResult.isEmpty()) {
+            return List.of();
+        }
+        List<String> failedJobIds = new ArrayList<>(rawResult.size());
+        for (Object item : rawResult) {
+            if (item instanceof byte[] bytes) {
+                failedJobIds.add(new String(bytes, StandardCharsets.UTF_8));
+            } else if (item != null) {
+                failedJobIds.add(item.toString());
+            }
+        }
+        return failedJobIds;
+    }
+
     public List<Object> moveStalledJobsToWait(StatefulRedisConnection<String, byte[]> connection,
                                              QueueKeys keys, int maxStalledCount, int stalledIntervalMs) {
         String[] redisKeys = new String[] {

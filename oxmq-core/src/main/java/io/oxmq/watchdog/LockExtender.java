@@ -4,6 +4,9 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.oxmq.client.QueueKeys;
 import io.oxmq.lua.BullScripts;
 import java.io.Closeable;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -54,18 +57,26 @@ public class LockExtender implements Closeable {
     }
 
     private void extendAllLocks() {
-        for (String jobId : activeJobIds) {
-            try {
-                boolean extended = bullScripts.extendLock(connection, queueKeys, jobId, token, (int) lockDurationMs);
-                if (!extended) {
-                    log.warn("Failed to extend lock for job {} in queue {}", jobId, queueKeys.getQueueName());
-                    activeJobIds.remove(jobId);
-                } else {
-                    log.trace("Extended lock for job {} for {} ms", jobId, lockDurationMs);
+        if (activeJobIds.isEmpty()) {
+            return;
+        }
+        List<String> jobList = new ArrayList<>(activeJobIds);
+        if (jobList.isEmpty()) {
+            return;
+        }
+        List<String> tokenList = Collections.nCopies(jobList.size(), token);
+        try {
+            List<String> failed = bullScripts.extendLocks(connection, queueKeys, jobList, tokenList, (int) lockDurationMs);
+            if (failed != null && !failed.isEmpty()) {
+                for (String failedJobId : failed) {
+                    log.warn("Failed to extend lock for job {} in queue {}", failedJobId, queueKeys.getQueueName());
+                    activeJobIds.remove(failedJobId);
                 }
-            } catch (Exception e) {
-                log.warn("Error extending lock for job {} in queue {}", jobId, queueKeys.getQueueName(), e);
+            } else {
+                log.trace("Extended locks for {} jobs in queue {} for {} ms", jobList.size(), queueKeys.getQueueName(), lockDurationMs);
             }
+        } catch (Exception e) {
+            log.warn("Error extending locks for jobs in queue {}", queueKeys.getQueueName(), e);
         }
     }
 

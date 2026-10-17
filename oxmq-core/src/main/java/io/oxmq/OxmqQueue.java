@@ -773,7 +773,9 @@ public class OxmqQueue<T> implements Queue<T> {
         }
 
         public OxmqQueue<T> build() {
+            boolean owns = false;
             if (backend == null && connectionManager == null) {
+                owns = true;
                 if (redisClient != null) {
                     connectionManager = new RedisConnectionManager(redisClient);
                 } else if (redisUri != null) {
@@ -781,6 +783,10 @@ public class OxmqQueue<T> implements Queue<T> {
                 } else {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
+            }
+            if (backend == null) {
+                QueueKeys keys = new QueueKeys(prefix, name);
+                backend = new io.oxmq.backend.RedisQueueBackend(keys, connectionManager, scriptManager, null, owns);
             }
             return new OxmqQueue<>(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend, defaultJobOptions, maxLenEvents);
         }

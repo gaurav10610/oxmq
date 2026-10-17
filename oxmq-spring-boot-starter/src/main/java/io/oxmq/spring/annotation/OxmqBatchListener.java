@@ -48,6 +48,16 @@ public @interface OxmqBatchListener {
     long lockDurationMs() default 30_000;
 
     /**
+     * Maximum number of concurrent batches processed simultaneously. Defaults to 1.
+     */
+    int concurrency() default 1;
+
+    /**
+     * Property placeholder for concurrency, e.g. {@code "${app.batch.concurrency:1}"}.
+     */
+    String concurrencyString() default "";
+
+    /**
      * Polling interval in milliseconds. Defaults to 50 ms.
      */
     long pollIntervalMs() default 50;

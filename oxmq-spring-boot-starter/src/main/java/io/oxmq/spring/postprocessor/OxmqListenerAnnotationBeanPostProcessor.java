@@ -396,6 +396,13 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
             } catch (NumberFormatException ignored) {}
         }
 
+        int concurrency = batchListener.concurrency();
+        if (batchListener.concurrencyString() != null && !batchListener.concurrencyString().isBlank()) {
+            try {
+                concurrency = Integer.parseInt(resolve(batchListener.concurrencyString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
         method.setAccessible(true);
         Parameter[] params = method.getParameters();
 
@@ -434,6 +441,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 .prefix(prefix)
                 .queueName(queueName)
                 .batchSize(batchSize)
+                .concurrency(concurrency)
                 .connectionManager(connectionManager != null ? connectionManager : new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
                 .serializer(serializer)
