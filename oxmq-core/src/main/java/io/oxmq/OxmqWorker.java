@@ -61,6 +61,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private final int maxStartedAttempts;
 
     private final RedisConnectionManager connectionManager;
+    private final boolean ownsConnectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
     private final JobSerializer serializer;
@@ -92,6 +93,7 @@ public class OxmqWorker<T> implements Worker<T> {
         this.pollIntervalMs = builder.pollIntervalMs;
         this.maxStalledCount = builder.maxStalledCount;
         this.maxStartedAttempts = builder.maxStartedAttempts;
+        this.ownsConnectionManager = builder.ownsConnectionManager;
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
@@ -225,6 +227,11 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
+        } catch (io.oxmq.exception.RateLimitException rle) {
+            bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                    job.getId(), workerId, rle.getDelayMs(), true);
+            log.info("Job {} [id: {}] rate-limited; moved to delayed (delay: {} ms, skipAttempt: true)",
+                    job.getName(), job.getId(), rle.getDelayMs());
         } catch (io.oxmq.exception.DelayedException de) {
             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
                     job.getId(), workerId, de.getDelayMs(), true);
@@ -442,10 +449,6 @@ public class OxmqWorker<T> implements Worker<T> {
                 pollerThread.interrupt();
             }
 
-            if (lockExtender != null) {
-                lockExtender.close();
-            }
-
             if (stalledJobSentinel != null) {
                 stalledJobSentinel.close();
             }
@@ -463,7 +466,13 @@ public class OxmqWorker<T> implements Worker<T> {
                 }
             }
 
-            connectionManager.close();
+            if (lockExtender != null) {
+                lockExtender.close();
+            }
+
+            if (ownsConnectionManager && connectionManager != null) {
+                connectionManager.close();
+            }
             log.info("OxMQ Worker [{}] stopped.", workerId);
         }
     }
@@ -596,8 +605,11 @@ public class OxmqWorker<T> implements Worker<T> {
             return this;
         }
 
+        private boolean ownsConnectionManager = false;
+
         public OxmqWorker<T> build() {
             if (connectionManager == null) {
+                ownsConnectionManager = true;
                 if (redisClient != null) {
                     connectionManager = new RedisConnectionManager(redisClient);
                 } else if (redisUri != null) {
@@ -605,6 +617,8 @@ public class OxmqWorker<T> implements Worker<T> {
                 } else {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
+            } else {
+                ownsConnectionManager = false;
             }
             return new OxmqWorker<>(this);
         }

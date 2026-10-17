@@ -41,6 +41,7 @@ public class QueueEvents implements Closeable {
     private final String queueName;
     private final String channelName;
     private final RedisConnectionManager connectionManager;
+    private final boolean ownsConnectionManager;
     private final JobSerializer serializer;
     private final Map<String, List<BiConsumer<String, Map<String, Object>>>> eventListeners = new ConcurrentHashMap<>();
     private StatefulRedisPubSubConnection<String, String> pubSubConnection;
@@ -48,19 +49,24 @@ public class QueueEvents implements Closeable {
     private volatile boolean running = false;
 
     public QueueEvents(String prefix, String queueName, RedisConnectionManager connectionManager, JobSerializer serializer) {
+        this(prefix, queueName, connectionManager, serializer, false);
+    }
+
+    public QueueEvents(String prefix, String queueName, RedisConnectionManager connectionManager, JobSerializer serializer, boolean ownsConnectionManager) {
         this.queueName = Objects.requireNonNull(queueName, "queueName must not be null");
         this.prefix = QueueKeys.resolvePrefix(prefix);
         this.channelName = this.prefix + ":" + queueName + ":events";
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
+        this.ownsConnectionManager = ownsConnectionManager;
     }
 
     public QueueEvents(String prefix, String queueName, String redisUri) {
-        this(prefix, queueName, new RedisConnectionManager(redisUri), new JacksonJobSerializer());
+        this(prefix, queueName, new RedisConnectionManager(redisUri), new JacksonJobSerializer(), true);
     }
 
     public QueueEvents(String prefix, String queueName, RedisClient redisClient) {
-        this(prefix, queueName, new RedisConnectionManager(redisClient), new JacksonJobSerializer());
+        this(prefix, queueName, new RedisConnectionManager(redisClient), new JacksonJobSerializer(), true);
     }
 
     public QueueEvents(String queueName, String redisUri) {
@@ -72,7 +78,7 @@ public class QueueEvents implements Closeable {
     }
 
     public QueueEvents(String queueName, RedisConnectionManager connectionManager, JobSerializer serializer) {
-        this(null, queueName, connectionManager, serializer);
+        this(null, queueName, connectionManager, serializer, false);
     }
 
     public String getPrefix() {
@@ -241,7 +247,24 @@ public class QueueEvents implements Closeable {
      * Waits until the specified job completes or fails, returning its result or throwing on failure.
      */
     public Object waitUntilFinished(String jobId, Duration timeout) throws ExecutionException, InterruptedException, TimeoutException {
-        return waitUntilFinishedAsync(jobId).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        CompletableFuture<Object> future = waitUntilFinishedAsync(jobId);
+        try {
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException | InterruptedException | ExecutionException e) {
+            future.cancel(true);
+            throw e;
+        }
+    }
+
+    /**
+     * Asynchronously waits until the specified job completes or fails with a timeout.
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync(String jobId, Duration timeout) {
+        CompletableFuture<Object> future = waitUntilFinishedAsync(jobId);
+        if (timeout != null && !timeout.isNegative() && !timeout.isZero()) {
+            future.orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }
+        return future;
     }
 
     /**
@@ -345,7 +368,9 @@ public class QueueEvents implements Closeable {
             } catch (Exception e) {
                 log.warn("Error unsubscribing QueueEvents from {}", channelName, e);
             }
-            connectionManager.close();
+            if (ownsConnectionManager && connectionManager != null) {
+                connectionManager.close();
+            }
             eventListeners.clear();
             log.info("QueueEvents stopped for queue: {}", queueName);
         }
@@ -390,7 +415,9 @@ public class QueueEvents implements Closeable {
         }
 
         public QueueEvents build() {
+            boolean owns = false;
             if (connectionManager == null) {
+                owns = true;
                 if (redisClient != null) {
                     connectionManager = new RedisConnectionManager(redisClient);
                 } else if (redisUri != null) {
@@ -399,7 +426,7 @@ public class QueueEvents implements Closeable {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
             }
-            return new QueueEvents(prefix, queueName, connectionManager, serializer);
+            return new QueueEvents(prefix, queueName, connectionManager, serializer, owns);
         }
     }
 }

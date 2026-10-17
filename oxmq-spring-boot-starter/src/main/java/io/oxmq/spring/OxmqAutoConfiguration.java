@@ -32,6 +32,9 @@ public class OxmqAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public RedisClient oxmqRedisClient(OxmqProperties properties) {
+        if (properties.isClusterHashTags()) {
+            System.setProperty("oxmq.cluster-hash-tags", "true");
+        }
         String uri = properties.getRedis().getUri();
         return RedisClient.create(RedisURI.create(uri));
     }
