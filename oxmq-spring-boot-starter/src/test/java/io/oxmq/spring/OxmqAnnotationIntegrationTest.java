@@ -137,7 +137,7 @@ public class OxmqAnnotationIntegrationTest {
             receivedBatches.clear();
         }
 
-        @OxmqBatchListener(queue = "${custom.batch.queue}", batchSize = 5)
+        @OxmqBatchListener(queue = "${custom.batch.queue}", batchSize = 5, maxBatchBytes = 1048576)
         public void handleBatch(List<Job<TelemetryDto>> batch) {
             receivedBatches.add(batch);
             latch.countDown();

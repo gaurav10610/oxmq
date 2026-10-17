@@ -221,6 +221,7 @@ public class BullScripts {
         packedOpts.put("token", token != null ? token : "0");
         packedOpts.put("keepJobs", resolveKeepJobs(target, jobOpts));
         packedOpts.put("maxMetricsSize", "");
+        packedOpts.put("attempts", (jobOpts != null && jobOpts.get("attempts") != null) ? jobOpts.get("attempts") : 1);
         if (jobOpts != null) {
             packedOpts.put("fpof", Boolean.TRUE.equals(jobOpts.get("failParentOnFailure")));
             packedOpts.put("cpof", Boolean.TRUE.equals(jobOpts.get("continueParentOnFailure")));

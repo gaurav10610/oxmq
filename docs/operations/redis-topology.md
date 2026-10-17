@@ -68,3 +68,41 @@ redis-cli ZRANGE bull:orders:delayed 0 4 WITHSCORES
 # Read the last 5 events emitted by the queue
 redis-cli XREVRANGE bull:orders:events + - COUNT 5
 ```
+
+---
+
+## 🌐 Redis Cluster & Hash-Tag Routing
+
+In **Redis Cluster**, keys are partitioned across 16,384 hash slots. Multi-key operations and atomic Lua scripts require that all keys referenced in the script hash to the **exact same slot**.
+
+### 1. Single Queue Cluster Tagging
+By default or when enabling `oxmq.cluster-hash-tags=true` (or `OXMQ_CLUSTER_HASH_TAGS=true`), OxMQ wraps `{prefix:queueName}` in curly braces so all keys for that queue (`wait`, `active`, `meta`, etc.) hash to the identical slot:
+```
+{bull:orders}:wait
+{bull:orders}:active
+{bull:orders}:101
+```
+
+### 2. Multi-Queue DAG Workflows (`FlowProducer.forCluster`)
+When running parent-child workflows where parent and children reside on **different queues** (e.g. `order-queue` and `inventory-queue`), child completion atomically updates the parent job in the same Lua script.
+
+To guarantee zero `CROSSSLOT` exceptions in Redis Cluster, use `FlowProducer.forCluster(...)` with a shared cluster workflow tag:
+
+```java
+// Guarantees all queues in this workflow hash to CRC16("order-pipeline")
+FlowProducer flowProducer = FlowProducer.forCluster("order-pipeline", connectionManager);
+
+FlowJob<String> child = FlowJob.of("inventory-queue", "reserve", itemSku);
+FlowJob<String> parent = FlowJob.of("order-queue", "charge", orderId);
+parent.addChild(child);
+
+// Enqueued with keys:
+// {order-pipeline}:bull:order-queue:...
+// {order-pipeline}:bull:inventory-queue:...
+flowProducer.add(parent);
+```
+
+Or configure custom `QueueKeys` directly:
+```java
+QueueKeys keys = QueueKeys.forClusterFlow("order-pipeline", "bull", "inventory-queue");
+```

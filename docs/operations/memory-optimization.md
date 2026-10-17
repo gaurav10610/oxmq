@@ -79,6 +79,16 @@ Lettuce is built on Netty and is thread-safe; multiple threads can share a singl
 ### 5. Singleton Connection Manager in Spring Boot
 When using `oxmq-spring-boot-starter`, defining 20 `@OxmqListener` methods historically created 20 separate connection managers if configured manually. OxMQ's `OxmqListenerAnnotationBeanPostProcessor` automatically resolves and reuses the Spring application context's shared `RedisConnectionManager` singleton, slashing socket counts and background Netty event-loop thread pools.
 
+### 6. Batch Memory Safeguards with `maxBatchBytes`
+In high-throughput batch consumers (`OxmqBatchWorker` / `@OxmqBatchListener`), dequeueing by item count alone (e.g. `batchSize = 100`) creates OOM vulnerability if incoming payloads unexpectedly spike in size (e.g. a burst of 10 MB payload jobs). 
+- OxMQ introduces cumulative byte budget enforcement via `maxBatchBytes` (default: 16 MB).
+- The poller tracks cumulative payload byte sizes as jobs are fetched; as soon as `cumulativeBytes >= maxBatchBytes`, the poller dispatches the batch immediately to the worker virtual thread, preventing JVM heap bloat and ensuring bounded memory footprint.
+
+### 7. Non-Pinning Concurrency Locks (Java 21 Loom Virtual Threads)
+Java 21 Virtual Threads execute atop underlying OS carrier threads. Synchronizing on object monitors (`synchronized (this)`) during I/O or connection initialization can pin the virtual thread to its carrier, degrading runtime parallelism across the JVM.
+- `RedisConnectionManager` utilizes `ReentrantLock` instead of monitor synchronization for connection lazy-loading and pool access.
+- This guarantees virtual threads yield gracefully without pinning carrier OS threads, sustaining tens of thousands of concurrent worker threads on tiny JVM footprints.
+
 ---
 
 ## ⚡ Part 2: Redis In-Memory Storage & Compaction
