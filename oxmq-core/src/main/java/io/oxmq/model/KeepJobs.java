@@ -15,7 +15,7 @@ public class KeepJobs {
     private final int limit;
 
     public KeepJobs() {
-        this(-1, 0, 1000);
+        this(-1, 0L, 1000);
     }
 
     @com.fasterxml.jackson.annotation.JsonCreator
@@ -24,7 +24,7 @@ public class KeepJobs {
             @com.fasterxml.jackson.annotation.JsonProperty("age") Long age,
             @com.fasterxml.jackson.annotation.JsonProperty("limit") Integer limit) {
         this.count = count != null ? count : -1;
-        this.ageSeconds = age != null ? age : 0;
+        this.ageSeconds = age != null ? age : 0L;
         this.limit = (limit != null && limit > 0) ? limit : 1000;
     }
 
@@ -33,23 +33,23 @@ public class KeepJobs {
     }
 
     public static KeepJobs count(int count) {
-        return new KeepJobs(count, 0);
+        return new KeepJobs(count, 0L);
     }
 
     public static KeepJobs age(Duration age) {
-        return new KeepJobs(0, age != null ? age.toSeconds() : 0);
+        return new KeepJobs(0, age != null ? age.toSeconds() : 0L);
     }
 
     public static KeepJobs of(int count, Duration age) {
-        return new KeepJobs(count, age != null ? age.toSeconds() : 0);
+        return new KeepJobs(count, age != null ? age.toSeconds() : 0L);
     }
 
     public static KeepJobs of(int count, Duration age, int limit) {
-        return new KeepJobs(count, age != null ? age.toSeconds() : 0, limit);
+        return new KeepJobs(count, age != null ? age.toSeconds() : 0L, limit);
     }
 
     public static KeepJobs removeImmediately() {
-        return new KeepJobs(0, 0);
+        return new KeepJobs(0, 0L);
     }
 
     public int getCount() {
