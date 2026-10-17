@@ -210,6 +210,29 @@ OxmqWorker<OrderPayload> worker = OxmqWorker.<OrderPayload>builder()
 worker.start();
 ```
 
+#### In-Flight Job Cancellation & Abort Signals
+OxMQ supports BullMQ v6-compatible cooperative job cancellation via `worker.cancelJob(jobId, [reason])` and `worker.cancelAllJobs([reason])`:
+
+```java
+// 1. Cancel an individual running job
+boolean cancelled = worker.cancelJob("job-123", "User requested cancellation");
+
+// 2. Cooperative cancellation check in processor
+worker = OxmqWorker.<TaskData>builder()
+    .queueName("video-rendering")
+    .processor(job -> {
+        // Register listener on CancellationToken (mirrors JS AbortSignal)
+        job.getCancellationToken().onCancel(reason -> cleanupTempFiles());
+
+        while (!job.isCancelled()) {
+            renderFrame();
+        }
+        throw new JobCancelledException(job.getCancelReason());
+    })
+    .build();
+```
+When `cancelJob` is invoked, OxMQ interrupts the Virtual Thread executing the job and marks the job failed as non-retryable, avoiding retry loops.
+
 ### 4. `OxmqBatchWorker.Builder<T>`
 
 ```java
@@ -219,6 +242,7 @@ OxmqBatchWorker<AuditEvent> batchWorker = OxmqBatchWorker.<AuditEvent>builder()
     .payloadClass(AuditEvent.class)            // Target payload class
     .prefix("order-service")                   // Optional: Service isolation prefix
     .batchSize(100)                            // Optional: Bulk pop up to 100 jobs (default: 100)
+    .maxBatchBytes(5 * 1024 * 1024)            // Optional: Max cumulative batch payload budget (default: 0 = unbounded)
     .batchTimeout(Duration.ofMillis(200))      // Optional: Max wait before flushing (default: 200ms)
     .concurrency(2)                            // Optional: Number of batch dispatchers (default: 1)
     .useVirtualThreads(true)                   // Optional: Virtual Threads (default: true)

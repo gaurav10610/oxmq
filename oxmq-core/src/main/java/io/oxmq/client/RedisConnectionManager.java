@@ -6,6 +6,7 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import java.io.Closeable;
 import java.util.Objects;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,6 +19,7 @@ public class RedisConnectionManager implements Closeable {
 
     private final RedisClient redisClient;
     private final boolean ownsClient;
+    private final ReentrantLock connectionLock = new ReentrantLock();
     private volatile StatefulRedisConnection<String, String> commandConnection;
     private volatile StatefulRedisConnection<String, byte[]> binaryConnection;
     private volatile StatefulRedisPubSubConnection<String, String> pubSubConnection;
@@ -47,10 +49,13 @@ public class RedisConnectionManager implements Closeable {
      */
     public StatefulRedisConnection<String, String> getCommandConnection() {
         if (commandConnection == null || !commandConnection.isOpen()) {
-            synchronized (this) {
+            connectionLock.lock();
+            try {
                 if (commandConnection == null || !commandConnection.isOpen()) {
                     commandConnection = redisClient.connect();
                 }
+            } finally {
+                connectionLock.unlock();
             }
         }
         return commandConnection;
@@ -68,10 +73,13 @@ public class RedisConnectionManager implements Closeable {
      */
     public StatefulRedisConnection<String, byte[]> getBinaryConnection() {
         if (binaryConnection == null || !binaryConnection.isOpen()) {
-            synchronized (this) {
+            connectionLock.lock();
+            try {
                 if (binaryConnection == null || !binaryConnection.isOpen()) {
                     binaryConnection = redisClient.connect(BINARY_CODEC);
                 }
+            } finally {
+                connectionLock.unlock();
             }
         }
         return binaryConnection;
@@ -103,10 +111,13 @@ public class RedisConnectionManager implements Closeable {
      */
     public StatefulRedisPubSubConnection<String, String> getPubSubConnection() {
         if (pubSubConnection == null || !pubSubConnection.isOpen()) {
-            synchronized (this) {
+            connectionLock.lock();
+            try {
                 if (pubSubConnection == null || !pubSubConnection.isOpen()) {
                     pubSubConnection = redisClient.connectPubSub();
                 }
+            } finally {
+                connectionLock.unlock();
             }
         }
         return pubSubConnection;
@@ -118,33 +129,36 @@ public class RedisConnectionManager implements Closeable {
 
     @Override
     public void close() {
+        connectionLock.lock();
         try {
             if (commandConnection != null && commandConnection.isOpen()) {
                 commandConnection.close();
             }
         } catch (Exception e) {
             log.warn("Error closing command connection", e);
-        }
-        try {
-            if (binaryConnection != null && binaryConnection.isOpen()) {
-                binaryConnection.close();
-            }
-        } catch (Exception e) {
-            log.warn("Error closing binary connection", e);
-        }
-        try {
-            if (pubSubConnection != null && pubSubConnection.isOpen()) {
-                pubSubConnection.close();
-            }
-        } catch (Exception e) {
-            log.warn("Error closing PubSub connection", e);
-        }
-        if (ownsClient) {
+        } finally {
             try {
-                redisClient.shutdown();
+                if (binaryConnection != null && binaryConnection.isOpen()) {
+                    binaryConnection.close();
+                }
             } catch (Exception e) {
-                log.warn("Error shutting down RedisClient", e);
+                log.warn("Error closing binary connection", e);
             }
+            try {
+                if (pubSubConnection != null && pubSubConnection.isOpen()) {
+                    pubSubConnection.close();
+                }
+            } catch (Exception e) {
+                log.warn("Error closing PubSub connection", e);
+            }
+            if (ownsClient) {
+                try {
+                    redisClient.shutdown();
+                } catch (Exception e) {
+                    log.warn("Error shutting down RedisClient", e);
+                }
+            }
+            connectionLock.unlock();
         }
     }
 }

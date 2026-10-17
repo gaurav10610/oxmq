@@ -44,6 +44,15 @@ public class Job<T> {
     @JsonIgnore
     private transient Supplier<Map<String, Object>> childrenValuesSupplier;
 
+    @JsonIgnore
+    private transient volatile boolean cancelled = false;
+
+    @JsonIgnore
+    private transient volatile String cancelReason;
+
+    @JsonIgnore
+    private transient CancellationToken cancellationToken = new CancellationToken();
+
     public Job() {}
 
     public Job(String id, String name, T data, JobOptions opts) {
@@ -272,6 +281,29 @@ public class Job<T> {
             return CompletableFuture.failedFuture(new RuntimeException(failedReason != null ? failedReason : "Job " + id + " failed"));
         }
         return queueEvents.waitUntilFinishedAsync(this.id);
+    }
+
+    public boolean isCancelled() {
+        return cancelled || Thread.currentThread().isInterrupted();
+    }
+
+    public String getCancelReason() {
+        return cancelReason;
+    }
+
+    public void setCancelled(boolean cancelled, String cancelReason) {
+        this.cancelled = cancelled;
+        this.cancelReason = cancelReason;
+        if (cancelled && cancellationToken != null) {
+            cancellationToken.cancel(cancelReason);
+        }
+    }
+
+    public CancellationToken getCancellationToken() {
+        if (cancellationToken == null) {
+            cancellationToken = new CancellationToken();
+        }
+        return cancellationToken;
     }
 
     @Override

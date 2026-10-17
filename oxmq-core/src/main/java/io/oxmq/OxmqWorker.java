@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -77,6 +79,9 @@ public class OxmqWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
     private StalledJobSentinel stalledJobSentinel;
+
+    private record ActiveExecution<T>(Job<T> job, Thread thread) {}
+    private final ConcurrentMap<String, ActiveExecution<T>> activeExecutions = new ConcurrentHashMap<>();
 
     private OxmqWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
@@ -216,6 +221,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
     private void executeJob(Job<T> job) {
         long startTime = System.nanoTime();
+        activeExecutions.put(job.getId(), new ActiveExecution<>(job, Thread.currentThread()));
         try {
             log.debug("Executing job {} [id: {}] on queue {}", job.getName(), job.getId(), queueName);
             Object result = processor.process(job);
@@ -227,6 +233,14 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
+        } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
+            long durationNanos = System.nanoTime() - startTime;
+            Duration duration = Duration.ofNanos(durationNanos);
+            String reason = job.getCancelReason() != null ? job.getCancelReason() : (ie.getMessage() != null ? ie.getMessage() : "Job cancelled");
+            job.setCancelled(true, reason);
+            failJob(job, ie, duration);
+            metrics.recordJobFailed(queueName, duration, "JobCancelledException");
+            log.info("Job {} [id: {}] was cancelled on queue {}: {}", job.getName(), job.getId(), queueName, reason);
         } catch (io.oxmq.exception.RateLimitException rle) {
             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
                     job.getId(), workerId, rle.getDelayMs(), true);
@@ -249,6 +263,7 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
             log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
         } finally {
+            activeExecutions.remove(job.getId());
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();
         }
@@ -294,7 +309,10 @@ public class OxmqWorker<T> implements Worker<T> {
         }
 
         boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
-                                  (error.getCause() instanceof UnrecoverableError);
+                                  (error.getCause() instanceof UnrecoverableError) ||
+                                  (error instanceof io.oxmq.exception.JobCancelledException) ||
+                                  (error instanceof InterruptedException) ||
+                                  job.isCancelled();
 
         if (maxStartedAttempts > 0 && job.getAttemptsStarted() >= maxStartedAttempts) {
             isUnrecoverable = true;
@@ -322,8 +340,15 @@ public class OxmqWorker<T> implements Worker<T> {
             }
         }
 
+        String failedReasonValue;
+        if (job.isCancelled()) {
+            failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
+        } else {
+            failedReasonValue = stackTrace;
+        }
+
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
-                stackTrace, "failedReason", "failed", workerId, false, opts != null ? opts.toMap() : Map.of());
+                failedReasonValue, "failedReason", "failed", workerId, false, opts != null ? opts.toMap() : Map.of());
     }
 
     private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
@@ -438,6 +463,53 @@ public class OxmqWorker<T> implements Worker<T> {
     @Override
     public boolean isPaused() {
         return paused.get();
+    }
+
+    @Override
+    public boolean cancelJob(String jobId) {
+        return cancelJob(jobId, "User requested cancellation");
+    }
+
+    @Override
+    public boolean cancelJob(String jobId, String reason) {
+        if (jobId == null) {
+            return false;
+        }
+        ActiveExecution<T> execution = activeExecutions.get(jobId);
+        if (execution != null) {
+            execution.job().setCancelled(true, reason);
+            execution.job().getCancellationToken().cancel(reason);
+            execution.thread().interrupt();
+            log.info("Cancelled running job [id: {}] on queue {}: {}", jobId, queueName, reason);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public int cancelAllJobs() {
+        return cancelAllJobs("Worker cancellation requested");
+    }
+
+    @Override
+    public int cancelAllJobs(String reason) {
+        int count = 0;
+        for (String jobId : new java.util.ArrayList<>(activeExecutions.keySet())) {
+            if (cancelJob(jobId, reason)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Override
+    public boolean isJobActive(String jobId) {
+        return jobId != null && activeExecutions.containsKey(jobId);
+    }
+
+    @Override
+    public int getActiveJobCount() {
+        return activeExecutions.size();
     }
 
     @Override

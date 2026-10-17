@@ -71,6 +71,24 @@ public class QueueKeys {
         return qualifiedName.startsWith("{") && qualifiedName.contains("}");
     }
 
+    /**
+     * Creates QueueKeys using a shared cluster hash tag across multiple queues in a workflow or DAG.
+     * Guarantees that all keys for this queue hash to the exact same Redis Cluster hash slot as all
+     * other queues sharing the same clusterTag.
+     *
+     * @param clusterTag the shared cluster tag (e.g., "order-flow" or "workflow-1")
+     * @param prefix the BullMQ prefix (e.g., "bull" or null for default)
+     * @param queueName the queue name
+     * @return QueueKeys configured with the shared cluster hash tag
+     */
+    public static QueueKeys forClusterFlow(String clusterTag, String prefix, String queueName) {
+        java.util.Objects.requireNonNull(clusterTag, "clusterTag must not be null");
+        String resolvedPrefix = resolvePrefix(prefix);
+        String cleanTag = clusterTag.replace("{", "").replace("}", "");
+        String taggedPrefix = "{" + cleanTag + "}:" + resolvedPrefix;
+        return new QueueKeys(taggedPrefix, queueName, false);
+    }
+
     private void initializeKeys() {
         String[] types = {
             "", "active", "wait", "waiting-children", "paused", "completed",

@@ -45,6 +45,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private final Class<T> payloadClass;
     private final int batchSize;
     private final int concurrency;
+    private final long maxBatchBytes;
     private final boolean useVirtualThreads;
     private final long lockDurationMs;
     private final long drainTimeoutMs;
@@ -66,6 +67,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
 
+    private record ActiveBatchExecution<T>(List<Job<T>> jobs, Thread thread) {}
+    private final java.util.concurrent.ConcurrentMap<String, ActiveBatchExecution<T>> activeJobExecutions = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<ActiveBatchExecution<T>> activeBatches = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private OxmqBatchWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
         this.queueKeys = new QueueKeys(builder.prefix, queueName);
@@ -76,6 +81,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         this.batchSize = Math.max(1, builder.batchSize);
         this.concurrency = Math.max(1, builder.concurrency);
         this.concurrencySemaphore = new Semaphore(this.concurrency);
+        this.maxBatchBytes = builder.maxBatchBytes;
         this.useVirtualThreads = builder.useVirtualThreads;
         this.customExecutor = builder.customExecutor;
         this.lockDurationMs = builder.lockDurationMs;
@@ -134,6 +140,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
                 long now = System.currentTimeMillis();
                 List<Job<T>> jobs = new ArrayList<>();
+                long currentBatchBytes = 0;
 
                 for (int i = 0; i < batchSize; i++) {
                     List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
@@ -155,6 +162,18 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     Job<T> job = buildJobFromFields(jobId, fields);
                     jobs.add(job);
                     lockExtender.registerJob(jobId);
+
+                    if (maxBatchBytes > 0) {
+                        String dataStr = fields.get("data");
+                        if (dataStr != null) {
+                            currentBatchBytes += dataStr.getBytes(StandardCharsets.UTF_8).length;
+                        }
+                        if (currentBatchBytes >= maxBatchBytes && !jobs.isEmpty()) {
+                            log.debug("Batch byte budget exceeded ({} >= {} bytes), dispatching {} jobs early",
+                                    currentBatchBytes, maxBatchBytes, jobs.size());
+                            break;
+                        }
+                    }
                 }
 
                 if (jobs.isEmpty()) {
@@ -191,6 +210,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private void executeBatch(List<Job<T>> jobs) {
         long startTime = System.nanoTime();
+        ActiveBatchExecution<T> batchExecution = new ActiveBatchExecution<>(jobs, Thread.currentThread());
+        activeBatches.add(batchExecution);
+        for (Job<T> job : jobs) {
+            activeJobExecutions.put(job.getId(), batchExecution);
+        }
         try {
             log.debug("Executing batch of {} jobs on queue {}", jobs.size(), queueName);
             Object result = processor.process(jobs);
@@ -204,6 +228,20 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             }
             log.debug("Completed batch of {} jobs in {} ms", jobs.size(), duration.toMillis());
 
+        } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
+            long durationNanos = System.nanoTime() - startTime;
+            Duration duration = Duration.ofNanos(durationNanos);
+            String reason = ie.getMessage() != null ? ie.getMessage() : "Batch cancelled";
+            for (Job<T> job : jobs) {
+                if (!job.isCancelled()) {
+                    job.setCancelled(true, reason);
+                }
+            }
+            failBatch(jobs, ie, duration);
+            for (Job<T> job : jobs) {
+                metrics.recordJobFailed(queueName, duration, "JobCancelledException");
+            }
+            log.info("Batch of {} jobs was cancelled on queue {}: {}", jobs.size(), queueName, reason);
         } catch (Throwable t) {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
@@ -215,8 +253,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             log.warn("Batch of {} jobs failed on queue {}: {}", jobs.size(), queueName, t.getMessage(), t);
         } finally {
             for (Job<T> job : jobs) {
+                activeJobExecutions.remove(job.getId());
                 lockExtender.unregisterJob(job.getId());
             }
+            activeBatches.remove(batchExecution);
             concurrencySemaphore.release();
         }
     }
@@ -278,11 +318,17 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         for (Job<T> job : jobs) {
             try {
                 JobOptions opts = job.getOpts();
+                String failedReasonValue;
+                if (job.isCancelled()) {
+                    failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
+                } else {
+                    failedReasonValue = stackTrace;
+                }
                 bullScripts.moveToFinished(
                     connectionManager.getBinaryConnection(),
                     queueKeys,
                     job.getId(),
-                    stackTrace,
+                    failedReasonValue,
                     "failedReason",
                     "failed",
                     workerId,
@@ -408,6 +454,62 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     }
 
     @Override
+    public boolean cancelJob(String jobId) {
+        return cancelJob(jobId, "User requested cancellation");
+    }
+
+    @Override
+    public boolean cancelJob(String jobId, String reason) {
+        if (jobId == null) {
+            return false;
+        }
+        ActiveBatchExecution<T> batchExecution = activeJobExecutions.get(jobId);
+        if (batchExecution != null) {
+            for (Job<T> job : batchExecution.jobs()) {
+                job.setCancelled(true, reason);
+                job.getCancellationToken().cancel(reason);
+            }
+            batchExecution.thread().interrupt();
+            log.info("Cancelled running batch containing job [id: {}] on queue {}: {}", jobId, queueName, reason);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public int cancelAllJobs() {
+        return cancelAllJobs("Worker cancellation requested");
+    }
+
+    @Override
+    public int cancelAllJobs(String reason) {
+        int count = 0;
+        for (ActiveBatchExecution<T> batch : new ArrayList<>(activeBatches)) {
+            for (Job<T> job : batch.jobs()) {
+                job.setCancelled(true, reason);
+                job.getCancellationToken().cancel(reason);
+                count++;
+            }
+            batch.thread().interrupt();
+        }
+        return count;
+    }
+
+    @Override
+    public boolean isJobActive(String jobId) {
+        return jobId != null && activeJobExecutions.containsKey(jobId);
+    }
+
+    @Override
+    public int getActiveJobCount() {
+        return activeJobExecutions.size();
+    }
+
+    public long getMaxBatchBytes() {
+        return maxBatchBytes;
+    }
+
+    @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
             log.info("Closing OxMQ Batch Worker [{}] for queue {}", workerId, queueName);
@@ -478,6 +580,13 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
         public Builder<T> batchSize(int batchSize) {
             this.batchSize = batchSize;
+            return this;
+        }
+
+        private long maxBatchBytes = 0;
+
+        public Builder<T> maxBatchBytes(long maxBatchBytes) {
+            this.maxBatchBytes = maxBatchBytes;
             return this;
         }
 
