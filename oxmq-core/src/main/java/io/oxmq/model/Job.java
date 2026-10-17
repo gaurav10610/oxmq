@@ -2,7 +2,10 @@ package io.oxmq.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import io.oxmq.QueueEvents;
+import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
@@ -18,6 +21,7 @@ public class Job<T> {
     private String name;
     private T data;
     private JobOptions opts = new JobOptions();
+    private JobState state;
     private int progress = 0;
     private int attemptsMade = 0;
     private int attemptsStarted = 0;
@@ -199,6 +203,64 @@ public class Job<T> {
 
     public void setLogAppender(Consumer<String> logAppender) {
         this.logAppender = logAppender;
+    }
+
+    public JobState getState() {
+        return state;
+    }
+
+    public void setState(JobState state) {
+        this.state = state;
+    }
+
+    public boolean isCompleted() {
+        return state == JobState.COMPLETED;
+    }
+
+    public boolean isFailed() {
+        return state == JobState.FAILED;
+    }
+
+    public boolean isActive() {
+        return state == JobState.ACTIVE;
+    }
+
+    public boolean isWaiting() {
+        return state == JobState.WAITING;
+    }
+
+    public boolean isDelayed() {
+        return state == JobState.DELAYED;
+    }
+
+    public boolean isWaitingChildren() {
+        return state == JobState.WAITING_CHILDREN;
+    }
+
+    /**
+     * Waits for this job to complete or fail, returning its result or throwing on failure.
+     */
+    public Object waitUntilFinished(QueueEvents queueEvents, Duration timeout) throws Exception {
+        if (isCompleted()) {
+            return returnvalue;
+        }
+        if (isFailed()) {
+            throw new RuntimeException(failedReason != null ? failedReason : "Job " + id + " failed");
+        }
+        return queueEvents.waitUntilFinished(this.id, timeout);
+    }
+
+    /**
+     * Asynchronously waits for this job to complete or fail.
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync(QueueEvents queueEvents) {
+        if (isCompleted()) {
+            return CompletableFuture.completedFuture(returnvalue);
+        }
+        if (isFailed()) {
+            return CompletableFuture.failedFuture(new RuntimeException(failedReason != null ? failedReason : "Job " + id + " failed"));
+        }
+        return queueEvents.waitUntilFinishedAsync(this.id);
     }
 
     @Override

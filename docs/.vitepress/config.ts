@@ -20,9 +20,9 @@ export default withMermaid(
         { text: 'Bull-Board', link: '/interop/bull-board' },
         { text: 'Roadmap', link: '/ROADMAP' },
         {
-          text: 'v1.2.0',
+          text: 'v1.3.0',
           items: [
-            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.2.0' },
+            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.3.0' },
             { text: 'GitHub Repository', link: 'https://github.com/gaurav10610/oxmq' }
           ]
         }
@@ -35,6 +35,7 @@ export default withMermaid(
             { text: 'What is OxMQ?', link: '/guide/what-is-oxmq' },
             { text: 'Quickstart (Core)', link: '/guide/quickstart' },
             { text: 'Spring Boot 3+ Starter', link: '/guide/spring-boot' },
+            { text: 'Context Isolation & Namespacing', link: '/guide/namespacing' },
             { text: 'Virtual Threads (Loom)', link: '/guide/virtual-threads' },
             { text: 'Configuration Reference', link: '/guide/configuration' },
             { text: 'Full Manual (Getting Started)', link: '/GETTING_STARTED' }

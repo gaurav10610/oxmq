@@ -63,8 +63,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private OxmqBatchWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
-        this.prefix = "bull:" + queueName;
-        this.queueKeys = new QueueKeys("bull", queueName);
+        this.queueKeys = new QueueKeys(builder.prefix, queueName);
+        this.prefix = this.queueKeys.getQualifiedName();
         this.workerId = "batch-worker:" + UUID.randomUUID();
         this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
         this.payloadClass = builder.payloadClass;
@@ -367,6 +367,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     public static class Builder<T> {
         private String queueName;
+        private String prefix;
         private BatchJobProcessor<T, ?> processor;
         private Class<T> payloadClass;
         private int batchSize = 10;
@@ -382,6 +383,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
         public Builder<T> queueName(String queueName) {
             this.queueName = queueName;
+            return this;
+        }
+
+        public Builder<T> prefix(String prefix) {
+            this.prefix = prefix;
             return this;
         }
 

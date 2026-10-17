@@ -12,10 +12,16 @@ public class OxmqHealthIndicator implements HealthIndicator {
 
     private final RedisClient redisClient;
     private final OxmqListenerAnnotationBeanPostProcessor postProcessor;
+    private final String prefix;
 
     public OxmqHealthIndicator(RedisClient redisClient, OxmqListenerAnnotationBeanPostProcessor postProcessor) {
+        this(redisClient, postProcessor, null);
+    }
+
+    public OxmqHealthIndicator(RedisClient redisClient, OxmqListenerAnnotationBeanPostProcessor postProcessor, String prefix) {
         this.redisClient = redisClient;
         this.postProcessor = postProcessor;
+        this.prefix = prefix;
     }
 
     @Override
@@ -28,6 +34,7 @@ public class OxmqHealthIndicator implements HealthIndicator {
             if ("PONG".equalsIgnoreCase(ping)) {
                 return Health.up()
                         .withDetail("redis", "CONNECTED")
+                        .withDetail("namespace", prefix != null && !prefix.isBlank() ? prefix : "bull")
                         .withDetail("registeredWorkers", workerCount)
                         .withDetail("workersRunning", running)
                         .build();

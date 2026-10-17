@@ -223,6 +223,46 @@ public interface Queue<T> extends Closeable {
      */
     io.oxmq.backend.QueueBackend getBackend();
 
+    /**
+     * Gets the lifecycle state of a job as a typed {@link JobState} enum.
+     */
+    JobState getJobState(String jobId);
+
+    /**
+     * Checks if a job has completed.
+     */
+    boolean isCompleted(String jobId);
+
+    /**
+     * Checks if a job has permanently failed.
+     */
+    boolean isFailed(String jobId);
+
+    /**
+     * Checks whether a job has finished (completed or failed) via the isFinished Lua script.
+     */
+    List<Object> isFinished(String jobId, boolean fetchValue);
+
+    /**
+     * Waits for a job to complete or fail, returning its result or throwing on failure.
+     */
+    Object waitUntilFinished(String jobId, java.time.Duration timeout) throws Exception;
+
+    /**
+     * Waits for a job to complete or fail using a custom QueueEvents listener.
+     */
+    Object waitUntilFinished(String jobId, QueueEvents queueEvents, java.time.Duration timeout) throws Exception;
+
+    /**
+     * Asynchronously waits for a job to complete or fail.
+     */
+    java.util.concurrent.CompletableFuture<Object> waitUntilFinishedAsync(String jobId);
+
+    /**
+     * Asynchronously waits for a job to complete or fail using a custom QueueEvents listener.
+     */
+    java.util.concurrent.CompletableFuture<Object> waitUntilFinishedAsync(String jobId, QueueEvents queueEvents);
+
     @Override
     void close();
 }

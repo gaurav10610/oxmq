@@ -53,15 +53,15 @@ In Java 21, virtual threads cannot unmount from carrier threads if blocking I/O 
 
 ---
 
-## 3. Redis Connection Pool Starvation
+## 3. Redis Connection & Timeout Issues
 
 ### Symptom:
-`JedisException: Could not get a resource from the pool` or `Timeout waiting for idle object`.
+`RedisConnectionException: Unable to connect to Redis` or `RedisCommandTimeoutException: Command timed out after 5000ms`.
 
 ### Resolution:
-- Increase `pool.maxTotal` in `application.yml` or your `JedisPoolConfig`.
-- Rule of thumb: `maxTotal >= (concurrency * numberOfWorkers) + 10`.
-- Ensure all custom Redis commands borrowed from the pool are closed in a `try-with-resources` block.
+- Check Redis server liveness and network latency: `redis-cli ping`.
+- For high-concurrency workloads, verify the Redis `timeout` configuration in `redis.conf` (ensure it is `0` or sufficiently high for persistent connection pooling).
+- Ensure client connections are cleanly closed upon application shutdown via `@PreDestroy` or Spring Boot context closure.
 
 ---
 

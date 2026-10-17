@@ -51,6 +51,9 @@ public class ReportFlowExample {
         // Enqueue the entire DAG atomically
         String rootJobId = flowProducer.add(generateReport);
         System.out.println("Workflow created. Root parent ID: " + rootJobId);
+
+        // Or enqueue multiple independent DAG workflow trees in bulk
+        List<String> rootJobIds = flowProducer.addBulk(List.of(generateReport, anotherReport));
     }
 }
 ```

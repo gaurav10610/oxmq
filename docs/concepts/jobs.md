@@ -69,7 +69,7 @@ Workers can stream real-time progress and emit diagnostic logs directly from the
 ```java
 OxmqWorker<TranscodeRequest> worker = OxmqWorker.<TranscodeRequest>builder()
     .queueName("video-transcoder")
-    .jedisPool(jedisPool)
+    .redisUri("redis://localhost:6379")
     .processor(job -> {
         TranscodeRequest request = job.getData();
 

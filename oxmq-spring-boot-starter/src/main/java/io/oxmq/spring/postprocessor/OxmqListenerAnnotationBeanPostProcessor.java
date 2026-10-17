@@ -90,6 +90,19 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         return valueResolver != null ? valueResolver.resolveStringValue(value) : value;
     }
 
+    private String resolveEffectivePrefix(String annotationPrefix) {
+        String resolved = resolve(annotationPrefix);
+        if (resolved != null && !resolved.isBlank()) {
+            return resolved.trim();
+        }
+        if (properties != null && applicationContext != null) {
+            return properties.resolvePrefix(applicationContext.getEnvironment());
+        } else if (properties != null) {
+            return properties.resolvePrefix(null);
+        }
+        return io.oxmq.client.QueueKeys.resolvePrefix(null);
+    }
+
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
         Class<?> targetClass = AopUtils.getTargetClass(bean);
@@ -109,6 +122,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                     if (oxListener != null) {
                         return new OxmqListener() {
                             public Class<? extends java.lang.annotation.Annotation> annotationType() { return OxmqListener.class; }
+                            public String prefix() { return ""; }
                             public String queue() { return oxListener.queue(); }
                             public int concurrency() { return oxListener.concurrency(); }
                             public String concurrencyString() { return ""; }
@@ -202,6 +216,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         }
 
         String queueName = resolve(listener.queue());
+        String prefix = resolveEffectivePrefix(listener.prefix());
         int concurrency = resolveConcurrency(listener);
         boolean useVirtualThreads = listener.virtualThreads();
         long lockDurationMs = listener.lockDurationMs();
@@ -211,6 +226,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         Class<?> payloadClass = determinePayloadClass(method);
 
         var builder = OxmqWorker.builder()
+                .prefix(prefix)
                 .queueName(queueName)
                 .connectionManager(new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
@@ -236,7 +252,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         if (running) {
             worker.start();
         }
-        log.info("Registered @OxmqListener worker for queue '{}' -> {}.{}()", queueName, bean.getClass().getSimpleName(), method.getName());
+        log.info("Registered @OxmqListener worker for queue '{}:{}' -> {}.{}()", prefix, queueName, bean.getClass().getSimpleName(), method.getName());
     }
 
     private record HandlerMethod(Method method, Class<?> payloadType, String name, boolean isDefault) {}
@@ -249,6 +265,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         }
 
         String queueName = resolve(listener.queue());
+        String prefix = resolveEffectivePrefix(listener.prefix());
         int concurrency = resolveConcurrency(listener);
         boolean useVirtualThreads = listener.virtualThreads();
 
@@ -276,6 +293,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         final HandlerMethod finalDefaultHandler = defaultHandler;
 
         var builder = OxmqWorker.builder()
+                .prefix(prefix)
                 .queueName(queueName)
                 .connectionManager(new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
@@ -347,8 +365,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         if (running) {
             worker.start();
         }
-        log.info("Registered class-level @OxmqListener with {} @OxmqHandler(s) for queue '{}' -> {}",
-                handlers.size(), queueName, bean.getClass().getSimpleName());
+        log.info("Registered class-level @OxmqListener with {} @OxmqHandler(s) for queue '{}:{}' -> {}",
+                handlers.size(), prefix, queueName, bean.getClass().getSimpleName());
     }
 
     private void registerBatchListenerMethod(Object bean, Method method, OxmqBatchListener batchListener) {
@@ -359,6 +377,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         }
 
         String queueName = resolve(batchListener.queue());
+        String prefix = resolveEffectivePrefix(batchListener.prefix());
         int batchSize = batchListener.batchSize();
         if (batchListener.batchSizeString() != null && !batchListener.batchSizeString().isBlank()) {
             try {
@@ -401,6 +420,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         final boolean finalExpectsJobs = expectsJobs;
 
         var builder = OxmqBatchWorker.builder()
+                .prefix(prefix)
                 .queueName(queueName)
                 .batchSize(batchSize)
                 .connectionManager(new RedisConnectionManager(redisClient))
@@ -464,8 +484,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         if (running) {
             worker.start();
         }
-        log.info("Registered @OxmqBatchListener worker for queue '{}' (batchSize: {}) -> {}.{}()",
-                queueName, batchSize, bean.getClass().getSimpleName(), method.getName());
+        log.info("Registered @OxmqBatchListener worker for queue '{}:{}' (batchSize: {}) -> {}.{}()",
+                prefix, queueName, batchSize, bean.getClass().getSimpleName(), method.getName());
     }
 
     private Object invokeListenerMethod(Object bean, Method method, Job<?> job) throws Exception {

@@ -13,15 +13,30 @@ public class QueueKeys {
     private final String qualifiedName;
     private final Map<String, String> keyMap = new HashMap<>();
 
+    public static String resolvePrefix(String explicitPrefix) {
+        if (explicitPrefix != null && !explicitPrefix.isBlank()) {
+            return explicitPrefix.trim();
+        }
+        String envPrefix = System.getenv("OXMQ_PREFIX");
+        if (envPrefix != null && !envPrefix.isBlank()) {
+            return envPrefix.trim();
+        }
+        String sysPrefix = System.getProperty("oxmq.prefix");
+        if (sysPrefix != null && !sysPrefix.isBlank()) {
+            return sysPrefix.trim();
+        }
+        return "bull";
+    }
+
     public QueueKeys(String prefix, String queueName) {
-        this.prefix = prefix != null && !prefix.isBlank() ? prefix : "bull";
+        this.prefix = resolvePrefix(prefix);
         this.queueName = queueName;
         this.qualifiedName = this.prefix + ":" + this.queueName;
         initializeKeys();
     }
 
     public QueueKeys(String queueName) {
-        this("bull", queueName);
+        this(null, queueName);
     }
 
     private void initializeKeys() {

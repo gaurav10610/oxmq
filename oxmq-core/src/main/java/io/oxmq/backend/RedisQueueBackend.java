@@ -178,6 +178,11 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public List<Object> isFinished(String jobId, boolean fetchValue) {
+        return bullScripts.isFinished(binaryConnection(), queueKeys, jobId, fetchValue);
+    }
+
+    @Override
     public List<Long> getCounts(String... types) {
         return bullScripts.getCounts(binaryConnection(), queueKeys, types);
     }

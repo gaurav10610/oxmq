@@ -1,6 +1,6 @@
 # Spring Boot 3+ Starter
 
-The `oxmq-spring-boot-starter` module provides full auto-configuration, declarative queue listeners via `@OxmqListener`, and automated Spring Boot Actuator telemetry.
+The `oxmq-spring-boot-starter` module provides full auto-configuration, native context isolation / namespacing across shared Redis clusters, declarative queue listeners via `@OxmqListener`, and automated Spring Boot Actuator telemetry.
 
 ---
 
@@ -20,7 +20,7 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, declarat
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
 </dependencies>
 ```
@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.2.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.3.0")
 }
 ```
 
@@ -49,7 +49,7 @@ dependencies {
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.2.0</version>
+        <version>1.3.0</version>
     </dependency>
 </dependencies>
 
@@ -69,7 +69,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-spring-boot-starter:1.2.0")
+    implementation("io.oxmq:oxmq-spring-boot-starter:1.3.0")
 }
 ```
 
@@ -79,10 +79,15 @@ dependencies {
 
 ## ⚙️ Configuration (`application.yml`)
 
-Configure Redis connection, worker defaults, and Actuator metrics in `application.yml`:
+Configure Redis connection, worker defaults, context isolation prefix, and Actuator metrics in `application.yml`:
 
 ```yaml
+spring:
+  application:
+    name: order-service             # Auto-inherited as default OxMQ Redis namespace prefix!
+
 oxmq:
+  prefix: order-service             # Optional explicit override (defaults to spring.application.name)
   redis:
     uri: redis://localhost:6379     # Redis connection URI
   default-concurrency: 20           # Default worker concurrency
@@ -116,9 +121,41 @@ public class Application {
 
 ---
 
+## 🏢 Context Isolation & Cross-Service Messaging
+
+OxMQ implements the **"Define Once at Service Level, Inherit Everywhere"** pattern:
+- Setting `spring.application.name: order-service` automatically prefixes all queues and workers as `{order-service:queueName}:*`.
+- When multiple services share a single Redis cluster, their data structures are strictly isolated with zero cross-talk.
+
+### Cross-Service Queue Operations (`toService`)
+
+To enqueue work into another microservice's queue on the same Redis cluster without running that service's workers:
+
+```java
+@Service
+public class OrderService {
+
+    @Autowired
+    private OxmqTemplate oxmqTemplate;
+
+    public void completeOrder(OrderDto order) {
+        // Enqueues in order-service namespace (order-service:orders-queue:*)
+        oxmqTemplate.send("orders-queue", "process-order", order);
+
+        // Cross-service dispatch: Enqueue into shipping-service namespace!
+        oxmqTemplate.toService("shipping-service")
+                .send("dispatch-queue", new ShippingRequest(order.id(), order.address()));
+    }
+}
+```
+
+*For a full architectural deep dive on hash-tagging and precedence ladders, see our [Context Isolation Guide](/guide/namespacing).*
+
+---
+
 ## 📨 Enqueueing with `OxmqTemplate`
 
-The starter provides `OxmqTemplate`—a Spring-idiomatic client following the Template Design Pattern (similar to `KafkaTemplate` / `RabbitTemplate`):
+The starter provides `OxmqTemplate`—a Spring-idiomatic client following the Template Design Pattern:
 
 ```java
 @Service
@@ -164,13 +201,28 @@ public class OrderListener {
             @Header("timestamp") long timestamp
     ) {
         log.info("Processing order {} (jobId={})", order.orderId(), jobId);
-        // Automatically runs on Virtual Threads in Java 21+
+        // Automatically runs on Virtual Threads in Java 21+ (or platform threads in Java 17)
         return "SUCCESS";
     }
 }
 ```
 
-### 2. Batch Listener (`@OxmqBatchListener`)
+### 2. Explicit Namespace Override on Listener
+
+To listen directly to a queue in another service's namespace:
+
+```java
+@Component
+public class CrossServiceAuditListener {
+
+    @OxmqListener(queue = "audit-events", prefix = "security-service")
+    public void onSecurityEvent(SecurityAuditDto audit) {
+        log.info("Received external security event: {}", audit.action());
+    }
+}
+```
+
+### 3. Batch Listener (`@OxmqBatchListener`)
 
 Consume chunks of jobs atomically in a single Redis roundtrip:
 
@@ -186,7 +238,7 @@ public class AuditListener {
 }
 ```
 
-### 3. Class-Level Listener with Routing (`@OxmqListener` + `@OxmqHandler`)
+### 4. Class-Level Listener with Routing (`@OxmqListener` + `@OxmqHandler`)
 
 Patterned after Spring Kafka `@KafkaHandler`, routes multiple job types on a single queue:
 
@@ -209,7 +261,9 @@ public class NotificationListener {
 
 ---
 
-## 🚨 Handling Non-Recoverable Errors
+## 🚨 Handling Non-Recoverable Errors & Postponement
+
+### Immediate Failure Without Retries (`UnrecoverableError`)
 
 If an error is unrecoverable (e.g. invalid user input, permanent authentication failure), throw `UnrecoverableError`. OxMQ will fail the job immediately without retrying:
 
@@ -228,6 +282,23 @@ public void processPayment(Job<PaymentRequest> job) {
 }
 ```
 
+### Worker Postponement (`DelayedException`)
+
+If an external service is temporarily down or rate-limited, throw `DelayedException` to postpone execution for a specific duration without consuming an attempt or recording a failure:
+
+```java
+import io.oxmq.exception.DelayedException;
+
+@OxmqListener(queue = "webhooks")
+public void deliverWebhook(Job<WebhookPayload> job) {
+    if (downstreamService.isMaintenanceWindow()) {
+        // Postpone job for 60 seconds without incrementing attemptsMade
+        throw new DelayedException(60_000L);
+    }
+    downstreamService.post(job.getData());
+}
+```
+
 ---
 
 ## 📊 Spring Boot Actuator Integration
@@ -243,12 +314,10 @@ OxMQ exposes real-time queue health and metrics through Spring Boot Actuator.
     "oxmq": {
       "status": "UP",
       "details": {
-        "orders-queue": {
-          "waiting": 12,
-          "active": 3,
-          "delayed": 0,
-          "failed": 0
-        }
+        "redis": "CONNECTED",
+        "namespace": "order-service",
+        "registeredWorkers": 3,
+        "workersRunning": true
       }
     }
   }

@@ -2,72 +2,180 @@ package io.oxmq;
 
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.StreamMessage;
+import io.lettuce.core.XReadArgs;
+import io.lettuce.core.XReadArgs.StreamOffset;
+import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
+import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.io.Closeable;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Event listener for real-time OxMQ queue lifecycle events backed by Redis Pub/Sub.
+ * Event listener for real-time OxMQ queue lifecycle events backed by Redis Streams (with Pub/Sub compatibility).
  * Provides 100% parity with BullMQ's QueueEvents.
  */
 public class QueueEvents implements Closeable {
 
     private static final Logger log = LoggerFactory.getLogger(QueueEvents.class);
 
+    private final String prefix;
     private final String queueName;
     private final String channelName;
     private final RedisConnectionManager connectionManager;
     private final JobSerializer serializer;
     private final Map<String, List<BiConsumer<String, Map<String, Object>>>> eventListeners = new ConcurrentHashMap<>();
     private StatefulRedisPubSubConnection<String, String> pubSubConnection;
+    private Thread streamThread;
     private volatile boolean running = false;
 
-    public QueueEvents(String queueName, String redisUri) {
-        this(queueName, new RedisConnectionManager(redisUri), new JacksonJobSerializer());
-    }
-
-    public QueueEvents(String queueName, RedisClient redisClient) {
-        this(queueName, new RedisConnectionManager(redisClient), new JacksonJobSerializer());
-    }
-
-    public QueueEvents(String queueName, RedisConnectionManager connectionManager, JobSerializer serializer) {
+    public QueueEvents(String prefix, String queueName, RedisConnectionManager connectionManager, JobSerializer serializer) {
         this.queueName = Objects.requireNonNull(queueName, "queueName must not be null");
-        this.channelName = "bull:" + queueName + ":events";
+        this.prefix = QueueKeys.resolvePrefix(prefix);
+        this.channelName = this.prefix + ":" + queueName + ":events";
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
     }
 
+    public QueueEvents(String prefix, String queueName, String redisUri) {
+        this(prefix, queueName, new RedisConnectionManager(redisUri), new JacksonJobSerializer());
+    }
+
+    public QueueEvents(String prefix, String queueName, RedisClient redisClient) {
+        this(prefix, queueName, new RedisConnectionManager(redisClient), new JacksonJobSerializer());
+    }
+
+    public QueueEvents(String queueName, String redisUri) {
+        this(null, queueName, redisUri);
+    }
+
+    public QueueEvents(String queueName, RedisClient redisClient) {
+        this(null, queueName, redisClient);
+    }
+
+    public QueueEvents(String queueName, RedisConnectionManager connectionManager, JobSerializer serializer) {
+        this(null, queueName, connectionManager, serializer);
+    }
+
+    public String getPrefix() {
+        return prefix;
+    }
+
+    public String getQueueName() {
+        return queueName;
+    }
+
+    public String getChannelName() {
+        return channelName;
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
     /**
-     * Starts listening to Redis Pub/Sub queue events.
+     * Starts listening to Redis Streams and Pub/Sub queue events.
      */
     public synchronized QueueEvents start() {
         if (!running) {
-            this.pubSubConnection = connectionManager.getPubSubConnection();
-            this.pubSubConnection.addListener(new RedisPubSubAdapter<>() {
-                @Override
-                public void message(String channel, String message) {
-                    if (channelName.equals(channel)) {
-                        handleMessage(message);
-                    }
-                }
-            });
-            this.pubSubConnection.sync().subscribe(channelName);
             this.running = true;
-            log.info("QueueEvents started listening on channel: {}", channelName);
+            try {
+                this.pubSubConnection = connectionManager.getPubSubConnection();
+                this.pubSubConnection.addListener(new RedisPubSubAdapter<>() {
+                    @Override
+                    public void message(String channel, String message) {
+                        if (channelName.equals(channel)) {
+                            handleMessage(message);
+                        }
+                    }
+                });
+                this.pubSubConnection.sync().subscribe(channelName);
+            } catch (Exception e) {
+                log.debug("Pub/Sub subscription skipped for {}: {}", channelName, e.getMessage());
+            }
+
+            this.streamThread = new Thread(this::streamPollingLoop, "oxmq-queue-events-" + channelName);
+            this.streamThread.setDaemon(true);
+            this.streamThread.start();
+            log.info("QueueEvents started listening on Redis stream: {}", channelName);
         }
         return this;
+    }
+
+    private void streamPollingLoop() {
+        String lastId = "$";
+        StatefulRedisConnection<String, String> conn = null;
+        try {
+            conn = connectionManager.getCommandConnection();
+            var sync = conn.sync();
+            while (running && !Thread.currentThread().isInterrupted()) {
+                try {
+                    List<StreamMessage<String, String>> messages = sync.xread(
+                            XReadArgs.Builder.block(Duration.ofSeconds(2)).count(100),
+                            StreamOffset.from(channelName, lastId)
+                    );
+                    if (messages != null && !messages.isEmpty()) {
+                        for (StreamMessage<String, String> message : messages) {
+                            lastId = message.getId();
+                            handleStreamPayload(message.getBody());
+                        }
+                    }
+                } catch (Exception e) {
+                    if (!running) {
+                        break;
+                    }
+                    try {
+                        Thread.sleep(100);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            if (running) {
+                log.warn("QueueEvents stream loop error on {}", channelName, e);
+            }
+        }
+    }
+
+    private void handleStreamPayload(Map<String, String> body) {
+        if (body == null || body.isEmpty()) {
+            return;
+        }
+        String event = body.get("event");
+        String jobId = body.get("jobId");
+        if (event != null) {
+            Map<String, Object> payload = new HashMap<>(body);
+            List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(event);
+            if (listeners != null) {
+                for (var listener : listeners) {
+                    try {
+                        listener.accept(jobId, payload);
+                    } catch (Exception e) {
+                        log.error("Error executing QueueEvents stream listener for event '{}'", event, e);
+                    }
+                }
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -87,7 +195,7 @@ public class QueueEvents implements Closeable {
                         try {
                             listener.accept(jobId, payload);
                         } catch (Exception e) {
-                            log.error("Error executing QueueEvents listener for event '{}'", event, e);
+                            log.error("Error executing QueueEvents message listener for event '{}'", event, e);
                         }
                     }
                 }
@@ -103,6 +211,65 @@ public class QueueEvents implements Closeable {
     public QueueEvents on(String eventName, BiConsumer<String, Map<String, Object>> listener) {
         eventListeners.computeIfAbsent(eventName, k -> new CopyOnWriteArrayList<>()).add(listener);
         return this;
+    }
+
+    /**
+     * Unregisters an event listener.
+     */
+    public QueueEvents off(String eventName, BiConsumer<String, Map<String, Object>> listener) {
+        List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(eventName);
+        if (listeners != null) {
+            listeners.remove(listener);
+        }
+        return this;
+    }
+
+    /**
+     * Unregisters an event listener (alias for off).
+     */
+    public QueueEvents removeListener(String eventName, BiConsumer<String, Map<String, Object>> listener) {
+        return off(eventName, listener);
+    }
+
+    /**
+     * Waits until the specified job completes or fails, returning its result or throwing on failure.
+     */
+    public Object waitUntilFinished(String jobId, Duration timeout) throws ExecutionException, InterruptedException, TimeoutException {
+        return waitUntilFinishedAsync(jobId).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Asynchronously waits until the specified job completes or fails.
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync(String jobId) {
+        if (!running) {
+            start();
+        }
+        CompletableFuture<Object> future = new CompletableFuture<>();
+        @SuppressWarnings("unchecked")
+        BiConsumer<String, Map<String, Object>>[] listenerRef = new BiConsumer[2];
+
+        listenerRef[0] = (jId, payload) -> {
+            if (Objects.equals(jobId, jId)) {
+                future.complete(payload.get("returnvalue"));
+            }
+        };
+        listenerRef[1] = (jId, payload) -> {
+            if (Objects.equals(jobId, jId)) {
+                String reason = (String) payload.get("failedReason");
+                future.completeExceptionally(new RuntimeException(reason != null ? reason : "Job " + jobId + " failed"));
+            }
+        };
+
+        on("completed", listenerRef[0]);
+        on("failed", listenerRef[1]);
+
+        future.whenComplete((res, err) -> {
+            off("completed", listenerRef[0]);
+            off("failed", listenerRef[1]);
+        });
+
+        return future;
     }
 
     /**
@@ -154,10 +321,6 @@ public class QueueEvents implements Closeable {
         return on("resumed", (jobId, payload) -> action.run());
     }
 
-    public String getQueueName() {
-        return queueName;
-    }
-
     public boolean isRunning() {
         return running;
     }
@@ -165,6 +328,10 @@ public class QueueEvents implements Closeable {
     @Override
     public synchronized void close() {
         if (running) {
+            running = false;
+            if (streamThread != null) {
+                streamThread.interrupt();
+            }
             try {
                 if (pubSubConnection != null && pubSubConnection.isOpen()) {
                     pubSubConnection.sync().unsubscribe(channelName);
@@ -173,9 +340,60 @@ public class QueueEvents implements Closeable {
                 log.warn("Error unsubscribing QueueEvents from {}", channelName, e);
             }
             connectionManager.close();
-            running = false;
             eventListeners.clear();
             log.info("QueueEvents stopped for queue: {}", queueName);
+        }
+    }
+
+    public static class Builder {
+        private String prefix;
+        private String queueName;
+        private RedisConnectionManager connectionManager;
+        private RedisClient redisClient;
+        private String redisUri;
+        private JobSerializer serializer;
+
+        public Builder prefix(String prefix) {
+            this.prefix = prefix;
+            return this;
+        }
+
+        public Builder queueName(String queueName) {
+            this.queueName = queueName;
+            return this;
+        }
+
+        public Builder redisUri(String redisUri) {
+            this.redisUri = redisUri;
+            return this;
+        }
+
+        public Builder redisClient(RedisClient redisClient) {
+            this.redisClient = redisClient;
+            return this;
+        }
+
+        public Builder connectionManager(RedisConnectionManager connectionManager) {
+            this.connectionManager = connectionManager;
+            return this;
+        }
+
+        public Builder serializer(JobSerializer serializer) {
+            this.serializer = serializer;
+            return this;
+        }
+
+        public QueueEvents build() {
+            if (connectionManager == null) {
+                if (redisClient != null) {
+                    connectionManager = new RedisConnectionManager(redisClient);
+                } else if (redisUri != null) {
+                    connectionManager = new RedisConnectionManager(redisUri);
+                } else {
+                    connectionManager = new RedisConnectionManager("redis://localhost:6379");
+                }
+            }
+            return new QueueEvents(prefix, queueName, connectionManager, serializer);
         }
     }
 }

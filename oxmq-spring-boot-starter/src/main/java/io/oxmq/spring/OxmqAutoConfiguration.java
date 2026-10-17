@@ -19,6 +19,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.Environment;
 
 /**
  * Spring Boot 3 Auto-configuration for OxMQ.
@@ -43,8 +44,13 @@ public class OxmqAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public FlowProducer oxmqFlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
-        return new FlowProducer(connectionManager, scriptManager, serializer);
+    public FlowProducer oxmqFlowProducer(RedisConnectionManager connectionManager,
+                                        LuaScriptManager scriptManager,
+                                        JobSerializer serializer,
+                                        OxmqProperties properties,
+                                        org.springframework.core.env.Environment environment) {
+        String effectivePrefix = properties.resolvePrefix(environment);
+        return new FlowProducer(connectionManager, scriptManager, serializer, effectivePrefix);
     }
 
     @Bean
@@ -54,8 +60,11 @@ public class OxmqAutoConfiguration {
                                      LuaScriptManager scriptManager,
                                      JobSerializer serializer,
                                      OxmqMetrics metrics,
-                                     FlowProducer flowProducer) {
-        return new OxmqTemplate(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer);
+                                     FlowProducer flowProducer,
+                                     OxmqProperties properties,
+                                     Environment environment) {
+        String effectivePrefix = properties.resolvePrefix(environment);
+        return new OxmqTemplate(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, effectivePrefix);
     }
 
     @Bean
@@ -90,7 +99,10 @@ public class OxmqAutoConfiguration {
     @ConditionalOnClass(HealthIndicator.class)
     @ConditionalOnMissingBean(name = "oxmqHealthIndicator")
     public OxmqHealthIndicator oxmqHealthIndicator(RedisClient redisClient,
-                                                   OxmqListenerAnnotationBeanPostProcessor postProcessor) {
-        return new OxmqHealthIndicator(redisClient, postProcessor);
+                                                   OxmqListenerAnnotationBeanPostProcessor postProcessor,
+                                                   OxmqProperties properties,
+                                                   Environment environment) {
+        String effectivePrefix = properties.resolvePrefix(environment);
+        return new OxmqHealthIndicator(redisClient, postProcessor, effectivePrefix);
     }
 }

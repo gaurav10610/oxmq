@@ -16,6 +16,13 @@ import java.lang.annotation.Target;
 public @interface OxmqBatchListener {
 
     /**
+     * Custom namespace prefix for this queue.
+     * When left empty, defaults to the service-level namespace configured in {@code oxmq.prefix} or {@code spring.application.name}.
+     * Supports property placeholders, e.g. {@code "${app.queue.prefix}"}.
+     */
+    String prefix() default "";
+
+    /**
      * The name of the queue to listen to. Supports property placeholders, e.g. {@code "${app.queue.name}"}.
      */
     String queue();

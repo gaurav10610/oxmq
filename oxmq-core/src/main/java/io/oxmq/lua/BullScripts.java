@@ -219,7 +219,7 @@ public class BullScripts {
         long timestamp = System.currentTimeMillis();
         Map<String, Object> packedOpts = new HashMap<>();
         packedOpts.put("token", token != null ? token : "0");
-        packedOpts.put("keepJobs", Map.of("count", 1000));
+        packedOpts.put("keepJobs", resolveKeepJobs(target, jobOpts));
         packedOpts.put("maxMetricsSize", "");
         if (jobOpts != null) {
             packedOpts.put("fpof", Boolean.TRUE.equals(jobOpts.get("failParentOnFailure")));
@@ -930,6 +930,56 @@ public class BullScripts {
             return result.toString();
         }
         return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> resolveKeepJobs(String target, Map<String, Object> jobOpts) {
+        if (jobOpts == null) {
+            return Map.of("count", -1);
+        }
+        Object conf = "completed".equals(target) ? jobOpts.get("removeOnComplete") : jobOpts.get("removeOnFail");
+        if (conf == null) {
+            return Map.of("count", -1);
+        }
+        if (Boolean.TRUE.equals(conf)) {
+            return Map.of("count", 0);
+        }
+        if (Boolean.FALSE.equals(conf)) {
+            return Map.of("count", -1);
+        }
+        if (conf instanceof Number num) {
+            return Map.of("count", num.intValue());
+        }
+        if (conf instanceof Map<?, ?> map) {
+            Map<String, Object> result = new HashMap<>();
+            map.forEach((k, v) -> result.put(String.valueOf(k), v));
+            if (!result.containsKey("count") && !result.containsKey("age")) {
+                result.put("count", -1);
+            }
+            return result;
+        }
+        return Map.of("count", -1);
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Object> isFinished(StatefulRedisConnection<String, byte[]> connection,
+                                  QueueKeys keys, String jobId, boolean fetchValue) {
+        String[] redisKeys = new String[] {
+            keys.getKey("completed"),
+            keys.getKey("failed"),
+            keys.toJobKey(jobId)
+        };
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+        byte[] fetchValueBytes = (fetchValue ? "1" : "0").getBytes(StandardCharsets.UTF_8);
+
+        Object res = scriptManager.evalBinary(connection, LuaScript.IS_FINISHED,
+            ScriptOutputType.MULTI, redisKeys, jobIdBytes, fetchValueBytes);
+        if (res instanceof List<?> list) {
+            return (List<Object>) list;
+        } else if (res instanceof Number num) {
+            return List.of(num);
+        }
+        return List.of();
     }
 
     public LuaScriptManager getScriptManager() {
