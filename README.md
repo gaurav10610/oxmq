@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.3.0"><img src="https://img.shields.io/badge/Release-v1.3.0-blue.svg" alt="Release v1.3.0"></a>
-  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.3.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/Release-v1.4.0-blue.svg" alt="Release v1.4.0"></a>
+  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.4.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
@@ -70,9 +70,11 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | Feature | Architecture & Implementation | Key Developer Value |
 | :--- | :--- | :--- |
 | **🚀 Virtual Thread Concurrency** | Java 21 Project Loom native dispatcher (`OxmqWorker`) | **10,000+ concurrent I/O workers** on a single node with $< 2\text{KB}$ memory per task and zero OS thread pool starvation. |
+| **🛑 In-Flight Job Cancellation** | Cooperative `CancellationToken` & `Thread.interrupt()` | BullMQ v6 `AbortController` parity. Trip tokens and abort active workers instantly (`worker.cancelJob`, `cancelAllJobs`) without unwanted retry loops. |
 | **🏢 Context Isolation & Multi-Tenancy** | Service-level namespacing with strict 7-tier precedence & Redis hash-tags | Run multiple microservices or SaaS tenants on a shared Redis instance with zero worker cross-talk, isolated deduplication, and cross-service messaging (`toService`). |
 | **🌲 Parent-Child DAG Workflows** | Atomic dependency tree resolution via `FlowProducer` | **100% Free & Open Source**: Parent jobs await parallel child completion with automatic return value propagation into `parentJob.getChildrenValues()`. |
-| **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **Amortized network roundtrips** for high-volume batch ingestion into ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake. |
+| **🌐 Redis Cluster DAG Safety** | Hash-tag routing via `FlowProducer.forCluster` | Automatically routes multi-queue DAG parents and children to a shared `{clusterTag}` CRC16 slot, eliminating `CROSSSLOT` failures on distributed Redis Clusters. |
+| **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **Amortized network roundtrips** for high-volume batch ingestion into ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake with `maxBatchBytes` memory safety. |
 | **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances with dynamic `groupKey`. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling, `jobId` hashing, and `keepLastIfActive` buffer | Millisecond-accurate delayed job triggers and debounced deduplication windows with automated active buffer re-queueing. |
@@ -83,7 +85,7 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
 | **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
-| **🧠 Memory & Socket Optimization** | Canonical key interning, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
+| **🧠 Memory & Socket Optimization** | Canonical key interning, ReentrantLock non-pinning locks, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
 | **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic worker lifecycle binding and `/actuator/health` indicator integration. |
 
 ---
@@ -200,7 +202,7 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.3.0).
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0).
 
 ### Option 1: JitPack (Recommended — Zero-Auth)
 
@@ -220,14 +222,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
 </dependencies>
 ```
@@ -240,9 +242,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.3.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.4.0")
     // or for Spring Boot 3 microservices:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.3.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.4.0")
 }
 ```
 
@@ -263,14 +265,14 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
     <!-- or for Spring Boot 3: -->
     <!--
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
     -->
 </dependencies>
@@ -355,6 +357,29 @@ JobState state = queue.getJobState(job.getId()); // COMPLETED
 boolean isDone = queue.isCompleted(job.getId());  // true
 ```
 
+### 4. In-Flight Job Cancellation (AbortController Parity)
+
+```java
+// 1. Cooperative cancellation check inside Virtual Thread worker
+OxmqWorker<EmailNotification> worker = OxmqWorker.<EmailNotification>builder()
+    .queueName("notifications")
+    .redisUri("redis://localhost:6379")
+    .processor(job -> {
+        // Register cleanup callback on CancellationToken
+        job.getCancellationToken().onCancel(reason -> log.warn("Job cancelled: {}", reason));
+
+        while (!job.isCancelled()) {
+            emailService.sendBatch(job.getData());
+        }
+        throw new JobCancelledException(job.getCancelReason());
+    })
+    .build();
+worker.start();
+
+// 2. Programmatically cancel an in-flight job by ID
+worker.cancelJob(job.getId(), "User requested cancellation");
+```
+
 ---
 
 ## 🍃 Spring Boot 3 Starter (`oxmq-spring-boot-starter`)
@@ -395,7 +420,8 @@ public class OrderWorker {
 @Component
 public class AuditWorker {
 
-    @OxmqBatchListener(queue = "audit-logs", batchSize = 100)
+    // Dequeue up to 100 jobs atomically with maxBatchBytes heap safeguard
+    @OxmqBatchListener(queue = "audit-logs", batchSize = 100, maxBatchBytes = 16 * 1024 * 1024)
     public void processAuditBatch(List<Job<AuditLogDto>> batch) {
         // Bulk JDBC insert / Elasticsearch batch indexing in a single transaction
     }
@@ -426,6 +452,9 @@ Build complex multi-stage distributed pipelines where parent jobs automatically 
 
 ```java
 FlowProducer flowProducer = new FlowProducer("redis://localhost:6379");
+
+// For Redis Cluster multi-queue DAGs, use FlowProducer.forCluster("clusterTag", ...) to avoid CROSSSLOT errors!
+// FlowProducer clusterFlow = FlowProducer.forCluster("media-pipeline", "redis://redis-cluster:6379");
 
 // Define parallel child tasks
 FlowJob<VideoChunk> child1 = FlowJob.of(

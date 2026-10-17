@@ -113,6 +113,50 @@ worker.resume();
 
 ---
 
+## 🛑 In-Flight Job Cancellation & Cooperative Interruption
+
+In high-concurrency environments, users or orchestrators often need to abort in-flight jobs (e.g. user cancels an active video render, API timeout triggers task cancellation, or tenant disconnects).
+
+OxMQ introduces full BullMQ v6 `AbortController` / `AbortSignal` parity tailored natively for Java 21 Virtual Threads:
+
+```java
+// 1. Worker processor with cooperative cancellation handling
+OxmqWorker<TranscodeTask> worker = OxmqWorker.<TranscodeTask>builder()
+        .queueName("video-processing")
+        .redisUri("redis://localhost:6379")
+        .processor(job -> {
+            // Register cleanup callback with CancellationToken
+            job.getCancellationToken().onCancel(reason -> {
+                log.warn("Job {} cancelled: {}", job.getId(), reason);
+                cleanupTemporaryFiles(job.getId());
+            });
+
+            // Loop checking cooperative cancellation flag
+            while (hasMoreFrames()) {
+                if (job.isCancelled()) {
+                    throw new JobCancelledException(job.getCancelReason());
+                }
+                encodeNextFrame();
+            }
+            return "COMPLETED";
+        })
+        .build();
+worker.start();
+
+// 2. Programmatically cancel a specific active job
+boolean cancelled = worker.cancelJob("job-987", "User aborted rendering");
+
+// 3. Programmatically cancel all currently active jobs on this worker
+worker.cancelAllJobs("Node entering maintenance drain");
+```
+
+### Cancellation Guarantees:
+- **Thread Interruption**: Calling `worker.cancelJob(jobId, reason)` sets the job's `CancellationToken` and immediately invokes `Thread.interrupt()` on the Virtual Thread executing the job.
+- **Unrecoverable Failure State**: The job transitions cleanly to the Redis `failed` state with the cancellation reason recorded in `failedReason`, while extending `UnrecoverableError` so that automatic retry attempts are bypassed.
+- **Batch Worker Support**: `OxmqBatchWorker` also implements `cancelJob` and `cancelAllJobs`, propagating interruptions to active batch worker threads.
+
+---
+
 ## 🧠 Zero-Allocation Poller & Resource Efficiency
 
 OxMQ workers are engineered for high-throughput zero-churn consumption:
