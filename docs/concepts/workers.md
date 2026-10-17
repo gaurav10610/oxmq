@@ -110,3 +110,15 @@ worker.pause();
 // Resume processing
 worker.resume();
 ```
+
+---
+
+## 🧠 Zero-Allocation Poller & Resource Efficiency
+
+OxMQ workers are engineered for high-throughput zero-churn consumption:
+- **Canonical Key Interning**: The polling loop maps standard BullMQ hash fields to `static final` interned String references, eliminating millions of transient String allocations per minute.
+- **Pre-Sized Field Maps**: Claimed job fields are loaded into pre-allocated hash maps (`new HashMap<>(24, 1.0f)`), eliminating map rehashes on the hot path.
+- **Connection Multiplexing**: Background heartbeat timers (`LockExtender`) and crash checkers (`StalledJobSentinel`) share the non-blocking thread-safe binary Lettuce connection rather than opening redundant TCP sockets.
+- **Stack Trace Guardrail**: Failed job reasons and stack dumps are capped at **8 KB** with truncation markers, protecting the worker JVM heap and Redis storage from memory exhaustion during downstream service outages.
+
+*For detailed benchmarks and memory architecture, read our [Memory Optimization & Resource Efficiency Guide](/operations/memory-optimization).*

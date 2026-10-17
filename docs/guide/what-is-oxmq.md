@@ -102,3 +102,4 @@ graph TB
 - Check out the [Quickstart Guide](/guide/quickstart) to build your first queue and worker.
 - Explore the [Spring Boot 3+ Starter](/guide/spring-boot) for declarative `@OxmqListener` usage.
 - Read about [Project Loom Virtual Threads](/guide/virtual-threads) and concurrency management.
+- Learn about [Memory Optimization & Resource Efficiency](/operations/memory-optimization) for zero-allocation and compaction techniques.

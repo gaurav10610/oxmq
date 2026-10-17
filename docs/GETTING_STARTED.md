@@ -369,6 +369,12 @@ oxmq:
   default-concurrency: 50
   virtual-threads: true     # Virtual Threads on Java 21+ (platform threads on Java 17)
   metrics-enabled: true
+  max-len-events: 10000    # Bounds Redis event stream
+  default-job-options:     # Automatic queue retention
+    remove-on-complete:
+      count: 1000          # Keep last 1,000 completed jobs
+    remove-on-fail:
+      count: 5000          # Keep last 5,000 failed jobs
 ```
 
 ### Application Code

@@ -56,24 +56,24 @@ The following benchmarks were captured directly from live test executions on bot
 
 | Scenario / Topology | Java 17 Throughput | Java 21 Throughput | Peak Ingestion Rate | Redis RAM Delta | Cost / Node | Verification |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Wide DAG (1 Parent + 100 Children)** | 573.9 jobs/s | 567.4 jobs/s | 1,836.4 nodes/s | 134 KB | 1,364 B | ✅ 100% |
-| **Wide DAG (1 Parent + 500 Children)** | 926.1 jobs/s | 931.2 jobs/s | 2,846.6 nodes/s | 502 KB | 1,026 B | ✅ 100% |
-| **Wide DAG (1 Parent + 1,000 Children)** | 1,053.7 jobs/s | 1,041.6 jobs/s | 3,128.1 nodes/s | 940 KB | 961 B | ✅ 100% |
-| **Wide DAG (1 Parent + 2,500 Children)** | 1,068.8 jobs/s | 1,055.7 jobs/s | 3,169.8 nodes/s | 2.16 MB | 886 B | ✅ 100% |
-| **Wide DAG (1 Parent + 5,000 Children)** | 1,088.1 jobs/s | 1,078.7 jobs/s | 3,193.5 nodes/s | 4.52 MB | 926 B | ✅ 100% |
-| **Wide DAG (1 Parent + 10,000 Children)**| **1,092.6 jobs/s** | **1,084.1 jobs/s** | **3,230.4 nodes/s** | **8.87 MB** | **908 B** | ✅ 100% |
-| **Batch Dequeue (`batchSize=100`)** | 2,896.0 jobs/s | 2,853.1 jobs/s | 3,150.0 jobs/s | 6.77 MB | 693 B | ✅ 100% |
-| **Batch Dequeue (`batchSize=1000`)** | **2,918.9 jobs/s [PEAK]** | **2,886.8 jobs/s [PEAK]** | 3,180.0 jobs/s | 6.77 MB | 693 B | ✅ 100% |
+| **Wide DAG (1 Parent + 100 Children)** | 1,383.6 jobs/s | 1,442.9 jobs/s | 1,942.3 nodes/s | 148 KB | 1,504 B | ✅ 100% |
+| **Wide DAG (1 Parent + 500 Children)** | 1,764.1 jobs/s | 2,236.6 jobs/s | 2,783.3 nodes/s | 490 KB | 1,002 B | ✅ 100% |
+| **Wide DAG (1 Parent + 1,000 Children)** | 2,034.6 jobs/s | 2,613.6 jobs/s | 3,137.9 nodes/s | 943 KB | 964 B | ✅ 100% |
+| **Wide DAG (1 Parent + 2,500 Children)** | 2,135.8 jobs/s | 2,607.9 jobs/s | 3,153.8 nodes/s | 2.31 MB | 949 B | ✅ 100% |
+| **Wide DAG (1 Parent + 5,000 Children)** | 2,261.9 jobs/s | 2,636.3 jobs/s | 3,251.6 nodes/s | 4.61 MB | 943 B | ✅ 100% |
+| **Wide DAG (1 Parent + 10,000 Children)**| **2,645.1 jobs/s** | **2,329.1 jobs/s** | **3,251.6 nodes/s** | **8.88 MB** | **909 B** | ✅ 100% |
+| **Batch Dequeue (`batchSize=100`)** | 2,849.0 jobs/s | 2,918.9 jobs/s | 3,200.0 jobs/s | 6.77 MB | 693 B | ✅ 100% |
+| **Batch Dequeue (`batchSize=500-1000`)**| **2,957.7 jobs/s [PEAK]** | **2,962.1 jobs/s [PEAK]** | 3,250.0 jobs/s | 6.77 MB | 693 B | ✅ 100% |
 
 ### 🔍 Key Inflection Points & Takeaways
-1. **Concurrency Saturation (Inflection Point: $C = 50 - 100$)**:
-   - Single-worker queue polling hits a Redis network round-trip ceiling at **~1,110 – 1,118 jobs/s**. Beyond 100 workers, single queue polling plateaus. Use `OxmqBatchWorker` to achieve **2,918+ jobs/s**.
-2. **DAG Fan-out Capacity (Scale Limit: 10,000+ Children)**:
-   - Zero dropped tasks or race conditions across 10,000 parallel children with automatic result passing to the parent job upon completion. Ingestion plateaus at **~3,230 nodes/s** (Redis single TCP buffer limit).
+1. **Core Throughput & DAG Resolution Leap**:
+   - Eliminating eager `hgetall` on `:processed` for standard jobs catapulted DAG resolution rates from ~1,084 jobs/s up to **2,645+ jobs/s (~2.4x speedup)**. Core polling throughput increased from ~1,110 jobs/s to **~2,800+ jobs/s**.
+2. **DAG Fan-out Capacity (Scale Limit: 10,001 Nodes)**:
+   - Zero dropped tasks or race conditions across 10,000 parallel children with automatic result passing to the parent job upon completion. Ingestion peaks at **~3,250 nodes/s** (Redis TCP packet buffer limit).
 3. **Memory Asymptotic Stabilization**:
-   - At scale ($\ge 2,500$ nodes), Redis memory consumption asymptotically stabilizes at **~904 – 908 Bytes/node**.
+   - At scale ($\ge 2,500$ nodes), Redis memory consumption asymptotically stabilizes at **~904 – 909 Bytes/node**.
 4. **Loom Virtual Thread Isolation**:
-   - Under realistic 10ms I/O delays, Java 21 Virtual Threads maintain a **strictly flat 31 OS threads** up to 800 workers, while Java 17 spawns OS threads in its platform thread pool.
+   - Under realistic 10ms I/O delays, Java 21 Virtual Threads maintain a **strictly flat 35 OS threads** up to 800 workers, while Java 17 spawns up to 68 OS threads in its platform thread pool.
 
 For full capacity sizing formulas, cloud cost budgeting, and detailed charts, see the [Operations Benchmarks & Sizing Guide](/operations/benchmarks).
 

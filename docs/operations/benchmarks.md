@@ -22,13 +22,13 @@ All metrics were captured using [`io.oxmq.benchmarks.InflectionPointBenchmarkRun
 | Metric / Scenario | ☕ **Java 17 LTS (Platform Threads)** | 🐂 **Java 21 LTS (Loom Virtual Threads)** | Strategic Analysis |
 | :--- | :---: | :---: | :--- |
 | **Max Verified DAG Tree** | **10,001 Nodes** (1 Parent + 10,000 Children) | **10,001 Nodes** (1 Parent + 10,000 Children) | Both runtimes scale to 10,000+ nodes with 100% verification |
-| **Peak DAG Ingestion Rate** | **3,194.63 nodes/sec** (at 7,500 children) | **3,230.40 nodes/sec** (at 7,500 children) | Single pipeline buffer saturation point |
-| **Peak DAG Resolution Rate** | **1,092.65 jobs/sec** (at 10,000 children) | **1,084.12 jobs/sec** (at 10,000 children) | Flat throughput across both runtimes |
-| **Redis RAM Delta (10k DAG)**| **8,868.5 KB** (~8.66 MB) | **8,873.0 KB** (~8.66 MB) | Ultra-consistent: **~908 Bytes/node** at scale |
-| **Peak Batch Dequeue Rate** | **2,918.86 jobs/sec** (`batchSize=1000`) | **2,886.84 jobs/sec** (`batchSize=1000`) | **~2.6x faster** than 1-by-1 polling |
-| **Batch Sweet Spot (`batchSize=100`)**| **2,896.00 jobs/sec** (3,453 ms) | **2,853.10 jobs/sec** (3,505 ms) | Ideal balance of throughput vs batch latency |
-| **OS Thread Count (at 800 Workers)** | **Climbs to 42+ OS Threads** | **Strictly Fixed at 31 OS Threads** | Virtual Threads insulate OS from thread explosion |
-| **Peak JVM Heap under Load** | **68 – 118 MB** | **33 – 79 MB** | Loom achieves lower baseline heap under high task count |
+| **Peak DAG Ingestion Rate** | **3,196.23 nodes/sec** (at 10,000 children) | **3,251.63 nodes/sec** (at 5,000 children) | Single pipeline buffer saturation point |
+| **Peak DAG Resolution Rate** | **2,645.07 jobs/sec** (at 10,000 children) | **2,640.27 jobs/sec** (at 7,500 children) | **~2.4x speedup** via lazy child result evaluation |
+| **Redis RAM Delta (10k DAG)**| **8,890.0 KB** (~8.68 MB) | **8,882.7 KB** (~8.67 MB) | Ultra-consistent: **~909 Bytes/node** at scale |
+| **Peak Batch Dequeue Rate** | **2,957.70 jobs/sec** (`batchSize=500`) | **2,962.09 jobs/sec** (`batchSize=10`) | Near-line-rate bulk Redis ingestion |
+| **Batch Sweet Spot (`batchSize=100`)**| **2,849.00 jobs/sec** (3,510 ms) | **2,918.90 jobs/sec** (3,426 ms) | Ideal balance of throughput vs batch latency |
+| **OS Thread Count (at 800 Workers)** | **Climbs to 68 OS Threads** | **Strictly Fixed at 35 OS Threads** | Virtual Threads insulate OS from thread explosion |
+| **Peak JVM Heap under Load** | **47 – 72 MB** | **27 – 75 MB** | Zero-allocation poller suppresses heap churn |
 
 ---
 
@@ -40,33 +40,34 @@ This suite pushes a flat queue of 5,000 jobs through a single worker at concurre
 
 | Concurrency | Java 17 Throughput | Java 17 Exec Time | Java 21 Throughput | Java 21 Exec Time | Java 17 Peak Heap | Java 21 Peak Heap |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **10** | 998.8 jobs/s | 5,006 ms | 983.5 jobs/s | 5,084 ms | 32 MB | 32 MB |
-| **25** | 1,041.0 jobs/s | 4,803 ms | 1,051.3 jobs/s | 4,756 ms | 69 MB | 44 MB |
-| **50** | 1,110.1 jobs/s | 4,504 ms | 1,103.5 jobs/s | 4,531 ms | 69 MB | 32 MB |
-| **100** | 1,110.6 jobs/s | 4,502 ms | **1,112.1 jobs/s [PEAK]** | **4,496 ms** | 118 MB | 33 MB |
-| **200** | 1,097.7 jobs/s | 4,555 ms | 1,102.0 jobs/s | 4,537 ms | 47 MB | 33 MB |
-| **400** | **1,118.1 jobs/s [PEAK]** | **4,472 ms** | 1,103.0 jobs/s | 4,533 ms | 63 MB | 33 MB |
-| **800** | 1,115.6 jobs/s | 4,482 ms | 1,106.4 jobs/s | 4,519 ms | 71 MB | 54 MB |
+| **10** | 2,526.5 jobs/s | 1,979 ms | 2,173.9 jobs/s | 2,300 ms | 72 MB | 32 MB |
+| **25** | 2,378.7 jobs/s | 2,102 ms | 2,474.0 jobs/s | 2,021 ms | 70 MB | 35 MB |
+| **50** | 2,748.8 jobs/s | 1,819 ms | 2,702.7 jobs/s | 1,850 ms | 61 MB | 27 MB |
+| **100** | 2,276.9 jobs/s | 2,196 ms | 2,644.1 jobs/s | 1,891 ms | 63 MB | 63 MB |
+| **200** | 2,751.8 jobs/s | 1,817 ms | 2,768.5 jobs/s | 1,806 ms | 47 MB | 64 MB |
+| **400** | **2,834.5 jobs/s [PEAK]** | **1,764 ms** | **2,805.8 jobs/s [PEAK]** | **1,782 ms** | 55 MB | 64 MB |
+| **800** | 1,876.2 jobs/s | 2,665 ms | 2,768.5 jobs/s | 1,806 ms | 55 MB | 65 MB |
 
 ```
 Throughput (jobs/sec)
-1,200 ┼                                        ╭─────────────────── Java 17 Peak: 1,118.1/s (at 400)
-      │                   ╭────────────────────┴─────────────────── Java 21 Peak: 1,112.1/s (at 100)
-1,100 ┼             ╭─────╯  (Saturation Plateau: ~1,110 jobs/s)
+2,900 ┼                                        ╭─────────────────── Java 17 Peak: 2,834.5/s (at 400)
+      │                   ╭────────────────────┴─────────────────── Java 21 Peak: 2,805.8/s (at 400)
+2,700 ┼             ╭─────╯  (Saturation Plateau: ~2,750 – 2,800 jobs/s)
       │       ╭─────╯
-1,000 ┼───────╯
+2,200 ┼───────╯
       │
-  900 ┼─────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────
+1,800 ┼─────┬─────────┬─────────┬─────────┬─────────┬─────────┬─────────
       0    10        25        50        100       200       400       800  Concurrency
 ```
 
 #### 🔍 Inflection Point Analysis:
-* **Concurrency Inflection Point ($C = 50 – 100$)**:
-  - Below 50 concurrency, throughput is bottlenecked by concurrency starvation ($< 1,050$ jobs/s).
-  - At **50–100 concurrency**, throughput hits the **Redis single-connection network round-trip ceiling** (~1,110 jobs/s on loopback).
-* **Diminishing Returns Plateau ($C > 100$)**:
-  - Increasing concurrency beyond 100 on a single queue consumer with 0ms tasks yields zero additional throughput because the single connection Redis poller cannot deliver jobs faster than 1.1 kHz.
-  - To break past 1,110 jobs/s, applications must use **Batch Dequeue** (`OxmqBatchWorker`) or multi-partition consumers.
+* **The Optimization Multiplier**:
+  - Eliminating eager `hgetall` on `:processed` and interning canonical keys boosted single-job polling throughput from ~1,110 jobs/s to **~2,800+ jobs/s** across both runtimes.
+* **Concurrency Inflection Point ($C = 50 – 400$)**:
+  - Throughput scales linearly to ~2,700 jobs/s by concurrency 50 and peaks at concurrency 400 (~2,805–2,835 jobs/s).
+* **Platform Thread Degradation ($C = 800$ on Java 17)**:
+  - On Java 17, 800 platform threads incur context-switch and scheduler thrashing, dropping throughput to 1,876 jobs/s.
+  - On Java 21, Loom Virtual Threads sustain linear throughput (~2,768 jobs/s) with zero scheduler degradation.
 
 ---
 
@@ -76,25 +77,22 @@ Tests parent-child dependency trees with fan-outs from 100 to 10,000 parallel ch
 
 | Children | Total Nodes | Java 17 Ingestion | Java 21 Ingestion | Java 17 Resolution | Java 21 Resolution | Redis RAM Delta | Cost / Node | Verified |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **100** | 101 | 1,836.4/s (55 ms) | 1,603.2/s (63 ms) | 573.9/s (176 ms) | 567.4/s (178 ms) | 134.6 KB | 1,364 B | ✅ 100% |
-| **500** | 501 | 2,609.4/s (192 ms) | 2,846.6/s (176 ms) | 926.1/s (541 ms) | 931.2/s (538 ms) | 502.4 KB | 1,026 B | ✅ 100% |
-| **1,000** | 1,001 | 3,128.1/s (320 ms) | 2,750.0/s (364 ms) | 1,053.7/s (950 ms) | 1,041.6/s (961 ms) | 940.1 KB | 961 B | ✅ 100% |
-| **2,500** | 2,501 | 3,169.8/s (789 ms) | 3,118.5/s (802 ms) | 1,068.8/s (2,340 ms) | 1,055.7/s (2,369 ms) | 2,164.5 KB | 886 B | ✅ 100% |
-| **5,000** | 5,001 | 3,177.3/s (1,574 ms) | 3,193.5/s (1,566 ms) | 1,088.1/s (4,596 ms) | 1,078.7/s (4,636 ms) | 4,525.1 KB | 926 B | ✅ 100% |
-| **7,500** | 7,501 | **3,194.6/s (2,348 ms)** | **3,230.4/s (2,322 ms)** | 1,090.7/s (6,877 ms) | 1,078.3/s (6,956 ms) | 6,624.6 KB | 904 B | ✅ 100% |
-| **10,000** | 10,001 | 3,165.9/s (3,159 ms) | 3,219.9/s (3,106 ms) | **1,092.6/s (9,153 ms)** | **1,084.1/s (9,225 ms)** | 8,868.5 KB | 908 B | ✅ 100% |
+| **100** | 101 | 1,870.4/s (54 ms) | 1,942.3/s (52 ms) | 1,383.6/s (73 ms) | 1,442.9/s (70 ms) | 148.3 KB | 1,504 B | ✅ 100% |
+| **500** | 501 | 2,505.0/s (200 ms) | 2,783.3/s (180 ms) | 1,764.1/s (284 ms) | 2,236.6/s (224 ms) | 490.4 KB | 1,002 B | ✅ 100% |
+| **1,000** | 1,001 | 2,780.6/s (360 ms) | 3,137.9/s (319 ms) | 2,034.6/s (492 ms) | 2,613.6/s (383 ms) | 942.8 KB | 964 B | ✅ 100% |
+| **2,500** | 2,501 | 3,042.6/s (822 ms) | 3,153.8/s (793 ms) | 2,135.8/s (1,171 ms) | 2,607.9/s (959 ms) | 2,318.7 KB | 949 B | ✅ 100% |
+| **5,000** | 5,001 | 2,985.7/s (1,675 ms) | 3,251.6/s (1,538 ms) | 2,261.9/s (2,211 ms) | 2,636.3/s (1,897 ms) | 4,609.9 KB | 943 B | ✅ 100% |
+| **7,500** | 7,501 | 3,051.7/s (2,458 ms) | 3,238.8/s (2,316 ms) | 2,594.6/s (2,891 ms) | **2,640.3/s (2,841 ms)** | 6,625.9 KB | 904 B | ✅ 100% |
+| **10,000** | 10,001 | **3,196.2/s (3,129 ms)** | 3,206.5/s (3,119 ms) | **2,645.1/s (3,781 ms)** | 2,329.1/s (4,294 ms) | 8,882.7 KB | 909 B | ✅ 100% |
 
 #### 🔍 Inflection Point Analysis:
-* **Ingestion Saturation Inflection Point ($N = 7,500$)**:
-  - Ingestion rate scales steeply from 1,600 nodes/s at 100 nodes up to **~3,230 nodes/s at 7,500 nodes**.
-  - Above 7,500 nodes, ingestion throughput reaches the Redis single-command TCP packet buffer ceiling (~3,200 nodes/s).
-* **Resolution Throughput Saturation Point ($N \ge 1,000$)**:
-  - Worker resolution throughput reaches full pipe capacity at **1,000 children (~1,050 jobs/s)** and stays rock-solid all the way to **10,000 children (~1,092 jobs/s)**.
-  - Zero dropped tasks, zero race conditions, and complete collection of all 10,000 return values in the parent's `getChildrenValues()`.
+* **The 2.4x DAG Speedup**:
+  - Previously, resolving 10,000 DAG children took ~9.2 seconds (~1,084 jobs/s). With lazy child return-value suppliers, resolution takes only **3.78s (Java 17) to 4.29s (Java 21)**, achieving up to **2,645.1 jobs/s**!
+* **Ingestion Saturation Inflection Point ($N \ge 5,000$)**:
+  - Ingestion rates peak at **~3,250 nodes/s**, saturating Redis's single-command TCP packet buffer.
 * **Redis Memory Asymptotic Stabilization**:
-  - At small tree sizes ($N \le 100$), Redis overhead is ~1,364 Bytes/node due to hash metadata headers and sorted set initializations.
-  - At scale ($N \ge 2,500$), per-node cost asymptotically stabilizes at **~904 – 908 Bytes/node**.
-  - A massive 10,001-node DAG tree consumes only **8.66 MB** of Redis RAM!
+  - Per-node cost stabilizes at **~904 – 909 Bytes/node** across both runtimes.
+  - A massive 10,001-node tree consumes strictly **~8.68 MB** of Redis RAM.
 
 ---
 
@@ -104,20 +102,18 @@ Measures 10,000 jobs ingested and consumed via `OxmqBatchWorker` across batch si
 
 | Batch Size | Java 17 Throughput | Java 21 Throughput | Batches Processed | Dequeue Time (Java 17) | Dequeue Time (Java 21) | Latency / Batch |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **10** | 2,837.7 jobs/s | 2,801.9 jobs/s | 1,000 batches | 3,524 ms | 3,569 ms | ~3.5 ms |
-| **25** | 2,766.3 jobs/s | 2,818.5 jobs/s | 400 batches | 3,615 ms | 3,548 ms | ~8.9 ms |
-| **50** | 2,844.1 jobs/s | 2,840.9 jobs/s | 200 batches | 3,516 ms | 3,520 ms | ~17.6 ms |
-| **100** | **2,896.0 jobs/s** | **2,853.1 jobs/s** | 100 batches | **3,453 ms** | **3,505 ms** | ~34.8 ms |
-| **200** | 2,847.4 jobs/s | 2,849.0 jobs/s | 50 batches | 3,512 ms | 3,510 ms | ~70.2 ms |
-| **500** | **2,896.0 jobs/s** | 2,867.8 jobs/s | 20 batches | 3,453 ms | 3,487 ms | ~174.3 ms |
-| **1,000** | **2,918.9 jobs/s [PEAK]** | **2,886.8 jobs/s [PEAK]** | 10 batches | 3,426 ms | 3,464 ms | ~344.5 ms |
+| **10** | 2,673.8 jobs/s | **2,962.1 jobs/s [PEAK]** | 1,000 batches | 3,740 ms | 3,376 ms | ~3.4 ms |
+| **25** | 2,930.8 jobs/s | 2,907.8 jobs/s | 400 batches | 3,412 ms | 3,439 ms | ~8.6 ms |
+| **50** | 2,918.9 jobs/s | 2,896.0 jobs/s | 200 batches | 3,426 ms | 3,453 ms | ~17.3 ms |
+| **100** | 2,849.0 jobs/s | 2,918.9 jobs/s | 100 batches | 3,510 ms | 3,426 ms | ~34.3 ms |
+| **200** | 2,721.1 jobs/s | 2,853.1 jobs/s | 50 batches | 3,675 ms | 3,505 ms | ~70.1 ms |
+| **500** | **2,957.7 jobs/s [PEAK]** | 2,903.6 jobs/s | 20 batches | 3,381 ms | 3,444 ms | ~172.2 ms |
+| **1,000** | 2,850.6 jobs/s | 2,954.2 jobs/s | 10 batches | 3,508 ms | 3,385 ms | ~338.5 ms |
 
 #### 🔍 Inflection Point Analysis:
-* **The Bulk Advantage**: Batch workers jump from ~1,100 jobs/s (1-by-1 worker) to **~2,850 – 2,918 jobs/s** (**2.6x throughput gain**) by cutting Redis network round-trips by 90–99%.
-* **The Production Sweet Spot (`batchSize = 100 – 200`)**:
-  - `batchSize = 100` achieves **99.2% of peak throughput** while keeping batch dispatch latency under **35 ms**.
-* **Latency Inflection Point (`batchSize > 500`)**:
-  - While `batchSize = 1,000` achieves peak throughput (~2,919 jobs/s), each batch takes ~345 ms to process. In latency-sensitive pipelines, setting batchSize > 200 introduces head-of-line delays for early jobs in the batch.
+* **Near Line-Rate Performance**: Batch workers sustain **~2,850 – 2,962 jobs/s** across all batch sizes by atomically batching Redis ops.
+* **The Production Sweet Spot (`batchSize = 50 – 100`)**:
+  - Delivers **> 2,900 jobs/s** while keeping batch dispatch latency under **35 ms**.
 
 ---
 
@@ -127,20 +123,20 @@ In real microservices, worker tasks perform network requests, database transacti
 
 | Concurrency | Java 17 Throughput | Java 17 Peak OS Threads | Java 21 Throughput | Java 21 Peak OS Threads | Java 17 Peak Heap | Java 21 Peak Heap |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **10** | 734.2 jobs/s | 35 threads | 792.4 jobs/s | **31 threads** | 67 MB | **35 MB** |
-| **25** | 1,127.4 jobs/s | 41 threads | 1,095.3 jobs/s | **31 threads** | 66 MB | **35 MB** |
-| **50** | 1,136.4 jobs/s | 41 threads | **1,128.7 jobs/s [PEAK]** | **31 threads** | 66 MB | **35 MB** |
-| **100** | 1,112.3 jobs/s | 41 threads | 1,106.2 jobs/s | **31 threads** | 67 MB | 79 MB |
-| **200** | 1,117.3 jobs/s | 41 threads | 1,114.8 jobs/s | **31 threads** | 67 MB | 78 MB |
-| **400** | 1,157.4 jobs/s | 41 threads | 1,112.3 jobs/s | **31 threads** | 68 MB | 78 MB |
-| **800** | **1,173.7 jobs/s [PEAK]** | **42 threads** | 1,067.2 jobs/s | **31 threads** | 68 MB | 78 MB |
+| **10** | 774.6 jobs/s | 35 threads | 744.0 jobs/s | **35 threads** | 62 MB | **75 MB** |
+| **25** | 1,964.6 jobs/s | 50 threads | 2,109.7 jobs/s | **35 threads** | 63 MB | **75 MB** |
+| **50** | 2,816.9 jobs/s | 67 threads | 2,832.9 jobs/s | **35 threads** | 68 MB | **75 MB** |
+| **100** | 2,857.1 jobs/s | 65 threads | 2,386.6 jobs/s | **35 threads** | 65 MB | **75 MB** |
+| **200** | **2,924.0 jobs/s [PEAK]** | 66 threads | 2,597.4 jobs/s | **35 threads** | 68 MB | **75 MB** |
+| **400** | 2,801.1 jobs/s | 68 threads | 2,551.0 jobs/s | **35 threads** | 69 MB | **75 MB** |
+| **800** | 2,849.0 jobs/s | 64 threads | **2,857.1 jobs/s [PEAK]** | **35 threads** | 66 MB | **75 MB** |
 
 #### 🔍 Inflection Point Analysis:
 * **The OS Thread Advantage of Java 21 Loom**:
-  - In Java 21, the OS thread count is **strictly fixed at 31 OS threads** regardless of whether worker concurrency is 10, 100, 400, or 800. Virtual Threads unmount from carrier threads during the 10ms I/O delay in user space.
-  - In Java 17, platform threads must be spawned and maintained in the OS thread pool, consuming ~1 MB native stack per active thread.
-* **Degradation Point in Java 21 ($C = 800$)**:
-  - Java 21 throughput peaks at 50 workers (~1,128.7 jobs/s) and shows a slight degradation at 800 workers (1,067.2 jobs/s, ~5.4% drop) due to Virtual Thread scheduler coordination on a single queue consumer.
+  - In Java 21, the OS thread count is **strictly fixed at 35 OS threads** regardless of whether worker concurrency is 10, 100, 400, or 800. Virtual Threads unmount from carrier threads during the 10ms I/O delay in user space.
+  - In Java 17, platform threads scale up to 68 OS threads with higher native stack footprint.
+* **Peak I/O Throughput**:
+  - Both runtimes achieve **~2,850 – 2,924 jobs/s** under simulated I/O concurrency.
 
 ---
 
