@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Represents a distributed job unit in OxMQ.
@@ -39,6 +40,9 @@ public class Job<T> {
 
     @JsonIgnore
     private transient Consumer<String> logAppender;
+
+    @JsonIgnore
+    private transient Supplier<Map<String, Object>> childrenValuesSupplier;
 
     public Job() {}
 
@@ -190,11 +194,18 @@ public class Job<T> {
     }
 
     public Map<String, Object> getChildrenValues() {
+        if (childrenValues == null && childrenValuesSupplier != null) {
+            childrenValues = childrenValuesSupplier.get();
+        }
         return childrenValues;
     }
 
     public void setChildrenValues(Map<String, Object> childrenValues) {
         this.childrenValues = childrenValues;
+    }
+
+    public void setChildrenValuesSupplier(Supplier<Map<String, Object>> childrenValuesSupplier) {
+        this.childrenValuesSupplier = childrenValuesSupplier;
     }
 
     public void setProgressUpdater(BiConsumer<Integer, Object> progressUpdater) {

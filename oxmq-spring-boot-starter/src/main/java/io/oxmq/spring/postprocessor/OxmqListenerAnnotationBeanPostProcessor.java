@@ -54,6 +54,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
     private StringValueResolver valueResolver;
 
     private RedisClient redisClient;
+    private RedisConnectionManager connectionManager;
     private LuaScriptManager scriptManager;
     private JobSerializer serializer;
     private OxmqMetrics metrics;
@@ -198,6 +199,16 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 }
             }
 
+            if (this.connectionManager == null) {
+                try {
+                    this.connectionManager = applicationContext.getBean(RedisConnectionManager.class);
+                } catch (Exception ignored) {
+                    if (this.redisClient != null) {
+                        this.connectionManager = new RedisConnectionManager(redisClient);
+                    }
+                }
+            }
+
             if (this.properties == null) {
                 try {
                     this.properties = applicationContext.getBean(OxmqProperties.class);
@@ -228,7 +239,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         var builder = OxmqWorker.builder()
                 .prefix(prefix)
                 .queueName(queueName)
-                .connectionManager(new RedisConnectionManager(redisClient))
+                .connectionManager(connectionManager != null ? connectionManager : new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
                 .serializer(serializer)
                 .metrics(metrics)
@@ -295,7 +306,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         var builder = OxmqWorker.builder()
                 .prefix(prefix)
                 .queueName(queueName)
-                .connectionManager(new RedisConnectionManager(redisClient))
+                .connectionManager(connectionManager != null ? connectionManager : new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
                 .serializer(serializer)
                 .metrics(metrics)
@@ -423,7 +434,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 .prefix(prefix)
                 .queueName(queueName)
                 .batchSize(batchSize)
-                .connectionManager(new RedisConnectionManager(redisClient))
+                .connectionManager(connectionManager != null ? connectionManager : new RedisConnectionManager(redisClient))
                 .scriptManager(scriptManager)
                 .serializer(serializer)
                 .metrics(metrics)

@@ -127,10 +127,10 @@ public class OxmqWorker<T> implements Worker<T> {
                 }
             }
 
-            this.lockExtender = new LockExtender(connectionManager.createDedicatedBinaryConnection(), bullScripts,
+            this.lockExtender = new LockExtender(connectionManager.getBinaryConnection(), bullScripts,
                     queueKeys, workerId, lockDurationMs);
 
-            this.stalledJobSentinel = new StalledJobSentinel(connectionManager.createDedicatedBinaryConnection(),
+            this.stalledJobSentinel = new StalledJobSentinel(connectionManager.getBinaryConnection(),
                     bullScripts, queueKeys, metrics, lockDurationMs, maxStalledCount);
 
             this.pollerThread = new Thread(this::pollLoop, "oxmq-poller-" + queueName);
@@ -141,8 +141,8 @@ public class OxmqWorker<T> implements Worker<T> {
 
     private void pollLoop() {
         StatefulRedisConnection<String, byte[]> pollerConn = connectionManager.createDedicatedBinaryConnection();
-
-        while (running.get()) {
+        try {
+            while (running.get()) {
             try {
                 if (paused.get()) {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
@@ -205,10 +205,11 @@ public class OxmqWorker<T> implements Worker<T> {
                 }
             }
         }
-
+    } finally {
         try {
             pollerConn.close();
         } catch (Exception ignored) {}
+    }
     }
 
     private void executeJob(Job<T> job) {
@@ -253,10 +254,37 @@ public class OxmqWorker<T> implements Worker<T> {
                 serializedResult, "returnvalue", "completed", workerId, false, opts != null ? opts.toMap() : Map.of());
     }
 
+    private static final int MAX_FAILED_REASON_LENGTH = 8192;
+
+    private static final Map<String, String> CANONICAL_KEYS = Map.ofEntries(
+        Map.entry("name", "name"),
+        Map.entry("data", "data"),
+        Map.entry("opts", "opts"),
+        Map.entry("timestamp", "timestamp"),
+        Map.entry("delay", "delay"),
+        Map.entry("priority", "priority"),
+        Map.entry("attemptsMade", "attemptsMade"),
+        Map.entry("attemptsStarted", "attemptsStarted"),
+        Map.entry("processedOn", "processedOn"),
+        Map.entry("finishedOn", "finishedOn"),
+        Map.entry("returnvalue", "returnvalue"),
+        Map.entry("failedReason", "failedReason"),
+        Map.entry("parentKey", "parentKey"),
+        Map.entry("parent", "parent"),
+        Map.entry("progress", "progress"),
+        Map.entry("rjk", "rjk"),
+        Map.entry("deid", "deid"),
+        Map.entry("pb", "pb"),
+        Map.entry("ats", "ats")
+    );
+
     private void failJob(Job<T> job, Throwable error, Duration duration) {
         StringWriter sw = new StringWriter();
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
+        if (stackTrace.length() > MAX_FAILED_REASON_LENGTH) {
+            stackTrace = stackTrace.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
+        }
 
         boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
                                   (error.getCause() instanceof UnrecoverableError);
@@ -315,26 +343,30 @@ public class OxmqWorker<T> implements Worker<T> {
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
 
-        try {
-            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-            Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
-            if (childValsRaw == null || childValsRaw.isEmpty()) {
-                childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
-            }
-            if (childValsRaw != null && !childValsRaw.isEmpty()) {
-                Map<String, Object> childVals = new HashMap<>();
-                for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
-                    try {
-                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
-                    } catch (Exception ex) {
-                        childVals.put(entry.getKey(), entry.getValue());
-                    }
+        // Memory optimization: lazily load children values only when requested by processor
+        job.setChildrenValuesSupplier(() -> {
+            try {
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+                if (childValsRaw == null || childValsRaw.isEmpty()) {
+                    childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
                 }
-                job.setChildrenValues(childVals);
+                if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                    Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
+                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                        try {
+                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                        } catch (Exception ex) {
+                            childVals.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    return childVals;
+                }
+            } catch (Exception e) {
+                log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
             }
-        } catch (Exception e) {
-            log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
-        }
+            return null;
+        });
 
         job.setProgressUpdater((percentage, payload) -> {
             try {
@@ -356,14 +388,17 @@ public class OxmqWorker<T> implements Worker<T> {
     }
 
     private Map<String, String> parseHashFields(List<?> flatList) {
-        Map<String, String> map = new HashMap<>();
-        if (flatList != null) {
-            for (int i = 0; i < flatList.size() - 1; i += 2) {
-                String key = toUtf8String(flatList.get(i));
+        if (flatList == null || flatList.isEmpty()) {
+            return Map.of();
+        }
+        int expectedEntries = flatList.size() / 2;
+        Map<String, String> map = new HashMap<>(Math.max(8, (int) (expectedEntries / 0.75f) + 1));
+        for (int i = 0; i < flatList.size() - 1; i += 2) {
+            String key = toUtf8String(flatList.get(i));
+            if (key != null) {
+                String canonicalKey = CANONICAL_KEYS.getOrDefault(key, key);
                 String val = toUtf8String(flatList.get(i + 1));
-                if (key != null) {
-                    map.put(key, val);
-                }
+                map.put(canonicalKey, val);
             }
         }
         return map;

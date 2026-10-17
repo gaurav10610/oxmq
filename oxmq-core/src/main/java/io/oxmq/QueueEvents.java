@@ -124,7 +124,7 @@ public class QueueEvents implements Closeable {
         String lastId = "$";
         StatefulRedisConnection<String, String> conn = null;
         try {
-            conn = connectionManager.getCommandConnection();
+            conn = connectionManager.createDedicatedConnection();
             var sync = conn.sync();
             while (running && !Thread.currentThread().isInterrupted()) {
                 try {
@@ -153,6 +153,12 @@ public class QueueEvents implements Closeable {
         } catch (Exception e) {
             if (running) {
                 log.warn("QueueEvents stream loop error on {}", channelName, e);
+            }
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (Exception ignored) {}
             }
         }
     }

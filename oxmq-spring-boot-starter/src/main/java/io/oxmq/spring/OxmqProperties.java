@@ -33,9 +33,36 @@ public class OxmqProperties {
     private boolean virtualThreads = true;
 
     /**
+     * Maximum approximate number of events retained in the Redis stream (bull:<queue>:events).
+     * Defaults to BullMQ standard 10,000. Lower values (e.g. 1000) significantly reduce Redis RAM usage.
+     */
+    private int maxLenEvents = -1;
+
+    /**
+     * Default job retention options for all queues created via OxmqTemplate / OxmqQueue.
+     */
+    private DefaultJobOptions defaultJobOptions = new DefaultJobOptions();
+
+    /**
      * Whether Micrometer metrics are enabled.
      */
     private boolean metricsEnabled = true;
+
+    public int getMaxLenEvents() {
+        return maxLenEvents;
+    }
+
+    public void setMaxLenEvents(int maxLenEvents) {
+        this.maxLenEvents = maxLenEvents;
+    }
+
+    public DefaultJobOptions getDefaultJobOptions() {
+        return defaultJobOptions;
+    }
+
+    public void setDefaultJobOptions(DefaultJobOptions defaultJobOptions) {
+        this.defaultJobOptions = defaultJobOptions;
+    }
 
     public String getPrefix() {
         return prefix;
@@ -144,6 +171,64 @@ public class OxmqProperties {
 
         public void setPassword(String password) {
             this.password = password;
+        }
+    }
+
+    public static class DefaultJobOptions {
+        private Integer removeOnCompleteCount;
+        private Long removeOnCompleteAgeSeconds;
+        private Integer removeOnFailCount;
+        private Long removeOnFailAgeSeconds;
+
+        public Integer getRemoveOnCompleteCount() {
+            return removeOnCompleteCount;
+        }
+
+        public void setRemoveOnCompleteCount(Integer removeOnCompleteCount) {
+            this.removeOnCompleteCount = removeOnCompleteCount;
+        }
+
+        public Long getRemoveOnCompleteAgeSeconds() {
+            return removeOnCompleteAgeSeconds;
+        }
+
+        public void setRemoveOnCompleteAgeSeconds(Long removeOnCompleteAgeSeconds) {
+            this.removeOnCompleteAgeSeconds = removeOnCompleteAgeSeconds;
+        }
+
+        public Integer getRemoveOnFailCount() {
+            return removeOnFailCount;
+        }
+
+        public void setRemoveOnFailCount(Integer removeOnFailCount) {
+            this.removeOnFailCount = removeOnFailCount;
+        }
+
+        public Long getRemoveOnFailAgeSeconds() {
+            return removeOnFailAgeSeconds;
+        }
+
+        public void setRemoveOnFailAgeSeconds(Long removeOnFailAgeSeconds) {
+            this.removeOnFailAgeSeconds = removeOnFailAgeSeconds;
+        }
+
+        public io.oxmq.model.JobOptions toJobOptions() {
+            if (removeOnCompleteCount == null && removeOnCompleteAgeSeconds == null
+                    && removeOnFailCount == null && removeOnFailAgeSeconds == null) {
+                return null;
+            }
+            io.oxmq.model.JobOptions.Builder b = io.oxmq.model.JobOptions.builder();
+            if (removeOnCompleteCount != null || removeOnCompleteAgeSeconds != null) {
+                int count = removeOnCompleteCount != null ? removeOnCompleteCount : 0;
+                long age = removeOnCompleteAgeSeconds != null ? removeOnCompleteAgeSeconds : 0;
+                b.removeOnComplete(io.oxmq.model.KeepJobs.of(count, java.time.Duration.ofSeconds(age)));
+            }
+            if (removeOnFailCount != null || removeOnFailAgeSeconds != null) {
+                int count = removeOnFailCount != null ? removeOnFailCount : 0;
+                long age = removeOnFailAgeSeconds != null ? removeOnFailAgeSeconds : 0;
+                b.removeOnFail(io.oxmq.model.KeepJobs.of(count, java.time.Duration.ofSeconds(age)));
+            }
+            return b.build();
         }
     }
 }
