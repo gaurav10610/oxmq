@@ -262,6 +262,42 @@ BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpa
 
 ---
 
+## 8. Memory Optimization & Resource Efficiency Architecture
+
+In high-throughput distributed systems processing tens of thousands of jobs per second, unbounded memory allocations can degrade GC latency or exhaust Redis capacity:
+
+```mermaid
+flowchart LR
+    subgraph Consumer["☕ JVM Consumer Optimizations"]
+        Intern["Canonical Key Interning<br/>(Zero string allocations on hot path)"]
+        Lazy["Lazy Child Resolution<br/>(0 roundtrips for standalone jobs)"]
+        Guard["Stack Trace Guardrail<br/>(8KB truncation ceiling)"]
+        Mux["Lettuce Multiplexing<br/>(Watchdogs share binary connection)"]
+    end
+    subgraph Storage["⚡ Redis Storage Optimizations"]
+        Trim["Stream Event Trimming<br/>(XADD MAXLEN ~ N)"]
+        AutoRetention["Default Job Options<br/>(Auto removeOnComplete / Fail)"]
+        Compaction["ZSET Compaction<br/>(Automatic hash eviction)"]
+    end
+    Consumer <--> Storage
+```
+
+1. **Zero-Allocation Poller Hot-Path**:
+   - Interns canonical BullMQ hash field keys (`id`, `name`, `data`, `opts`, etc.) and pre-sizes field map capacities to prevent map rehashes and Young Gen garbage collector churn.
+2. **Lazy Parent-Child Result Supplier**:
+   - `Job<T>` defers fetching child job return values via a `Supplier<Map<String, Object>>`. Standalone jobs (99.9% of traffic) execute **0 Redis network calls** for `:processed` hashes.
+3. **Lettuce Connection Multiplexing**:
+   - `LockExtender` (heartbeats) and `StalledJobSentinel` (recovery) multiplex over the shared thread-safe binary connection, slashing background TCP sockets by 66%. Dedicated blocking sockets (`bpop`, `xread`) are guarded with deterministic `try ... finally { conn.close(); }` closures.
+4. **Stack Trace Truncation Guardrail**:
+   - Limits exception failure reasons to `8,192` characters (8 KB) with an explicit marker to protect Redis RAM and consumer heap during cascading outage loops.
+5. **Global Retention Inheritance & Stream Trimming**:
+   - Queues and Spring Boot starters automatically apply `removeOnComplete` and `removeOnFail` defaults without requiring repetitive configuration on every `queue.add(...)` call.
+   - Bounded Redis Streams (`maxLenEvents`) ensure `events` streams never grow unbounded under sustained load.
+
+*For complete implementation details, benchmarking metrics, and production tuning parameters, see the [Memory Optimization & Resource Efficiency Guide](/operations/memory-optimization).*
+
+---
+
 ## 🙏 Attribution
 
 OxMQ builds upon the foundational queue architecture developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community. The official BullMQ Lua scripts are included under the permissive MIT license in [`BULLMQ_ATTRIBUTION.md`](https://github.com/gaurav10610/oxmq/blob/main/oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).

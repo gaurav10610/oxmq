@@ -105,6 +105,9 @@ public class HlsPackagerWorker {
 }
 ```
 
+> [!TIP] Zero-Overhead Lazy Evaluation
+> `parentJob.getChildrenValues()` is backed by a deferred `Supplier`. Standalone jobs make **0 extra Redis roundtrips** and allocate zero hash map objects on the heap during job claiming. The `bull:<queue>:<jobId>:processed` hash is queried on-demand and cached only when `getChildrenValues()` is explicitly invoked.
+
 ---
 
 ## 🛡️ Failure Policies

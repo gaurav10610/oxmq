@@ -44,6 +44,9 @@ features:
   - icon: 🧹
     title: Schedulers & KeepJobs Pruning
     details: Cron recurring jobs, sliding-window rate limiters with group keys, in-flight DelayedException, and automated KeepJobs Redis memory pruning.
+  - icon: 🧠
+    title: Memory & Socket Efficiency
+    details: Zero-allocation poller hot-path, lazy DAG child evaluation, Lettuce connection multiplexing, bounded 8KB stack trace guardrails, and stream trimming (maxLenEvents).
 ---
 
 ## Quick Example

@@ -83,6 +83,7 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
 | **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
+| **🧠 Memory & Socket Optimization** | Canonical key interning, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
 | **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic worker lifecycle binding and `/actuator/health` indicator integration. |
 
 ---
@@ -529,21 +530,21 @@ OxMQ has been rigorously profiled on both **Java 17 LTS (Platform Threads)** and
 
 | Children | Total Nodes | Java 17 Ingestion | Java 21 Ingestion | Java 17 Resolution | Java 21 Resolution | Redis RAM Delta | Cost / Node | Verified |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **100** | 101 | 1,836.4/s (55 ms) | 1,603.2/s (63 ms) | 573.9/s (176 ms) | 567.4/s (178 ms) | 134.6 KB | 1,364 B | ✅ 100% |
-| **500** | 501 | 2,609.4/s (192 ms) | 2,846.6/s (176 ms) | 926.1/s (541 ms) | 931.2/s (538 ms) | 502.4 KB | 1,026 B | ✅ 100% |
-| **1,000** | 1,001 | 3,128.1/s (320 ms) | 2,750.0/s (364 ms) | 1,053.7/s (950 ms) | 1,041.6/s (961 ms) | 940.1 KB | 961 B | ✅ 100% |
-| **2,500** | 2,501 | 3,169.8/s (789 ms) | 3,118.5/s (802 ms) | 1,068.8/s (2,340 ms) | 1,055.7/s (2,369 ms) | 2.11 MB | 886 B | ✅ 100% |
-| **5,000** | 5,001 | 3,177.3/s (1,574 ms) | 3,193.5/s (1,566 ms) | 1,088.1/s (4,596 ms) | 1,078.7/s (4,636 ms) | 4.42 MB | 926 B | ✅ 100% |
-| **7,500** | 7,501 | **3,194.6/s (2,348 ms)** | **3,230.4/s (2,322 ms)** | 1,090.7/s (6,877 ms) | 1,078.3/s (6,956 ms) | 6.47 MB | 904 B | ✅ 100% |
-| **10,000** | 10,001 | 3,165.9/s (3,159 ms) | 3,219.9/s (3,106 ms) | **1,092.6/s (9,153 ms)** | **1,084.1/s (9,225 ms)** | **8.66 MB** | **908 B** | ✅ 100% |
+| **100** | 101 | 1,870.4/s (54 ms) | 1,942.3/s (52 ms) | 1,383.6/s (73 ms) | 1,442.9/s (70 ms) | 148.3 KB | 1,504 B | ✅ 100% |
+| **500** | 501 | 2,505.0/s (200 ms) | 2,783.3/s (180 ms) | 1,764.1/s (284 ms) | 2,236.6/s (224 ms) | 490.4 KB | 1,002 B | ✅ 100% |
+| **1,000** | 1,001 | 2,780.6/s (360 ms) | 3,137.9/s (319 ms) | 2,034.6/s (492 ms) | 2,613.6/s (383 ms) | 942.8 KB | 964 B | ✅ 100% |
+| **2,500** | 2,501 | 3,042.6/s (822 ms) | 3,153.8/s (793 ms) | 2,135.8/s (1,171 ms) | 2,607.9/s (959 ms) | 2.31 MB | 949 B | ✅ 100% |
+| **5,000** | 5,001 | 2,985.7/s (1,675 ms) | 3,251.6/s (1,538 ms) | 2,261.9/s (2,211 ms) | 2,636.3/s (1,897 ms) | 4.61 MB | 943 B | ✅ 100% |
+| **7,500** | 7,501 | 3,051.7/s (2,458 ms) | 3,238.8/s (2,316 ms) | 2,594.6/s (2,891 ms) | **2,640.3/s (2,841 ms)** | 6.63 MB | 904 B | ✅ 100% |
+| **10,000** | 10,001 | **3,196.2/s (3,129 ms)** | 3,206.5/s (3,119 ms) | **2,645.1/s (3,781 ms)** | 2,329.1/s (4,294 ms) | **8.88 MB** | **909 B** | ✅ 100% |
 
 ### 🚀 Peak Throughput & Inflection Points Summary
 
-* **Pure Engine Core Peak**: **1,118.1 jobs/s** (Java 17 @ 400 concurrency) / **1,112.1 jobs/s** (Java 21 @ 100 concurrency). Concurrency inflection point sits at $C=50-100$; beyond 100, single-connection Redis polling plateaus at ~1,110 jobs/s.
-* **Batch Dequeue Peak (`OxmqBatchWorker`)**: **2,918.9 jobs/s** (Java 17) / **2,886.8 jobs/s** (Java 21) — a **2.6x throughput multiplier** over single-job workers. Production sweet spot is `batchSize = 100` (2,853 – 2,896 jobs/s at <35 ms latency).
-* **Project Loom Concurrency Isolation (10ms Simulated I/O)**: Under blocking I/O across 800 concurrent workers, Java 21 OS thread count stays **strictly fixed at 31 threads** (Virtual Threads unmount in user space) vs Java 17 spawning up to 42 OS threads with higher native stack footprint.
-* **10,000-Node DAG Trees**: 10,001 total nodes ingested in **3.1 seconds** (~3,220 nodes/s) and fully executed/resolved in **9.1 seconds** (~1,092 jobs/s) with 100% atomic parent resolution and child return value propagation into `parentJob.getChildrenValues()`.
-* **Redis Footprint Stabilization**: Costs **~672 Bytes** per flat job and stabilizes at **~908 Bytes** per DAG tree node at scale ($\ge 2,500$ nodes).
+* **Pure Engine Core Peak**: **2,834.5 jobs/s** (Java 17 @ 400 concurrency) / **2,805.8 jobs/s** (Java 21 @ 400 concurrency). Eliminating eager `:processed` queries and interning canonical keys vaulted polling throughput from ~1,110 jobs/s to **~2,800+ jobs/s (~2.5x gain)**.
+* **Massive DAG Resolution Leap**: 10,001 nodes resolved in **3.78 seconds** (Java 17 @ 2,645.1 jobs/s) and **4.29 seconds** (Java 21 @ 2,329.1 jobs/s) — a **2.4x speedup** over pre-optimization baselines with 100% verification and lazy child values supplier.
+* **Batch Dequeue Peak (`OxmqBatchWorker`)**: **2,957.7 jobs/s** (Java 17) / **2,962.1 jobs/s** (Java 21) across bulk batches with amortized Redis I/O.
+* **Project Loom Concurrency Isolation (10ms Simulated I/O)**: Under blocking I/O across 800 concurrent workers, Java 21 OS thread count stays **strictly fixed at 35 threads** (Virtual Threads unmount in user space) vs Java 17 scaling to 68 OS threads.
+* **Redis Footprint Stabilization**: Costs **~672 Bytes** per flat job and stabilizes at **~909 Bytes** per DAG tree node at scale ($\ge 2,500$ nodes), consuming just **~8.88 MB** for a 10,001-node workflow tree.
 
 ### 💡 Production Sizing & Capacity Matrix
 
@@ -569,6 +570,7 @@ Explore our comprehensive technical guides in [`docs/`](docs/):
 * 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
 * 🏢 **[Context Isolation & Namespacing Guide](docs/guide/namespacing.md)**: Deep dive on shared Redis multi-tenancy, service-level auto-inheritance, and Redis Cluster hash-tags.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
+* 🧠 **[Memory Optimization & Tuning Guide](docs/operations/memory-optimization.md)**: Zero-allocation poller hot-path, Lettuce connection multiplexing, lazy DAG child evaluation, stream trimming (`maxLenEvents`), and Redis memory compaction.
 * ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ (Java 21 Loom) and BullMQ (Node.js).
 * 🎮 **[CloudBridge Showcase](oxmq-examples/cloudbridge/README.md)**: Real-world multi-cloud backup microservice with live Web UI and DAG execution.
 

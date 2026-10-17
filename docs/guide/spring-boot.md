@@ -93,6 +93,14 @@ oxmq:
   default-concurrency: 20           # Default worker concurrency
   virtual-threads: true             # Enable Java 21 Loom Virtual Threads (falls back to platform threads on Java 17)
   metrics-enabled: true             # Expose Micrometer meters
+  max-len-events: 10000            # Bounds events stream key via approximate trimming
+  default-job-options:             # Service-wide Redis memory retention policies
+    remove-on-complete:
+      count: 1000                  # Keep latest 1,000 completed jobs
+      age-seconds: 86400           # Evict completed jobs older than 24h
+    remove-on-fail:
+      count: 5000                  # Keep last 5,000 failed jobs for debugging
+      age-seconds: 604800          # Evict failed jobs older than 7 days
 
 app:
   queues:

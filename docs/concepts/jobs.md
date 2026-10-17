@@ -20,9 +20,10 @@ In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 | `attemptsMade`| `int` | Number of times the job has finished an execution attempt. |
 | `attemptsStarted`| `int` | Number of times a worker has picked up the job to start executing. |
 | `returnvalue` | `JSON String` | Value returned by the worker upon successful completion. |
-| `failedReason`| `String` | Error message or exception description if the job failed. |
-| `stacktrace` | `JSON Array` | Full Java exception stack trace for debugging. |
+| `failedReason`| `String` | Error message if the job failed (automatically bounded to 8 KB to safeguard Redis and JVM heap). |
+| `stacktrace` | `JSON Array` | Stack trace of exception (bounded to 8 KB with truncation marker to prevent OOM). |
 | `progress` | `Number / JSON` | Real-time execution progress (e.g. `0` to `100`). |
+| `childrenValues` | `Map<String, Object>` | Return values of completed child DAG tasks (lazily evaluated on-demand; 0 network calls for standard jobs). |
 
 ---
 

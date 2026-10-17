@@ -15,6 +15,11 @@ OxmqQueue<OrderData> queue = OxmqQueue.<OrderData>builder()
         .name("orders")
         .redisUri("redis://localhost:6379")
         .payloadClass(OrderData.class)
+        .defaultJobOptions(JobOptions.builder()
+                .removeOnComplete(KeepJobs.count(1000))       // Auto-inherited retention policy
+                .removeOnFail(KeepJobs.age(Duration.ofDays(7)))
+                .build())
+        .maxLenEvents(10000)                                  // Stream event trimming threshold
         .build();
 ```
 

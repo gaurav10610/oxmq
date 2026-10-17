@@ -93,3 +93,12 @@ public class EventNotificationService {
 ## 🧵 Concurrency & Non-Blocking Dispatch
 
 Every incoming stream event is dispatched onto an independent **Java 21 Virtual Thread** (with automatic fallback to platform thread pools on Java 17), ensuring slow event handlers (such as sending WebSockets notifications or updating UI dashboards) never block the stream reader thread.
+
+---
+
+## 🧠 Stream Trimming & Connection Lifecycle
+
+- **Approximate Stream Trimming (`maxLenEvents`)**: To prevent Redis memory exhaustion, stream emissions are capped using Redis approximate trimming (`XADD ... MAXLEN ~ 10000`). This keeps event history bounded to recent events with near $O(1)$ write efficiency.
+- **Dedicated Poller Socket Isolation**: Because `xread(block(...))` holds a blocking network connection awaiting new events, `QueueEvents` isolates the blocking poller onto a dedicated connection with guaranteed `try ... finally { conn.close(); }` cleanup upon `.close()`.
+
+*For complete operational tuning, see the [Memory Optimization & Resource Efficiency Guide](/operations/memory-optimization).*
