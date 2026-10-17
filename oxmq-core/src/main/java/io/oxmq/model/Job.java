@@ -288,14 +288,17 @@ public class Job<T> {
     }
 
     public String getCancelReason() {
-        return cancelReason;
+        if (cancelReason != null) {
+            return cancelReason;
+        }
+        return cancellationToken != null ? cancellationToken.getReason() : null;
     }
 
     public void setCancelled(boolean cancelled, String cancelReason) {
         this.cancelled = cancelled;
         this.cancelReason = cancelReason;
-        if (cancelled && cancellationToken != null) {
-            cancellationToken.cancel(cancelReason);
+        if (cancelled) {
+            getCancellationToken().cancel(cancelReason);
         }
     }
 
