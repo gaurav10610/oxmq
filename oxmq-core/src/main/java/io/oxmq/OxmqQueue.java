@@ -42,16 +42,11 @@ public class OxmqQueue<T> implements Queue<T> {
     private final Class<T> payloadClass;
     private final io.oxmq.backend.QueueBackend backend;
 
-    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
-                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
-        this(name, connectionManager, scriptManager, serializer, metrics, payloadClass, null);
-    }
-
-    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+    public OxmqQueue(String prefix, String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
                      JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
         this.name = Objects.requireNonNull(name, "Queue name must not be null");
-        this.prefix = "bull:" + name;
-        this.queueKeys = new QueueKeys("bull", name);
+        this.queueKeys = new QueueKeys(prefix, name);
+        this.prefix = this.queueKeys.getQualifiedName();
         this.connectionManager = connectionManager;
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
@@ -61,6 +56,16 @@ public class OxmqQueue<T> implements Queue<T> {
         this.backend = backend != null ? backend : new io.oxmq.backend.RedisQueueBackend(this.queueKeys, this.connectionManager, this.scriptManager, this.bullScripts);
 
         registerGauges();
+    }
+
+    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass) {
+        this(null, name, connectionManager, scriptManager, serializer, metrics, payloadClass, null);
+    }
+
+    public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
+        this(null, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
     }
 
     @Override
@@ -85,6 +90,10 @@ public class OxmqQueue<T> implements Queue<T> {
 
     public String getPrefix() {
         return prefix;
+    }
+
+    public String getNamespace() {
+        return queueKeys.getPrefix();
     }
 
     public QueueKeys getQueueKeys() {
@@ -511,6 +520,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
     public static class Builder<T> {
         private String name;
+        private String prefix;
         private RedisConnectionManager connectionManager;
         private RedisClient redisClient;
         private String redisUri;
@@ -522,6 +532,11 @@ public class OxmqQueue<T> implements Queue<T> {
 
         public Builder<T> name(String name) {
             this.name = name;
+            return this;
+        }
+
+        public Builder<T> prefix(String prefix) {
+            this.prefix = prefix;
             return this;
         }
 
@@ -575,7 +590,7 @@ public class OxmqQueue<T> implements Queue<T> {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
             }
-            return new OxmqQueue<>(name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
+            return new OxmqQueue<>(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
         }
     }
 }

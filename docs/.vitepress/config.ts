@@ -35,6 +35,7 @@ export default withMermaid(
             { text: 'What is OxMQ?', link: '/guide/what-is-oxmq' },
             { text: 'Quickstart (Core)', link: '/guide/quickstart' },
             { text: 'Spring Boot 3+ Starter', link: '/guide/spring-boot' },
+            { text: 'Context Isolation & Namespacing', link: '/guide/namespacing' },
             { text: 'Virtual Threads (Loom)', link: '/guide/virtual-threads' },
             { text: 'Configuration Reference', link: '/guide/configuration' },
             { text: 'Full Manual (Getting Started)', link: '/GETTING_STARTED' }

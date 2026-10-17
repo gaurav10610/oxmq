@@ -34,6 +34,7 @@ public class OxmqTemplate {
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final FlowProducer flowProducer;
+    private final String defaultPrefix;
 
     private final ConcurrentMap<String, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
 
@@ -43,23 +44,46 @@ public class OxmqTemplate {
                         JobSerializer serializer,
                         OxmqMetrics metrics,
                         FlowProducer flowProducer) {
+        this(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, null);
+    }
+
+    public OxmqTemplate(RedisClient redisClient,
+                        RedisConnectionManager connectionManager,
+                        LuaScriptManager scriptManager,
+                        JobSerializer serializer,
+                        OxmqMetrics metrics,
+                        FlowProducer flowProducer,
+                        String defaultPrefix) {
         this.redisClient = Objects.requireNonNull(redisClient, "redisClient must not be null");
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = Objects.requireNonNull(scriptManager, "scriptManager must not be null");
         this.serializer = Objects.requireNonNull(serializer, "serializer must not be null");
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.flowProducer = flowProducer;
+        this.defaultPrefix = defaultPrefix != null && !defaultPrefix.isBlank() ? defaultPrefix.trim() : null;
     }
 
     /**
-     * Retrieves or creates a typed {@link OxmqQueue} instance for the given queue name.
+     * Retrieves or creates a typed {@link OxmqQueue} instance for the given queue name,
+     * using the default service-level namespace.
+     */
+    public <T> OxmqQueue<T> getQueue(String queueName, Class<T> payloadClass) {
+        return getQueue(this.defaultPrefix, queueName, payloadClass);
+    }
+
+    /**
+     * Retrieves or creates a typed {@link OxmqQueue} instance for the given queue name
+     * within a specific namespace prefix.
      */
     @SuppressWarnings("unchecked")
-    public <T> OxmqQueue<T> getQueue(String queueName, Class<T> payloadClass) {
+    public <T> OxmqQueue<T> getQueue(String prefix, String queueName, Class<T> payloadClass) {
         Objects.requireNonNull(queueName, "queueName must not be null");
-        return (OxmqQueue<T>) queueCache.computeIfAbsent(queueName, name ->
+        String effectivePrefix = prefix != null && !prefix.isBlank() ? prefix.trim() : this.defaultPrefix;
+        String cacheKey = (effectivePrefix != null ? effectivePrefix : "bull") + ":" + queueName;
+        return (OxmqQueue<T>) queueCache.computeIfAbsent(cacheKey, k ->
                 OxmqQueue.<T>builder()
-                        .name(name)
+                        .prefix(effectivePrefix)
+                        .name(queueName)
                         .connectionManager(connectionManager)
                         .scriptManager(scriptManager)
                         .serializer(serializer)
@@ -70,10 +94,19 @@ public class OxmqTemplate {
     }
 
     /**
-     * Retrieves or creates an {@link OxmqQueue} instance with untyped (Object) payload.
+     * Retrieves or creates an {@link OxmqQueue} instance with untyped (Object) payload,
+     * using the default service-level namespace.
      */
     public OxmqQueue<Object> getQueue(String queueName) {
-        return getQueue(queueName, Object.class);
+        return getQueue(this.defaultPrefix, queueName, Object.class);
+    }
+
+    /**
+     * Retrieves or creates an {@link OxmqQueue} instance with untyped (Object) payload
+     * within a specific namespace prefix.
+     */
+    public OxmqQueue<Object> getQueue(String prefix, String queueName) {
+        return getQueue(prefix, queueName, Object.class);
     }
 
     /**
@@ -262,5 +295,84 @@ public class OxmqTemplate {
 
     public OxmqMetrics getMetrics() {
         return metrics;
+    }
+
+    public String getDefaultPrefix() {
+        return defaultPrefix;
+    }
+
+    /**
+     * Creates a scoped operations view targeting an external service's namespace for cross-service dispatching.
+     *
+     * @param targetPrefix the target service namespace prefix
+     * @return cross-service queue operations
+     */
+    public ServiceQueueOperations toService(String targetPrefix) {
+        return new ServiceQueueOperations(targetPrefix);
+    }
+
+    /**
+     * Fluent cross-service queue operations scoped to a specific target service namespace.
+     */
+    public class ServiceQueueOperations {
+        private final String targetPrefix;
+
+        public ServiceQueueOperations(String targetPrefix) {
+            this.targetPrefix = Objects.requireNonNull(targetPrefix, "targetPrefix must not be null");
+        }
+
+        public <T> OxmqQueue<T> getQueue(String queueName, Class<T> payloadClass) {
+            return OxmqTemplate.this.getQueue(targetPrefix, queueName, payloadClass);
+        }
+
+        public OxmqQueue<Object> getQueue(String queueName) {
+            return OxmqTemplate.this.getQueue(targetPrefix, queueName, Object.class);
+        }
+
+        @SuppressWarnings("unchecked")
+        public <T> Job<T> send(String queueName, String jobName, T payload, JobOptions options) {
+            Class<T> clazz = payload != null ? (Class<T>) payload.getClass() : (Class<T>) Object.class;
+            return getQueue(queueName, clazz).add(jobName, payload, options);
+        }
+
+        public <T> Job<T> send(String queueName, String jobName, T payload) {
+            return send(queueName, jobName, payload, JobOptions.defaults());
+        }
+
+        public <T> Job<T> send(String queueName, T payload, JobOptions options) {
+            return send(queueName, "default", payload, options);
+        }
+
+        public <T> Job<T> send(String queueName, T payload) {
+            return send(queueName, "default", payload, JobOptions.defaults());
+        }
+
+        public <T> CompletableFuture<Job<T>> sendAsync(String queueName, String jobName, T payload, JobOptions options) {
+            return CompletableFuture.supplyAsync(() -> send(queueName, jobName, payload, options));
+        }
+
+        public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload) {
+            return CompletableFuture.supplyAsync(() -> send(queueName, payload));
+        }
+
+        public <T> Job<T> add(String queueName, T data) {
+            return send(queueName, data);
+        }
+
+        public <T> Job<T> add(String queueName, String jobName, T data, JobOptions opts) {
+            return send(queueName, jobName, data, opts);
+        }
+
+        public <T> CompletableFuture<Job<T>> addAsync(String queueName, T data) {
+            return sendAsync(queueName, data);
+        }
+
+        public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T data, JobOptions opts) {
+            return sendAsync(queueName, jobName, data, opts);
+        }
+
+        public String getTargetPrefix() {
+            return targetPrefix;
+        }
     }
 }
