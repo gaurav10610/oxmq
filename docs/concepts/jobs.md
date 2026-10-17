@@ -54,10 +54,75 @@ JobOptions options = JobOptions.builder()
     // Multi-Tenant Partitioning
     .groupKey("tenant_acme")                 // Partition rate limit by tenant
     
-    // Housekeeping & TTL
-    .removeOnComplete(1000)                  // Keep last 1,000 completed jobs in Redis
-    .removeOnFail(5000)                      // Keep last 5,000 failed jobs in Redis
+    // Housekeeping & Redis Memory Pruning (KeepJobs)
+    .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2))) // Retain last 1,000 completed jobs or < 2 hours
+    .removeOnFail(KeepJobs.age(Duration.ofDays(7)))           // Purge failed jobs older than 7 days
+    
+    // DAG Workflow Policies
+    .failParentOnFailure(true)                 // If child fails, immediately fail parent DAG job
+    .removeDependencyOnFailure(false)          // If true, unlink failed child so parent can still run
     .build();
+```
+
+---
+
+## 🚦 Standardized Lifecycle States (`JobState`)
+
+OxMQ models the complete lifecycle of a job via the **`JobState`** enum:
+
+| State | BullMQ Wire Value | Description |
+| :--- | :--- | :--- |
+| `WAITING` | `"waiting"` | Job is queued in `wait` list, ready to be claimed by an available worker. |
+| `ACTIVE` | `"active"` | Worker has claimed the job and locked it; Virtual Thread is executing task. |
+| `DELAYED` | `"delayed"` | Scheduled for future execution via Redis sorted set timestamps. |
+| `WAITING_CHILDREN` | `"waiting-children"` | Parent DAG job waiting for dependent child tasks to complete. |
+| `COMPLETED` | `"completed"` | Successfully processed, storing its return value in Redis. |
+| `FAILED` | `"failed"` | Exhausted all retries or failed with a non-recoverable error. |
+| `PAUSED` | `"paused"` | Queue is paused; waiting jobs accumulate safely in Redis without dispatch. |
+
+### Inspecting Job State Programmatically:
+```java
+// Inspect state via Job instance
+JobState state = job.getState();
+
+// Or inspect via Queue by jobId
+JobState stateFromQueue = queue.getJobState(job.getId());
+
+// Ergonomic helper predicates:
+if (state.isCompleted()) {
+    log.info("Job successfully completed with output: {}", job.getReturnvalue());
+} else if (state.isFailed()) {
+    log.error("Job failed: {}", job.getFailedReason());
+} else if (state.isActive()) {
+    log.info("Job is currently in-flight on a worker");
+}
+```
+
+---
+
+## ⏱️ Request-Reply: Awaiting Completion (`waitUntilFinished`)
+
+A producer or controller can await the final result of a background job directly from the `Job` instance:
+
+### Synchronous Virtual-Thread Safe Waiting:
+```java
+Job<OrderPayload> job = queue.add("checkout", order);
+
+try {
+    // Blocks the calling thread (unmounts carrier thread on Java 21 Loom)
+    Object result = job.waitUntilFinished(queueEvents, Duration.ofSeconds(10));
+    System.out.println("Job completed with result: " + result);
+} catch (TimeoutException e) {
+    System.err.println("Timed out waiting for worker");
+} catch (ExecutionException e) {
+    System.err.println("Worker execution failed: " + e.getCause().getMessage());
+}
+```
+
+### Asynchronous / Non-Blocking:
+```java
+CompletableFuture<Object> future = job.waitUntilFinishedAsync(queueEvents, Duration.ofSeconds(30));
+future.thenAccept(result -> log.info("Async result received: {}", result));
 ```
 
 ---

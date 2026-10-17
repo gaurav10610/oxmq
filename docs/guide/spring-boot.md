@@ -165,14 +165,24 @@ public class OrderService {
     private OxmqTemplate oxmqTemplate;
 
     public void createOrder(OrderDto order) {
-        // Enqueue with automatic JSON serialization
-        Job<OrderDto> job = oxmqTemplate.send("orders-queue", "process-order", order);
+        // Enqueue with automatic JSON serialization and KeepJobs retention
+        Job<OrderDto> job = oxmqTemplate.send("orders-queue", "process-order", order,
+                JobOptions.builder()
+                        .attempts(3)
+                        .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2)))
+                        .build());
 
         // Async enqueuing
         oxmqTemplate.sendAsync("orders-queue", "process-order", order)
                 .thenAccept(j -> log.info("Enqueued: {}", j.getId()));
 
-        // Queue control
+        // Synchronous Request-Reply: Await worker result with timeout
+        Object syncResult = oxmqTemplate.waitUntilFinished("orders-queue", job.getId(), Duration.ofSeconds(10));
+
+        // Asynchronous Request-Reply: CompletableFuture non-blocking waiting
+        CompletableFuture<Object> asyncResult = oxmqTemplate.waitUntilFinishedAsync("orders-queue", job.getId(), Duration.ofSeconds(30));
+
+        // Queue lifecycle management
         oxmqTemplate.pause("orders-queue");
         oxmqTemplate.resume("orders-queue");
     }

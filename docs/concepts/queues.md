@@ -81,13 +81,29 @@ System.out.println("Enqueued " + createdJobs.size() + " jobs in a single pipelin
 
 ## 🔍 Inspecting Jobs & Queue Metrics
 
-### Query Current Job State (`getState`)
+### Query Current Job State (`getJobState`)
 
-Get the precise state of any job across all 8 Redis sets (`waiting`, `active`, `delayed`, `completed`, `failed`, `waiting-children`):
+Get the precise state of any job across all Redis states (`WAITING`, `ACTIVE`, `DELAYED`, `COMPLETED`, `FAILED`, `WAITING_CHILDREN`, `PAUSED`):
 
 ```java
-String state = queue.getState(job.getId());
+JobState state = queue.getJobState(job.getId());
 System.out.println("Current job state: " + state);
+
+if (state.isCompleted()) {
+    System.out.println("Job is already completed!");
+}
+```
+
+### Request-Reply on Queue (`waitUntilFinished`)
+
+Await job completion directly through the Queue API:
+
+```java
+// Synchronously wait for job completion with timeout
+Object result = queue.waitUntilFinished(job.getId(), queueEvents, Duration.ofSeconds(15));
+
+// Or non-blocking CompletableFuture
+CompletableFuture<Object> future = queue.waitUntilFinishedAsync(job.getId(), queueEvents, Duration.ofSeconds(15));
 ```
 
 ### Aggregate Queue Counts (`getJobCounts`)
