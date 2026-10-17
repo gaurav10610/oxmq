@@ -20,7 +20,7 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, native c
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
 </dependencies>
 ```
@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.3.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.4.0")
 }
 ```
 
@@ -49,7 +49,7 @@ dependencies {
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.3.0</version>
+        <version>1.4.0</version>
     </dependency>
 </dependencies>
 
@@ -69,7 +69,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-spring-boot-starter:1.3.0")
+    implementation("io.oxmq:oxmq-spring-boot-starter:1.4.0")
 }
 ```
 
@@ -248,7 +248,8 @@ Consume chunks of jobs atomically in a single Redis roundtrip:
 @Component
 public class AuditListener {
 
-    @OxmqBatchListener(queue = "${app.queues.audit}", batchSize = 100)
+    // Consume up to 100 jobs atomically with maxBatchBytes heap safeguard
+    @OxmqBatchListener(queue = "${app.queues.audit}", batchSize = 100, maxBatchBytes = 16 * 1024 * 1024)
     public void handleAuditLogs(List<Job<AuditLogDto>> batch) {
         log.info("Ingesting batch of {} records", batch.size());
         // Batch DB insert or bulk indexing
