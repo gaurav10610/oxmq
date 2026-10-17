@@ -16,15 +16,18 @@ Historically, Java developers building distributed task processing faced an awkw
 
 ---
 
-## ⚡ The Solution: OxMQ
+## ⚡ The Solution: OxMQ — The Java Alternative to BullMQ
 
-OxMQ resolves this by pairing **Redis atomic Lua scripts** with **Java 21 Project Loom Virtual Threads** and **Java 17 LTS compatibility**:
+OxMQ provides the modern Java ecosystem with the same ergonomic, battle-tested distributed queue architecture that made BullMQ the gold standard in Node.js, supercharged with **Java 21 Project Loom Virtual Threads**, enterprise **Context Isolation**, and **Java 17 LTS compatibility**:
 
-- **Native Loom Concurrency with Java 17 Fallback**: Every worker task executes on a lightweight Virtual Thread on Java 21+ (`Executors.newVirtualThreadPerTaskExecutor()`). Virtual threads unmount from carrier threads during blocking I/O, allowing single worker nodes to comfortably handle thousands of concurrent in-flight jobs. On Java 17 LTS, OxMQ automatically falls back to an optimized platform thread pool via `DispatcherExecutorFactory` without requiring any code changes.
-- **Official BullMQ v6 Lua Scripts**: Direct execution of official, battle-tested BullMQ v6 scripts with zero custom Lua for atomic job state transitions, locking, scheduling, rate limiting, and DAG dependency re-attachment.
-- **Full BullMQ Wire Parity**: Uses standard `{prefix}:{queue}:*` Redis keys and MessagePack serialization, allowing instant plug-and-play with **Bull-Board UI** and cross-language producers/workers.
+- **Native Loom Concurrency with Java 17 Fallback**: Every worker task executes on a lightweight Virtual Thread on Java 21+ (`Executors.newVirtualThreadPerTaskExecutor()`). Virtual threads unmount from carrier threads during blocking I/O (HTTP calls, DB queries, LLM inferences), allowing single worker nodes to comfortably handle thousands of concurrent in-flight jobs. On Java 17 LTS, OxMQ automatically falls back to a tuned platform thread pool via `DispatcherExecutorFactory` without requiring any code changes.
+- **100% BullMQ Wire & Script Parity**: Direct execution of 49 official, battle-tested BullMQ Lua scripts with zero custom Lua for atomic job state transitions, locking, scheduling, rate limiting, and DAG dependency re-attachment.
+- **Native Context Isolation & Multi-Tenancy**: Run dozens of microservices safely on a single shared Redis cluster without key collisions or cross-talk using service-level namespace auto-inheritance (`oxmq.namespace`).
+- **Synchronous & Reactive Request-Reply (`waitUntilFinished`)**: Await background task completion directly from REST controllers or workflow coordinators via Redis Streams and `isFinished-3.lua` without loop-polling.
+- **Automated Memory Retention (`KeepJobs`)**: Prevent Redis memory creep with structured retention policies (`count`, `ageSeconds`, `limit`) integrated atomically into `moveToFinished-14.lua`.
+- **Full Polyglot & Bull-Board Compatibility**: Uses standard `{prefix}:{queue}:*` Redis keys and MessagePack serialization, allowing instant plug-and-play with the open-source **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** and cross-language Node.js/Python producers and workers.
 - **Pluggable Storage Backend (`QueueBackend`)**: Clean abstraction mirroring BullMQ v6 architecture with `RedisQueueBackend` implementation.
-- **Spring Boot 3+ Integration**: Declarative `@OxmqListener` annotations, auto-configuration, and Spring Boot Actuator health checks.
+- **Spring Boot 3+ Enterprise Integration**: Declarative `@OxmqListener` and `@OxmqBatchListener` annotations, multi-event `@OxmqHandler` routing, auto-configuration, and Spring Boot Actuator health checks.
 
 ---
 

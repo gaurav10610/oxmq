@@ -130,7 +130,7 @@ public class OrderProducer {
                 .payloadClass(OrderInvoice.class)
                 .build();
 
-        // Enqueue with 5s delay, 3 retry attempts, and exponential backoff
+        // Enqueue with 5s delay, 3 retry attempts, exponential backoff, and KeepJobs memory pruning
         Job<OrderInvoice> job = queue.add(
                 "generate-pdf",
                 new OrderInvoice("ord_101", "alice@example.com", 149.50),
@@ -138,6 +138,7 @@ public class OrderProducer {
                         .delay(Duration.ofSeconds(5))
                         .attempts(3)
                         .exponentialBackoff(Duration.ofSeconds(1), Duration.ofSeconds(30))
+                        .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2)))
                         .build()
         );
 

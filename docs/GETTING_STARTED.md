@@ -176,7 +176,7 @@ public class InvoiceProducer {
                 .payloadClass(OrderInvoice.class)
                 .build();
 
-        // 3. Enqueue with 5-second delay, 3 retries, and exponential backoff
+        // 3. Enqueue with 5-second delay, 3 retries, exponential backoff, and KeepJobs memory pruning
         Job<OrderInvoice> job = queue.add(
                 "generate-pdf",
                 new OrderInvoice("ord_9876", "customer@example.com", 249.99),
@@ -184,6 +184,8 @@ public class InvoiceProducer {
                         .delay(Duration.ofSeconds(5))
                         .attempts(3)
                         .exponentialBackoff(Duration.ofSeconds(1), Duration.ofSeconds(30))
+                        .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2)))
+                        .removeOnFail(KeepJobs.age(Duration.ofDays(7)))
                         .build()
         );
 
@@ -200,14 +202,35 @@ public class InvoiceProducer {
 | **Retries** | `.attempts(3)` | Maximum number of retry attempts. |
 | **Exponential Backoff** | `.exponentialBackoff(initial, max)` | Doubles delay per retry attempt up to max. |
 | **Fixed Backoff** | `.fixedBackoff(Duration.ofSeconds(5))` | Constant delay between retries. |
-| **Custom Job ID** | `.jobId("idempotent-order-123")` | Deduplication window to avoid duplicate execution. |
+| **Custom Job ID** | `.jobId("idempotent-order-123")` | Deduplication key to avoid duplicate execution. |
 | **LIFO** | `.lifo(true)` | Last-in, first-out execution priority. |
 | **Priority** | `.priority(1)` | Lower integer = higher priority dispatch. |
-| **Cleanup** | `.removeOnComplete(true)` | Automatically delete job hash upon success. |
+| **Memory Pruning** | `.removeOnComplete(KeepJobs.of(1000, age))` | Structured Redis memory retention policy. |
+| **Failure Policies** | `.failParentOnFailure(true)` | Immediately fail parent DAG workflow if child fails. |
 
 ---
 
-## ⚡ 5. Consuming Jobs with Virtual Threads
+## ⏱️ 5. Request-Reply: Awaiting Completion (`waitUntilFinished`)
+
+To turn an asynchronous background job into a synchronous or reactive request-reply call (e.g. inside a REST API):
+
+```java
+// Synchronous (Virtual-Thread Safe on Java 21)
+try {
+    Object result = job.waitUntilFinished(queueEvents, Duration.ofSeconds(15));
+    System.out.println("Computation output: " + result);
+} catch (TimeoutException e) {
+    System.err.println("Timed out waiting for worker");
+}
+
+// Or Asynchronous / Reactive (CompletableFuture)
+CompletableFuture<Object> future = job.waitUntilFinishedAsync(queueEvents, Duration.ofSeconds(30));
+future.thenAccept(output -> System.out.println("Async result: " + output));
+```
+
+---
+
+## ⚡ 6. Consuming Jobs with Virtual Threads
 
 Because OxMQ runs natively on **Java 21 Project Loom (Virtual Threads)** (with automatic platform thread pool fallback on Java 17 LTS), you can configure high concurrency without exhausting operating system carrier threads.
 
@@ -275,8 +298,11 @@ FlowJob<VideoAssembly> parentJob = FlowJob.of(
         .addChild(child1)
         .addChild(child2);
 
-// 3. Atomically enqueue DAG into Redis
+// 3. Atomically enqueue single DAG into Redis
 String rootJobId = flowProducer.add(parentJob);
+
+// Or submit an atomic batch of multiple DAG workflow trees:
+List<String> rootJobIds = flowProducer.addBulk(List.of(parentJob1, parentJob2));
 ```
 
 When each child worker completes, BullMQ's Lua scripts record the child result into the parent's `childrenValues` hash and decrement its pending dependency count. When all children finish, the parent is atomically moved to `WAITING` with zero external schedulers!
@@ -328,15 +354,20 @@ worker.start();
 
 ## 🍃 9. Spring Boot 3 Integration (`oxmq-spring-boot-starter`)
 
-OxMQ provides zero-boilerplate autoconfiguration for Spring Boot 3:
+OxMQ provides zero-boilerplate autoconfiguration for Spring Boot 3 with native **Context Isolation**:
 
 ### `application.yml`
 ```yaml
+spring:
+  application:
+    name: order-service     # Automatically isolated under order-service:bull:* in shared Redis!
+
 oxmq:
+  namespace: order-service # Optional explicit override
   redis:
     uri: redis://localhost:6379
   default-concurrency: 50
-  virtual-threads: true
+  virtual-threads: true     # Virtual Threads on Java 21+ (platform threads on Java 17)
   metrics-enabled: true
 ```
 

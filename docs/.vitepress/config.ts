@@ -56,6 +56,7 @@ export default withMermaid(
           text: '💡 Patterns & Recipes',
           collapsed: false,
           items: [
+            { text: 'Request-Reply (waitUntilFinished)', link: '/patterns/request-reply' },
             { text: 'Rate Limiting & Group Keys', link: '/patterns/rate-limiting' },
             { text: 'Scheduling & Cron Jobs', link: '/patterns/scheduling-cron' },
             { text: 'Retries & Backoff Policies', link: '/patterns/retries-backoff' },
