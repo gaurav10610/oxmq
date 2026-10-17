@@ -19,7 +19,7 @@ import java.time.Duration;
 
 OxmqWorker<WebhookPayload> worker = OxmqWorker.<WebhookPayload>builder()
         .queueName("stripe-webhooks")
-        .jedisPool(jedisPool)
+        .redisUri("redis://localhost:6379")
         .rateLimit(RateLimit.builder()
                 .max(50)                         // Maximum 50 executions
                 .duration(Duration.ofSeconds(1)) // Within any 1-second rolling window

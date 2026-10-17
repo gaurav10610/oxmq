@@ -79,6 +79,23 @@ public class FlowProducer implements Closeable {
         return addNode(root, null, null);
     }
 
+    /**
+     * Atomically/sequentially adds multiple workflow DAG trees into Redis.
+     *
+     * @param roots List of root FlowJob trees
+     * @return List of generated root Job IDs
+     */
+    public java.util.List<String> addBulk(java.util.List<FlowJob<?>> roots) {
+        if (roots == null || roots.isEmpty()) {
+            return java.util.List.of();
+        }
+        java.util.List<String> parentIds = new java.util.ArrayList<>(roots.size());
+        for (FlowJob<?> root : roots) {
+            parentIds.add(add(root));
+        }
+        return parentIds;
+    }
+
     private String addNode(FlowJob<?> node, String parentKey, Map<String, Object> parentObj) {
         String queueName = node.getQueueName();
         String nodePrefix = node.getPrefix() != null && !node.getPrefix().isBlank() ? node.getPrefix() : defaultPrefix;

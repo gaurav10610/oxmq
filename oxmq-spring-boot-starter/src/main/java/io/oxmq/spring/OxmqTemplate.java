@@ -3,6 +3,7 @@ package io.oxmq.spring;
 import io.lettuce.core.RedisClient;
 import io.oxmq.FlowProducer;
 import io.oxmq.OxmqQueue;
+import io.oxmq.QueueEvents;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
@@ -281,6 +282,52 @@ public class OxmqTemplate {
         return flowProducer.add(flowTree);
     }
 
+    /**
+     * Adds multiple DAG flow trees in bulk.
+     *
+     * @param flowTrees the roots of the flow trees
+     * @return the generated parent Job IDs
+     */
+    public List<String> addFlows(List<FlowJob<?>> flowTrees) {
+        if (flowProducer == null) {
+            throw new IllegalStateException("FlowProducer is not available in OxmqTemplate");
+        }
+        return flowProducer.addBulk(flowTrees);
+    }
+
+    /**
+     * Waits for a job in the specified queue to finish and returns its result.
+     */
+    public Object waitUntilFinished(String queueName, String jobId, java.time.Duration timeout) throws Exception {
+        return getQueue(queueName).waitUntilFinished(jobId, timeout);
+    }
+
+    /**
+     * Asynchronously waits for a job in the specified queue to finish.
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync(String queueName, String jobId) {
+        return getQueue(queueName).waitUntilFinishedAsync(jobId);
+    }
+
+    /**
+     * Creates a new QueueEvents instance for listening to queue lifecycle events.
+     */
+    public QueueEvents createQueueEvents(String queueName) {
+        return createQueueEvents(this.defaultPrefix, queueName);
+    }
+
+    /**
+     * Creates a new QueueEvents instance for a specific namespace prefix and queue name.
+     */
+    public QueueEvents createQueueEvents(String prefix, String queueName) {
+        return QueueEvents.builder()
+                .prefix(prefix)
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .serializer(serializer)
+                .build();
+    }
+
     public RedisClient getRedisClient() {
         return redisClient;
     }
@@ -369,6 +416,14 @@ public class OxmqTemplate {
 
         public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T data, JobOptions opts) {
             return sendAsync(queueName, jobName, data, opts);
+        }
+
+        public Object waitUntilFinished(String queueName, String jobId, java.time.Duration timeout) throws Exception {
+            return getQueue(queueName).waitUntilFinished(jobId, timeout);
+        }
+
+        public CompletableFuture<Object> waitUntilFinishedAsync(String queueName, String jobId) {
+            return getQueue(queueName).waitUntilFinishedAsync(jobId);
         }
 
         public String getTargetPrefix() {

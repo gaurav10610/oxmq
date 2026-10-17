@@ -18,8 +18,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -207,6 +211,65 @@ public class QueueEvents implements Closeable {
     public QueueEvents on(String eventName, BiConsumer<String, Map<String, Object>> listener) {
         eventListeners.computeIfAbsent(eventName, k -> new CopyOnWriteArrayList<>()).add(listener);
         return this;
+    }
+
+    /**
+     * Unregisters an event listener.
+     */
+    public QueueEvents off(String eventName, BiConsumer<String, Map<String, Object>> listener) {
+        List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(eventName);
+        if (listeners != null) {
+            listeners.remove(listener);
+        }
+        return this;
+    }
+
+    /**
+     * Unregisters an event listener (alias for off).
+     */
+    public QueueEvents removeListener(String eventName, BiConsumer<String, Map<String, Object>> listener) {
+        return off(eventName, listener);
+    }
+
+    /**
+     * Waits until the specified job completes or fails, returning its result or throwing on failure.
+     */
+    public Object waitUntilFinished(String jobId, Duration timeout) throws ExecutionException, InterruptedException, TimeoutException {
+        return waitUntilFinishedAsync(jobId).get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Asynchronously waits until the specified job completes or fails.
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync(String jobId) {
+        if (!running) {
+            start();
+        }
+        CompletableFuture<Object> future = new CompletableFuture<>();
+        @SuppressWarnings("unchecked")
+        BiConsumer<String, Map<String, Object>>[] listenerRef = new BiConsumer[2];
+
+        listenerRef[0] = (jId, payload) -> {
+            if (Objects.equals(jobId, jId)) {
+                future.complete(payload.get("returnvalue"));
+            }
+        };
+        listenerRef[1] = (jId, payload) -> {
+            if (Objects.equals(jobId, jId)) {
+                String reason = (String) payload.get("failedReason");
+                future.completeExceptionally(new RuntimeException(reason != null ? reason : "Job " + jobId + " failed"));
+            }
+        };
+
+        on("completed", listenerRef[0]);
+        on("failed", listenerRef[1]);
+
+        future.whenComplete((res, err) -> {
+            off("completed", listenerRef[0]);
+            off("failed", listenerRef[1]);
+        });
+
+        return future;
     }
 
     /**

@@ -42,7 +42,7 @@ OxMQ allows configuring high concurrency without the risk of OS thread pool exha
 ```java
 OxmqWorker<OrderPayload> worker = OxmqWorker.<OrderPayload>builder()
         .queueName("orders")
-        .jedisPool(jedisPool)
+        .redisUri("redis://localhost:6379")
         .payloadClass(OrderPayload.class)
         .concurrency(100)           // Up to 100 concurrent jobs executed simultaneously
         .useVirtualThreads(true)    // Dispatched to lightweight Java 21 Loom threads (or platform threads on Java 17)

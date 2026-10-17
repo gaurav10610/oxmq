@@ -17,6 +17,8 @@ public class JobOptions {
     private BackoffStrategy backoff;
     private boolean removeOnComplete = false;
     private boolean removeOnFail = false;
+    private KeepJobs keepCompletedJobs;
+    private KeepJobs keepFailedJobs;
     private int priority = 0;
     private String parentKey;
     private boolean lifo = false;
@@ -78,6 +80,47 @@ public class JobOptions {
 
     public void setRemoveOnComplete(boolean removeOnComplete) {
         this.removeOnComplete = removeOnComplete;
+        if (removeOnComplete) {
+            this.keepCompletedJobs = KeepJobs.removeImmediately();
+        } else {
+            this.keepCompletedJobs = null;
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public KeepJobs getKeepCompletedJobs() {
+        return keepCompletedJobs;
+    }
+
+    public void setKeepCompletedJobs(KeepJobs keepCompletedJobs) {
+        this.keepCompletedJobs = keepCompletedJobs;
+        if (keepCompletedJobs != null && keepCompletedJobs.getCount() == 0 && keepCompletedJobs.getAgeSeconds() == 0) {
+            this.removeOnComplete = true;
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonSetter("removeOnComplete")
+    public void setRemoveOnCompleteJson(Object value) {
+        if (value instanceof Boolean b) {
+            setRemoveOnComplete(b);
+        } else if (value instanceof Number n) {
+            this.removeOnComplete = false;
+            this.keepCompletedJobs = KeepJobs.count(n.intValue());
+        } else if (value instanceof Map<?, ?> m) {
+            this.removeOnComplete = false;
+            int count = m.containsKey("count") ? ((Number) m.get("count")).intValue() : -1;
+            long age = m.containsKey("age") ? ((Number) m.get("age")).longValue() : 0;
+            int limit = m.containsKey("limit") ? ((Number) m.get("limit")).intValue() : 1000;
+            this.keepCompletedJobs = new KeepJobs(count, age, limit);
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("removeOnComplete")
+    public Object getRemoveOnCompleteJson() {
+        if (keepCompletedJobs != null && (keepCompletedJobs.getCount() > 0 || keepCompletedJobs.getAgeSeconds() > 0)) {
+            return keepCompletedJobs.toMap();
+        }
+        return removeOnComplete;
     }
 
     public boolean isRemoveOnFail() {
@@ -86,6 +129,47 @@ public class JobOptions {
 
     public void setRemoveOnFail(boolean removeOnFail) {
         this.removeOnFail = removeOnFail;
+        if (removeOnFail) {
+            this.keepFailedJobs = KeepJobs.removeImmediately();
+        } else {
+            this.keepFailedJobs = null;
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public KeepJobs getKeepFailedJobs() {
+        return keepFailedJobs;
+    }
+
+    public void setKeepFailedJobs(KeepJobs keepFailedJobs) {
+        this.keepFailedJobs = keepFailedJobs;
+        if (keepFailedJobs != null && keepFailedJobs.getCount() == 0 && keepFailedJobs.getAgeSeconds() == 0) {
+            this.removeOnFail = true;
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonSetter("removeOnFail")
+    public void setRemoveOnFailJson(Object value) {
+        if (value instanceof Boolean b) {
+            setRemoveOnFail(b);
+        } else if (value instanceof Number n) {
+            this.removeOnFail = false;
+            this.keepFailedJobs = KeepJobs.count(n.intValue());
+        } else if (value instanceof Map<?, ?> m) {
+            this.removeOnFail = false;
+            int count = m.containsKey("count") ? ((Number) m.get("count")).intValue() : -1;
+            long age = m.containsKey("age") ? ((Number) m.get("age")).longValue() : 0;
+            int limit = m.containsKey("limit") ? ((Number) m.get("limit")).intValue() : 1000;
+            this.keepFailedJobs = new KeepJobs(count, age, limit);
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonGetter("removeOnFail")
+    public Object getRemoveOnFailJson() {
+        if (keepFailedJobs != null && (keepFailedJobs.getCount() > 0 || keepFailedJobs.getAgeSeconds() > 0)) {
+            return keepFailedJobs.toMap();
+        }
+        return removeOnFail;
     }
 
     public int getPriority() {
@@ -189,8 +273,16 @@ public class JobOptions {
         if (jobId != null) map.put("jobId", jobId);
         map.put("delay", delayMs);
         map.put("attempts", attempts);
-        map.put("removeOnComplete", removeOnComplete);
-        map.put("removeOnFail", removeOnFail);
+        if (keepCompletedJobs != null && (keepCompletedJobs.getCount() > 0 || keepCompletedJobs.getAgeSeconds() > 0)) {
+            map.put("removeOnComplete", keepCompletedJobs.toMap());
+        } else {
+            map.put("removeOnComplete", removeOnComplete);
+        }
+        if (keepFailedJobs != null && (keepFailedJobs.getCount() > 0 || keepFailedJobs.getAgeSeconds() > 0)) {
+            map.put("removeOnFail", keepFailedJobs.toMap());
+        } else {
+            map.put("removeOnFail", removeOnFail);
+        }
         map.put("priority", priority);
         map.put("lifo", lifo);
         if (parentKey != null) map.put("parentKey", parentKey);
@@ -282,8 +374,30 @@ public class JobOptions {
             return this;
         }
 
+        public Builder removeOnComplete(int keepCount) {
+            options.setRemoveOnComplete(false);
+            options.setKeepCompletedJobs(KeepJobs.count(keepCount));
+            return this;
+        }
+
+        public Builder removeOnComplete(KeepJobs keepJobs) {
+            options.setKeepCompletedJobs(keepJobs);
+            return this;
+        }
+
         public Builder removeOnFail(boolean removeOnFail) {
             options.setRemoveOnFail(removeOnFail);
+            return this;
+        }
+
+        public Builder removeOnFail(int keepCount) {
+            options.setRemoveOnFail(false);
+            options.setKeepFailedJobs(KeepJobs.count(keepCount));
+            return this;
+        }
+
+        public Builder removeOnFail(KeepJobs keepJobs) {
+            options.setKeepFailedJobs(keepJobs);
             return this;
         }
 

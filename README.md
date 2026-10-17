@@ -76,8 +76,10 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances with dynamic `groupKey`. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling, `jobId` hashing, and `keepLastIfActive` buffer | Millisecond-accurate delayed job triggers and debounced deduplication windows with automated active buffer re-queueing. |
+| **⏳ Request-Reply Awaiting** | Synchronous & async job completion awaiting (`job.waitUntilFinished`) | Zero-race `isFinished-3.lua` checking allows REST/RPC gateways to await async worker output with microsecond-accurate timeout enforcement. |
+| **🗑️ Granular Retention Policy** | Auto-trimming completed and failed sets (`KeepJobs`) | Retain jobs by count (`removeOnComplete(500)`) or age (`KeepJobs.of(1000, 7_DAYS)`), or prune immediately (`removeOnComplete(true)`). |
 | **⏸️ Worker Postponement** | `DelayedException` with `skipAttempt: true` (`moveToDelayed-11.lua`) | Defer job execution without consuming attempt count or recording failure reasons. |
-| **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, and Redis Stream event streaming for real-time WebSocket UIs. |
+| **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, dynamic listener unregistration (`events.off`), and stream events. |
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
 | **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
@@ -306,12 +308,14 @@ OxmqQueue<EmailNotification> queue = OxmqQueue.<EmailNotification>builder()
     .redisUri("redis://localhost:6379")
     .build();
 
-// 3. Enqueue with 5s delay, 3 retries, and exponential backoff
-queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!", "Hello Alice!"),
+// 3. Enqueue with 5s delay, 3 retries, exponential backoff, and automatic Redis retention trimming
+Job<EmailNotification> job = queue.add("welcome-email", new EmailNotification("alice@example.com", "Welcome!", "Hello Alice!"),
     JobOptions.builder()
         .delay(Duration.ofSeconds(5))
         .attempts(3)
         .exponentialBackoff(Duration.ofSeconds(1))
+        .removeOnComplete(KeepJobs.count(500))               // Retain latest 500 completed jobs
+        .removeOnFail(KeepJobs.of(1000, Duration.ofDays(7))) // Retain failed jobs for up to 7 days
         .build());
 ```
 
@@ -336,6 +340,18 @@ OxmqWorker<EmailNotification> worker = OxmqWorker.<EmailNotification>builder()
     .build();
 
 worker.start();
+```
+
+### 3. Request-Reply: Await Job Completion (`waitUntilFinished`)
+
+```java
+// Synchronously or reactively await execution result with timeout enforcement:
+Object deliveryStatus = job.waitUntilFinished(queue.getQueueEvents(), Duration.ofSeconds(10));
+System.out.println("Job output: " + deliveryStatus); // "DELIVERED"
+
+// Fast state inspection
+JobState state = queue.getJobState(job.getId()); // COMPLETED
+boolean isDone = queue.isCompleted(job.getId());  // true
 ```
 
 ---

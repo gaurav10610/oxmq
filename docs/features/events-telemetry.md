@@ -4,39 +4,48 @@ OxMQ offers non-blocking real-time event streaming via Redis Streams and native 
 
 ---
 
-## 📡 Real-Time Queue Events (`OxmqQueueEvents`)
+## 📡 Real-Time Queue Events (`QueueEvents`)
 
-Listen to distributed queue events across all nodes without polling:
+Listen to distributed queue events across all nodes without polling via Redis Streams (`XREAD BLOCK`):
 
 ```java
 package com.example;
 
-import io.oxmq.events.OxmqQueueEvents;
-import redis.clients.jedis.JedisPool;
+import io.oxmq.QueueEvents;
+import java.time.Duration;
 
 public class QueueEventsExample {
-    public static void main(String[] args) {
-        JedisPool jedisPool = new JedisPool("localhost", 6379);
+    public static void main(String[] args) throws Exception {
+        QueueEvents events = QueueEvents.builder()
+                .queueName("order-invoices")
+                .redisUri("redis://localhost:6379")
+                .build()
+                .start();
 
-        OxmqQueueEvents events = new OxmqQueueEvents("order-invoices", jedisPool);
-
-        events.onActive(jobId -> {
-            System.out.println("⚡ Job claimed and active: " + jobId);
+        // 1. Reactive event callbacks
+        events.onWaiting(jobId -> {
+            System.out.println("⏳ Job queued: " + jobId);
         });
 
         events.onProgress((jobId, progress) -> {
-            System.out.printf("📈 Job %s progress updated: %s%%%n", jobId, progress);
+            System.out.printf("📈 Job %s progress: %s%%%n", jobId, progress);
         });
 
-        events.onCompleted((jobId, returnvalue) -> {
+        var completedListener = (java.util.function.BiConsumer<String, Object>) (jobId, returnvalue) -> {
             System.out.println("✅ Job completed: " + jobId + ", result: " + returnvalue);
-        });
+        };
+        events.onCompleted(completedListener);
 
         events.onFailed((jobId, failedReason) -> {
             System.err.println("❌ Job failed: " + jobId + ", reason: " + failedReason);
         });
 
-        events.start();
+        // 2. Unregister listener when no longer needed
+        events.off("completed", (jobId, payload) -> {});
+
+        // 3. Synchronously or reactively await job completion
+        Object result = events.waitUntilFinished("job-123", Duration.ofSeconds(10));
+        System.out.println("Finished with result: " + result);
     }
 }
 ```
@@ -50,7 +59,7 @@ Workers can report progress percentage or structured progress metadata in-flight
 ```java
 OxmqWorker<VideoPayload> worker = OxmqWorker.<VideoPayload>builder()
         .queueName("video-encoder")
-        .jedisPool(jedisPool)
+        .redisUri("redis://localhost:6379")
         .processor(job -> {
             for (int chunk = 1; chunk <= 10; chunk++) {
                 encodeChunk(chunk);

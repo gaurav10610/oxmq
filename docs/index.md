@@ -45,10 +45,9 @@ features:
 ::: code-group
 
 ```java [Standalone Producer]
-JedisPool pool = new JedisPool("localhost", 6379);
 OxmqQueue<OrderPayload> queue = OxmqQueue.<OrderPayload>builder()
         .name("orders")
-        .jedisPool(pool)
+        .redisUri("redis://localhost:6379")
         .payloadClass(OrderPayload.class)
         .build();
 

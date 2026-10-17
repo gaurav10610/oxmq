@@ -10,27 +10,28 @@ A **Queue** in OxMQ is the primary interface for creating, managing, and inspect
 
 ```java [Pure Java]
 import io.oxmq.OxmqQueue;
-import redis.clients.jedis.JedisPool;
-
-JedisPool jedisPool = new JedisPool("localhost", 6379);
 
 OxmqQueue<OrderData> queue = OxmqQueue.<OrderData>builder()
         .name("orders")
-        .jedisPool(jedisPool)
+        .redisUri("redis://localhost:6379")
         .payloadClass(OrderData.class)
         .build();
 ```
 
 ```java [Spring Boot Injection]
-import io.oxmq.Queue;
+import io.oxmq.spring.OxmqTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class OrderService {
 
-    // When oxmq-spring-boot-starter is used, you can inject the Queue directly
-    // or build it with the auto-configured RedisClient / JedisPool
+    @Autowired
+    private OxmqTemplate oxmqTemplate;
+
+    public void createOrder(OrderData order) {
+        oxmqTemplate.send("orders", order);
+    }
 }
 ```
 
