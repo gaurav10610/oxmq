@@ -27,45 +27,71 @@ public class FlowProducer implements Closeable {
     private final BullScripts bullScripts;
     private final JobSerializer serializer;
     private final String defaultPrefix;
+    private final String clusterTag;
+
+    public static FlowProducer forCluster(String clusterTag, String redisUri) {
+        return new FlowProducer(new RedisConnectionManager(redisUri), null, clusterTag);
+    }
+
+    public static FlowProducer forCluster(String clusterTag, RedisClient redisClient) {
+        return new FlowProducer(new RedisConnectionManager(redisClient), null, clusterTag);
+    }
+
+    public static FlowProducer forCluster(String clusterTag, RedisConnectionManager connectionManager) {
+        return new FlowProducer(connectionManager, null, clusterTag);
+    }
 
     public FlowProducer(String redisUri) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
     }
 
     public FlowProducer(String redisUri, String defaultPrefix) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
     }
 
     public FlowProducer(RedisClient redisClient) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
     }
 
     public FlowProducer(RedisClient redisClient, String defaultPrefix) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, null);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix, String clusterTag) {
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, clusterTag);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
-        this(connectionManager, scriptManager, serializer, null);
+        this(connectionManager, scriptManager, serializer, null, null);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix) {
+        this(connectionManager, scriptManager, serializer, defaultPrefix, null);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix, String clusterTag) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.defaultPrefix = defaultPrefix;
+        this.clusterTag = clusterTag;
     }
 
     public String getDefaultPrefix() {
         return defaultPrefix;
+    }
+
+    public String getClusterTag() {
+        return clusterTag;
     }
 
     /**
@@ -99,7 +125,9 @@ public class FlowProducer implements Closeable {
     private String addNode(FlowJob<?> node, String parentKey, Map<String, Object> parentObj) {
         String queueName = node.getQueueName();
         String nodePrefix = node.getPrefix() != null && !node.getPrefix().isBlank() ? node.getPrefix() : defaultPrefix;
-        QueueKeys queueKeys = new QueueKeys(nodePrefix, queueName);
+        QueueKeys queueKeys = (clusterTag != null && !clusterTag.isBlank())
+                ? QueueKeys.forClusterFlow(clusterTag, nodePrefix, queueName)
+                : new QueueKeys(nodePrefix, queueName);
         long now = System.currentTimeMillis();
 
         String customJobId = node.getOpts() != null ? node.getOpts().getJobId() : null;

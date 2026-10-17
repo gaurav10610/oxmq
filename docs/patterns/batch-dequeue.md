@@ -60,6 +60,37 @@ public class ClickHouseAuditWorker {
 }
 ```
 
+### Memory Safeguards with `maxBatchBytes`
+
+When jobs carry large variable-sized payloads (e.g. multi-megabyte audit documents), assembling batches solely based on item count (`batchSize`) can lead to unexpected JVM heap spikes. 
+
+OxMQ provides the `maxBatchBytes` safeguard to enforce strict memory budgeting on batch workers:
+
+```java
+@OxmqBatchListener(
+    queue = "audit-events",
+    batchSize = 100,
+    maxBatchBytes = 5_242_880 // 5 MB maximum cumulative payload budget
+)
+public void onAuditBatch(List<Job<AuditEvent>> batch) {
+    clickHouse.batchInsert("INSERT INTO audit_logs VALUES (?, ?, ?)", events);
+}
+```
+
+Or programmatically via `OxmqBatchWorker.builder()`:
+
+```java
+OxmqBatchWorker<AuditEvent> worker = OxmqBatchWorker.<AuditEvent>builder()
+        .queueName("audit-events")
+        .batchSize(100)
+        .maxBatchBytes(5 * 1024 * 1024) // 5 MB byte budget
+        .concurrency(2)                 // Semaphore-bounded concurrent batches
+        .processor(this::processBatch)
+        .build();
+```
+
+When cumulative payload bytes reach or exceed `maxBatchBytes`, the worker dispatches the batch immediately, ensuring deterministic memory bounds regardless of payload variance.
+
 ---
 
 ## ⚡ Empirical Batch Worker Performance

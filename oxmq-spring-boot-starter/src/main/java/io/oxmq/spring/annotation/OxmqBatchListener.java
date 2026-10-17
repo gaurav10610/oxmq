@@ -38,6 +38,17 @@ public @interface OxmqBatchListener {
     String batchSizeString() default "";
 
     /**
+     * Maximum cumulative payload bytes for a single batch before dispatching.
+     * Defaults to 0 (unlimited byte size, bounded only by batchSize).
+     */
+    long maxBatchBytes() default 0;
+
+    /**
+     * Property placeholder for maxBatchBytes, e.g. {@code "${app.batch.max-bytes:1048576}"}.
+     */
+    String maxBatchBytesString() default "";
+
+    /**
      * Whether to execute jobs on Virtual Threads if available (Java 21+). Defaults to true.
      */
     boolean virtualThreads() default true;
