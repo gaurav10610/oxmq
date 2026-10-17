@@ -64,7 +64,9 @@ public class OxmqAutoConfiguration {
                                      OxmqProperties properties,
                                      Environment environment) {
         String effectivePrefix = properties.resolvePrefix(environment);
-        return new OxmqTemplate(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, effectivePrefix);
+        io.oxmq.model.JobOptions defaultOpts = properties.getDefaultJobOptions() != null ? properties.getDefaultJobOptions().toJobOptions() : null;
+        int maxLenEvents = properties.getMaxLenEvents();
+        return new OxmqTemplate(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, effectivePrefix, defaultOpts, maxLenEvents);
     }
 
     @Bean

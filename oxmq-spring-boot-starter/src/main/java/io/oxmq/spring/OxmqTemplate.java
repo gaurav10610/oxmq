@@ -36,6 +36,8 @@ public class OxmqTemplate {
     private final OxmqMetrics metrics;
     private final FlowProducer flowProducer;
     private final String defaultPrefix;
+    private final JobOptions defaultJobOptions;
+    private final int maxLenEvents;
 
     private final ConcurrentMap<String, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
 
@@ -45,7 +47,7 @@ public class OxmqTemplate {
                         JobSerializer serializer,
                         OxmqMetrics metrics,
                         FlowProducer flowProducer) {
-        this(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, null);
+        this(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, null, null, -1);
     }
 
     public OxmqTemplate(RedisClient redisClient,
@@ -55,6 +57,18 @@ public class OxmqTemplate {
                         OxmqMetrics metrics,
                         FlowProducer flowProducer,
                         String defaultPrefix) {
+        this(redisClient, connectionManager, scriptManager, serializer, metrics, flowProducer, defaultPrefix, null, -1);
+    }
+
+    public OxmqTemplate(RedisClient redisClient,
+                        RedisConnectionManager connectionManager,
+                        LuaScriptManager scriptManager,
+                        JobSerializer serializer,
+                        OxmqMetrics metrics,
+                        FlowProducer flowProducer,
+                        String defaultPrefix,
+                        JobOptions defaultJobOptions,
+                        int maxLenEvents) {
         this.redisClient = Objects.requireNonNull(redisClient, "redisClient must not be null");
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = Objects.requireNonNull(scriptManager, "scriptManager must not be null");
@@ -62,6 +76,8 @@ public class OxmqTemplate {
         this.metrics = Objects.requireNonNull(metrics, "metrics must not be null");
         this.flowProducer = flowProducer;
         this.defaultPrefix = defaultPrefix != null && !defaultPrefix.isBlank() ? defaultPrefix.trim() : null;
+        this.defaultJobOptions = defaultJobOptions;
+        this.maxLenEvents = maxLenEvents;
     }
 
     /**
@@ -90,6 +106,8 @@ public class OxmqTemplate {
                         .serializer(serializer)
                         .metrics(metrics)
                         .payloadClass(payloadClass != null ? payloadClass : (Class<T>) Object.class)
+                        .defaultJobOptions(defaultJobOptions)
+                        .maxLenEvents(maxLenEvents)
                         .build()
         );
     }

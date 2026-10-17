@@ -44,9 +44,11 @@ public class OxmqQueue<T> implements Queue<T> {
     private final OxmqMetrics metrics;
     private final Class<T> payloadClass;
     private final io.oxmq.backend.QueueBackend backend;
+    private final JobOptions defaultJobOptions;
 
     public OxmqQueue(String prefix, String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
-                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend,
+                     JobOptions defaultJobOptions, int maxLenEvents) {
         this.name = Objects.requireNonNull(name, "Queue name must not be null");
         this.queueKeys = new QueueKeys(prefix, name);
         this.prefix = this.queueKeys.getQualifiedName();
@@ -57,8 +59,22 @@ public class OxmqQueue<T> implements Queue<T> {
         this.metrics = metrics != null ? metrics : new OxmqMetrics();
         this.payloadClass = payloadClass;
         this.backend = backend != null ? backend : new io.oxmq.backend.RedisQueueBackend(this.queueKeys, this.connectionManager, this.scriptManager, this.bullScripts);
+        this.defaultJobOptions = defaultJobOptions;
+
+        if (maxLenEvents > 0 && this.connectionManager != null) {
+            try {
+                this.connectionManager.getCommandConnection().sync().hset(queueKeys.toKey("meta"), "opts.maxLenEvents", String.valueOf(maxLenEvents));
+            } catch (Exception e) {
+                log.debug("Failed to set opts.maxLenEvents on queue meta: {}", e.getMessage());
+            }
+        }
 
         registerGauges();
+    }
+
+    public OxmqQueue(String prefix, String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
+                     JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend) {
+        this(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend, null, -1);
     }
 
     public OxmqQueue(String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
@@ -103,15 +119,63 @@ public class OxmqQueue<T> implements Queue<T> {
         return queueKeys;
     }
 
+    public JobOptions getDefaultJobOptions() {
+        return defaultJobOptions;
+    }
+
+    private JobOptions resolveJobOptions(JobOptions opts) {
+        if (opts == null) {
+            return defaultJobOptions != null ? defaultJobOptions : JobOptions.defaults();
+        }
+        if (defaultJobOptions == null) {
+            return opts;
+        }
+        JobOptions merged = new JobOptions();
+        merged.setJobId(opts.getJobId() != null ? opts.getJobId() : defaultJobOptions.getJobId());
+        merged.setDelayMs(opts.getDelayMs() > 0 ? opts.getDelayMs() : defaultJobOptions.getDelayMs());
+        merged.setAttempts(opts.getAttempts() > 1 ? opts.getAttempts() : defaultJobOptions.getAttempts());
+        merged.setBackoff(opts.getBackoff() != null ? opts.getBackoff() : defaultJobOptions.getBackoff());
+        merged.setPriority(opts.getPriority() != 0 ? opts.getPriority() : defaultJobOptions.getPriority());
+        merged.setLifo(opts.isLifo() || defaultJobOptions.isLifo());
+        merged.setParentKey(opts.getParentKey() != null ? opts.getParentKey() : defaultJobOptions.getParentKey());
+        merged.setDeduplicationId(opts.getDeduplicationId() != null ? opts.getDeduplicationId() : defaultJobOptions.getDeduplicationId());
+        merged.setDeduplicationTtlMs(opts.getDeduplicationTtlMs() > 0 ? opts.getDeduplicationTtlMs() : defaultJobOptions.getDeduplicationTtlMs());
+        merged.setKeepLastIfActive(opts.isKeepLastIfActive() || defaultJobOptions.isKeepLastIfActive());
+        merged.setKeepLogs(opts.getKeepLogs() > 0 ? opts.getKeepLogs() : defaultJobOptions.getKeepLogs());
+        merged.setGroupKey(opts.getGroupKey() != null ? opts.getGroupKey() : defaultJobOptions.getGroupKey());
+
+        if (opts.getKeepCompletedJobs() != null) {
+            merged.setKeepCompletedJobs(opts.getKeepCompletedJobs());
+        } else if (opts.isRemoveOnComplete()) {
+            merged.setRemoveOnComplete(true);
+        } else if (defaultJobOptions.getKeepCompletedJobs() != null) {
+            merged.setKeepCompletedJobs(defaultJobOptions.getKeepCompletedJobs());
+        } else if (defaultJobOptions.isRemoveOnComplete()) {
+            merged.setRemoveOnComplete(true);
+        }
+
+        if (opts.getKeepFailedJobs() != null) {
+            merged.setKeepFailedJobs(opts.getKeepFailedJobs());
+        } else if (opts.isRemoveOnFail()) {
+            merged.setRemoveOnFail(true);
+        } else if (defaultJobOptions.getKeepFailedJobs() != null) {
+            merged.setKeepFailedJobs(defaultJobOptions.getKeepFailedJobs());
+        } else if (defaultJobOptions.isRemoveOnFail()) {
+            merged.setRemoveOnFail(true);
+        }
+
+        return merged;
+    }
+
     @Override
     public Job<T> add(String jobName, T data) {
-        return add(jobName, data, JobOptions.defaults());
+        return add(jobName, data, null);
     }
 
     @Override
     public Job<T> add(String jobName, T data, JobOptions opts) {
         Objects.requireNonNull(jobName, "jobName must not be null");
-        JobOptions options = opts != null ? opts : JobOptions.defaults();
+        JobOptions options = resolveJobOptions(opts);
 
         String serializedData = serializer.serialize(data);
         long now = System.currentTimeMillis();
@@ -179,23 +243,27 @@ public class OxmqQueue<T> implements Queue<T> {
         String stateStr = getState(jobId);
         job.setState(JobState.fromBullMqState(stateStr));
 
-        try {
-            Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":processed");
-            if (childValsRaw == null || childValsRaw.isEmpty()) {
-                childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
-            }
-            if (childValsRaw != null && !childValsRaw.isEmpty()) {
-                Map<String, Object> childVals = new java.util.HashMap<>();
-                for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
-                    try {
-                        childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
-                    } catch (Exception ex) {
-                        childVals.put(entry.getKey(), entry.getValue());
-                    }
+        // Memory optimization: lazily load children values only when requested
+        job.setChildrenValuesSupplier(() -> {
+            try {
+                Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":processed");
+                if (childValsRaw == null || childValsRaw.isEmpty()) {
+                    childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
                 }
-                job.setChildrenValues(childVals);
-            }
-        } catch (Exception ignored) {}
+                if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                    Map<String, Object> childVals = new java.util.HashMap<>(childValsRaw.size());
+                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                        try {
+                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                        } catch (Exception ex) {
+                            childVals.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    return childVals;
+                }
+            } catch (Exception ignored) {}
+            return null;
+        });
 
         return job;
     }
@@ -686,6 +754,19 @@ public class OxmqQueue<T> implements Queue<T> {
             return this;
         }
 
+        private JobOptions defaultJobOptions;
+        private int maxLenEvents = -1;
+
+        public Builder<T> defaultJobOptions(JobOptions defaultJobOptions) {
+            this.defaultJobOptions = defaultJobOptions;
+            return this;
+        }
+
+        public Builder<T> maxLenEvents(int maxLenEvents) {
+            this.maxLenEvents = maxLenEvents;
+            return this;
+        }
+
         public Builder<T> payloadClass(Class<T> payloadClass) {
             this.payloadClass = payloadClass;
             return this;
@@ -701,7 +782,7 @@ public class OxmqQueue<T> implements Queue<T> {
                     connectionManager = new RedisConnectionManager("redis://localhost:6379");
                 }
             }
-            return new OxmqQueue<>(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend);
+            return new OxmqQueue<>(prefix, name, connectionManager, scriptManager, serializer, metrics, payloadClass, backend, defaultJobOptions, maxLenEvents);
         }
     }
 }
