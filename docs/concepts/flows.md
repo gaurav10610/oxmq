@@ -85,6 +85,35 @@ public class VideoWorkflowService {
 
 ---
 
+## 🌐 Redis Cluster DAG Workflows (`FlowProducer.forCluster`)
+
+In multi-node Redis Clusters, Redis shards keys across 16,384 hash slots based on the CRC16 checksum of the key. When a DAG spans **multiple queue names** (e.g. `video-chunks` and `video-assembly`), parent and child keys would ordinarily map to different hash slots. 
+
+When child tasks complete, BullMQ's Lua scripts (`moveToFinished-14.lua`) must atomically access the parent's keys (`:dependencies`, `:processed`). If the keys live on different cluster shards, Redis immediately throws:
+```
+CROSSSLOT Keys in request don't hash to the same slot
+```
+
+### The Solution: Shared Hash-Tag Routing
+OxMQ solves this via `FlowProducer.forCluster(clusterTag, redisUri)`:
+
+```java
+// 1. Create a cluster-safe FlowProducer bound to a specific hash tag
+FlowProducer clusterFlow = FlowProducer.forCluster("media-pipeline", "redis://redis-cluster:6379");
+
+// 2. Submit the multi-queue workflow tree
+clusterFlow.add(packageStream);
+```
+
+#### What happens behind the scenes:
+- All parent and child keys across different queues are automatically wrapped with `{media-pipeline}`:
+  - Child key: `bull:{media-pipeline}:video-chunks:wait`
+  - Parent key: `bull:{media-pipeline}:video-assembly:wait`
+  - Parent dependencies: `bull:{media-pipeline}:video-assembly:123:dependencies`
+- Because the hash tag `{media-pipeline}` is identical across all related queues, Redis Cluster routes the entire multi-queue workflow to the **exact same CRC16 slot**, guaranteeing 100% atomic Lua execution with **zero CROSSSLOT errors**.
+
+---
+
 ## 📥 Accessing Child Results in Parent Worker
 
 When the parent worker executes, child results are retrieved from Redis:
