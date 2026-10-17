@@ -21,6 +21,7 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
@@ -43,17 +44,20 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private final BatchJobProcessor<T, ?> processor;
     private final Class<T> payloadClass;
     private final int batchSize;
+    private final int concurrency;
     private final boolean useVirtualThreads;
     private final long lockDurationMs;
     private final long drainTimeoutMs;
     private final long pollIntervalMs;
 
     private final RedisConnectionManager connectionManager;
+    private final boolean ownsConnectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
 
+    private final Semaphore concurrencySemaphore;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
 
@@ -70,11 +74,14 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
         this.payloadClass = builder.payloadClass;
         this.batchSize = Math.max(1, builder.batchSize);
+        this.concurrency = Math.max(1, builder.concurrency);
+        this.concurrencySemaphore = new Semaphore(this.concurrency);
         this.useVirtualThreads = builder.useVirtualThreads;
         this.customExecutor = builder.customExecutor;
         this.lockDurationMs = builder.lockDurationMs;
         this.drainTimeoutMs = builder.drainTimeoutMs;
         this.pollIntervalMs = builder.pollIntervalMs;
+        this.ownsConnectionManager = builder.ownsConnectionManager;
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
@@ -120,6 +127,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     continue;
                 }
 
+                boolean acquired = concurrencySemaphore.tryAcquire(pollIntervalMs, TimeUnit.MILLISECONDS);
+                if (!acquired) {
+                    continue;
+                }
+
                 long now = System.currentTimeMillis();
                 List<Job<T>> jobs = new ArrayList<>();
 
@@ -146,6 +158,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 }
 
                 if (jobs.isEmpty()) {
+                    concurrencySemaphore.release();
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
                     continue;
                 }
@@ -204,6 +217,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             for (Job<T> job : jobs) {
                 lockExtender.unregisterJob(job.getId());
             }
+            concurrencySemaphore.release();
         }
     }
 
@@ -419,7 +433,9 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 lockExtender.close();
             }
 
-            connectionManager.close();
+            if (ownsConnectionManager && connectionManager != null) {
+                connectionManager.close();
+            }
             log.info("OxMQ Batch Worker [{}] stopped successfully", workerId);
         }
     }
@@ -505,18 +521,29 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             return this;
         }
 
+        private int concurrency = 1;
+        private boolean ownsConnectionManager = false;
+
+        public Builder<T> concurrency(int concurrency) {
+            this.concurrency = concurrency;
+            return this;
+        }
+
         public Builder<T> redisUri(String redisUri) {
             this.connectionManager = new RedisConnectionManager(redisUri);
+            this.ownsConnectionManager = true;
             return this;
         }
 
         public Builder<T> redisClient(RedisClient redisClient) {
             this.connectionManager = new RedisConnectionManager(redisClient);
+            this.ownsConnectionManager = true;
             return this;
         }
 
         public Builder<T> connectionManager(RedisConnectionManager connectionManager) {
             this.connectionManager = connectionManager;
+            this.ownsConnectionManager = false;
             return this;
         }
 
@@ -536,6 +563,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         }
 
         public OxmqBatchWorker<T> build() {
+            if (connectionManager == null) {
+                this.connectionManager = new RedisConnectionManager("redis://localhost:6379");
+                this.ownsConnectionManager = true;
+            }
             return new OxmqBatchWorker<>(this);
         }
     }

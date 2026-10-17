@@ -20,20 +20,27 @@ public class RedisQueueBackend implements QueueBackend {
 
     private final QueueKeys queueKeys;
     private final RedisConnectionManager connectionManager;
+    private final boolean ownsConnectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
 
     public RedisQueueBackend(QueueKeys queueKeys, RedisConnectionManager connectionManager,
                              LuaScriptManager scriptManager, BullScripts bullScripts) {
+        this(queueKeys, connectionManager, scriptManager, bullScripts, false);
+    }
+
+    public RedisQueueBackend(QueueKeys queueKeys, RedisConnectionManager connectionManager,
+                             LuaScriptManager scriptManager, BullScripts bullScripts, boolean ownsConnectionManager) {
         this.queueKeys = Objects.requireNonNull(queueKeys, "queueKeys must not be null");
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = bullScripts != null ? bullScripts : new BullScripts(this.scriptManager);
+        this.ownsConnectionManager = ownsConnectionManager;
     }
 
     public RedisQueueBackend(String prefix, String queueName, RedisConnectionManager connectionManager) {
         this(new QueueKeys(prefix != null ? prefix : "bull", queueName),
-             connectionManager, new LuaScriptManager(), null);
+             connectionManager, new LuaScriptManager(), null, false);
     }
 
     private StatefulRedisConnection<String, byte[]> binaryConnection() {
@@ -263,7 +270,9 @@ public class RedisQueueBackend implements QueueBackend {
 
     @Override
     public void close() {
-        connectionManager.close();
+        if (ownsConnectionManager && connectionManager != null) {
+            connectionManager.close();
+        }
     }
 
     public QueueKeys getQueueKeys() {

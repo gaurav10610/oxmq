@@ -28,15 +28,47 @@ public class QueueKeys {
         return "bull";
     }
 
+    public static boolean isClusterHashTagEnabled() {
+        String env = System.getenv("OXMQ_CLUSTER_HASH_TAGS");
+        if (env != null && !env.isBlank()) {
+            return Boolean.parseBoolean(env.trim());
+        }
+        String sysProp = System.getProperty("oxmq.cluster-hash-tags");
+        if (sysProp != null && !sysProp.isBlank()) {
+            return Boolean.parseBoolean(sysProp.trim());
+        }
+        return false;
+    }
+
     public QueueKeys(String prefix, String queueName) {
-        this.prefix = resolvePrefix(prefix);
-        this.queueName = queueName;
-        this.qualifiedName = this.prefix + ":" + this.queueName;
-        initializeKeys();
+        this(prefix, queueName, isClusterHashTagEnabled());
     }
 
     public QueueKeys(String queueName) {
-        this(null, queueName);
+        this(null, queueName, isClusterHashTagEnabled());
+    }
+
+    public QueueKeys(String prefix, String queueName, boolean useHashTag) {
+        this.prefix = resolvePrefix(prefix);
+        this.queueName = queueName;
+        if (useHashTag || isClusterHashTagEnabled()) {
+            if (this.prefix.contains("{") || (this.queueName != null && this.queueName.contains("{"))) {
+                this.qualifiedName = this.prefix + ":" + this.queueName;
+            } else {
+                this.qualifiedName = "{" + this.prefix + ":" + this.queueName + "}";
+            }
+        } else {
+            this.qualifiedName = this.prefix + ":" + this.queueName;
+        }
+        initializeKeys();
+    }
+
+    public static QueueKeys clusterTagged(String prefix, String queueName) {
+        return new QueueKeys(prefix, queueName, true);
+    }
+
+    public boolean isClusterTagged() {
+        return qualifiedName.startsWith("{") && qualifiedName.contains("}");
     }
 
     private void initializeKeys() {
