@@ -78,8 +78,8 @@ public class JobCancellationIntegrationTest {
                         Thread.sleep(10_000);
                         return "ok";
                     } catch (InterruptedException e) {
-                        jobInterrupted.countDown();
                         cancelReasonRef.set(job.getCancelReason());
+                        jobInterrupted.countDown();
                         throw e;
                     }
                 })
