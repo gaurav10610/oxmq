@@ -407,17 +407,34 @@ Because Microsoft Graph sends webhook notifications over the public Internet, yo
        notification-url: https://abc1234.ngrok-free.app/api/v1/webhooks/graph
    ```
 
-### 9.4 Embedded Mock Engine (Zero-Credentials Instant Testing)
-For development environments where Internet access or Azure accounts are unavailable, the codebase includes a dual-mode client configuration:
+### 9.4 Enterprise Mock Microsoft 365 Server & Local Docker Infrastructure
+For out-of-the-box local testing without requiring paid Azure enterprise credentials, OxGuard 365 includes a dedicated **Enterprise Mock Microsoft 365 Server** and **Dockerized PostgreSQL persistence**:
+
 ```yaml
 oxguard:
   client:
-    mode: MOCK # Options: LIVE or MOCK
-  mock:
-    total-sites: 5
-    total-users: 20
-    files-per-drive: 100
-    simulate-429-burst: true # Injects random 429 Retry-After headers to verify Approach 5
-    inject-eicar-ratio: 0.05 # 5% of simulated files contain EICAR signatures
+    mode: LIVE # LiveGraphClient connects to Microsoft Graph v1.0 REST API
+  azure:
+    tenant-id: "contoso-enterprise-tenant"
+    client-id: "oxguard-365-enterprise-app"
+    client-secret: "secret-token-xyz"
+    graph-base-url: "http://localhost:8081/v1.0" # Mock M365 Server (or https://graph.microsoft.com/v1.0 in cloud)
+    login-base-url: "http://localhost:8081"       # Mock M365 Server (or https://login.microsoftonline.com in cloud)
+  mock-server:
+    enabled: true
+    port: 8081
+    storage-dir: "./data/m365-storage"
+    simulate-429-burst: true
 ```
-* In `MOCK` mode, the system launches an in-memory Graph mock server simulating the complete hierarchy, delta tokens, permission ACLs, and rate-limiting responses, allowing 100% of the OxMQ queue orchestration to be tested locally in seconds.
+
+#### How It Works:
+1. **Real Physical Files on Disk:** The mock server creates and maintains real physical files on disk under `./data/m365-storage` (real Word docs, real PDFs, spreadsheets, real EICAR test string, high-entropy simulated ransomware, and PE executable headers disguised as docx).
+2. **Exact Graph v1.0 REST API Contract:** Exposes standard endpoints (`/v1.0/sites/getAllSites`, `/sites/{siteId}/drives`, `/users`, `/users/{userId}/drive`, `/drives/{driveId}/root/delta`, `/permissions`, and binary streaming download URL).
+3. **Single Configuration Toggle:** Only the `graph-base-url` changes between local testing (`http://localhost:8081/v1.0`) and production cloud (`https://graph.microsoft.com/v1.0`). All connector code, HTTP request processing, and inspection pipelines are 100% identical.
+4. **PostgreSQL & Redis in Docker:**
+   Start all infrastructure with one command:
+   ```bash
+   docker compose -f oxmq-examples/oxguard-365/docker-compose.yml up -d
+   ```
+   All file inventories, ACL exposure tiers, malware threat verdicts, and drive checkpoints are stored in PostgreSQL (`oxguard_scanned_files` and `oxguard_monitored_drives`).
+

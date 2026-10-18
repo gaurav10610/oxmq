@@ -47,6 +47,9 @@ public class DashboardController {
     @Autowired(required = false)
     private MockGraphClient mockGraphClient;
 
+    @Autowired(required = false)
+    private io.oxmq.oxguard.mockserver.MockOffice365Server mockOffice365Server;
+
     public DashboardController(
             FileInventoryRepository repository,
             LiveMetricsService metricsService,
@@ -129,7 +132,7 @@ public class DashboardController {
      */
     @PostMapping("/trigger/upload")
     public ResponseEntity<Map<String, Object>> simulateForwardUpload(
-            @RequestParam(value = "driveId", defaultValue = "sp-drive-1") String driveId,
+            @RequestParam(value = "driveId", defaultValue = "sp-drive-finance") String driveId,
             @RequestParam(value = "fileName", defaultValue = "Quarterly_Board_Deck_Draft.pptx") String fileName,
             @RequestParam(value = "exposure", defaultValue = "PUBLIC_ANONYMOUS") String exposure,
             @RequestParam(value = "threatType", defaultValue = "CLEAN") String threatType
@@ -165,6 +168,13 @@ public class DashboardController {
 
         if (mockGraphClient != null) {
             mockGraphClient.addMockForwardFile(driveId, fileName, exposureLevel, fileBytes);
+        }
+        if (mockOffice365Server != null) {
+            String scope = "anonymous";
+            if (exposureLevel == ExposureLevel.EXTERNAL_GUEST) scope = "users";
+            else if (exposureLevel == ExposureLevel.ORGANIZATION_WIDE) scope = "organization";
+            else if (exposureLevel == ExposureLevel.PRIVATE) scope = "private";
+            mockOffice365Server.saveForwardFile(driveId, fileName, scope, fileBytes, "application/octet-stream");
         }
 
         // Dispatch Priority 1 Forward Scan job with 15s burst debounce

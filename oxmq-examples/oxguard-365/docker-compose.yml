@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  oxmq-redis:
+    image: redis:7-alpine
+    container_name: oxguard-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+
+  oxguard-postgres:
+    image: postgres:16-alpine
+    container_name: oxguard-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: oxguard
+      POSTGRES_USER: oxguard
+      POSTGRES_PASSWORD: oxguard
+    volumes:
+      - oxguard_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  oxguard_pgdata:

@@ -34,11 +34,12 @@ import org.springframework.stereotype.Component;
 public class LiveGraphClient implements GraphClient {
 
     private static final Logger log = LoggerFactory.getLogger(LiveGraphClient.class);
-    private static final String GRAPH_V1_BASE = "https://graph.microsoft.com/v1.0";
 
     private final String tenantId;
     private final String clientId;
     private final String clientSecret;
+    private final String graphBaseUrl;
+    private final String loginBaseUrl;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -49,11 +50,15 @@ public class LiveGraphClient implements GraphClient {
             @Value("${oxguard.azure.tenant-id:}") String tenantId,
             @Value("${oxguard.azure.client-id:}") String clientId,
             @Value("${oxguard.azure.client-secret:}") String clientSecret,
+            @Value("${oxguard.azure.graph-base-url:https://graph.microsoft.com/v1.0}") String graphBaseUrl,
+            @Value("${oxguard.azure.login-base-url:https://login.microsoftonline.com}") String loginBaseUrl,
             ObjectMapper objectMapper
     ) {
         this.tenantId = tenantId;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
+        this.graphBaseUrl = graphBaseUrl;
+        this.loginBaseUrl = loginBaseUrl;
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -68,10 +73,10 @@ public class LiveGraphClient implements GraphClient {
         }
 
         try {
-            String tokenEndpoint = "https://login.microsoftonline.com/" + tenantId + "/oauth2/v2.0/token";
+            String tokenEndpoint = loginBaseUrl + "/" + tenantId + "/oauth2/v2.0/token";
             String form = "client_id=" + URLEncoder.encode(clientId, StandardCharsets.UTF_8)
                     + "&client_secret=" + URLEncoder.encode(clientSecret, StandardCharsets.UTF_8)
-                    + "&scope=" + URLEncoder.encode("https://graph.microsoft.com/.default", StandardCharsets.UTF_8)
+                    + "&scope=" + URLEncoder.encode(graphBaseUrl + "/.default", StandardCharsets.UTF_8)
                     + "&grant_type=client_credentials";
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -98,8 +103,9 @@ public class LiveGraphClient implements GraphClient {
 
     private HttpResponse<String> executeGraphRequest(String url) {
         try {
+            URI uri = URI.create(url.contains(" ") ? url.replace(" ", "%20") : url);
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
+                    .uri(uri)
                     .header("Authorization", "Bearer " + getValidAccessToken())
                     .header("Accept", "application/json")
                     .GET()
@@ -131,7 +137,7 @@ public class LiveGraphClient implements GraphClient {
     @Override
     public List<MonitoredDrive> discoverSharePointDrives(String tenantId) {
         List<MonitoredDrive> drives = new ArrayList<>();
-        String url = GRAPH_V1_BASE + "/sites/getAllSites?$select=id,name,webUrl";
+        String url = graphBaseUrl + "/sites/getAllSites?$select=id,name,webUrl";
         HttpResponse<String> response = executeGraphRequest(url);
 
         try {
@@ -143,7 +149,7 @@ public class LiveGraphClient implements GraphClient {
                     String siteName = site.has("name") ? site.get("name").asText() : site.get("webUrl").asText();
 
                     // Query drives within this site
-                    String drivesUrl = GRAPH_V1_BASE + "/sites/" + siteId + "/drives?$select=id,name,driveType";
+                    String drivesUrl = graphBaseUrl + "/sites/" + siteId + "/drives?$select=id,name,driveType";
                     try {
                         HttpResponse<String> drivesResp = executeGraphRequest(drivesUrl);
                         JsonNode drivesNode = objectMapper.readTree(drivesResp.body()).get("value");
@@ -168,7 +174,7 @@ public class LiveGraphClient implements GraphClient {
     @Override
     public List<MonitoredDrive> discoverUserOneDrives(String tenantId) {
         List<MonitoredDrive> drives = new ArrayList<>();
-        String url = GRAPH_V1_BASE + "/users?$filter=accountEnabled eq true&$select=id,userPrincipalName";
+        String url = graphBaseUrl + "/users?$filter=accountEnabled eq true&$select=id,userPrincipalName";
         HttpResponse<String> response = executeGraphRequest(url);
 
         try {
@@ -179,7 +185,7 @@ public class LiveGraphClient implements GraphClient {
                     String userId = user.get("id").asText();
                     String upn = user.get("userPrincipalName").asText();
 
-                    String driveUrl = GRAPH_V1_BASE + "/users/" + userId + "/drive?$select=id,name";
+                    String driveUrl = graphBaseUrl + "/users/" + userId + "/drive?$select=id,name";
                     try {
                         HttpResponse<String> driveResp = executeGraphRequest(driveUrl);
                         JsonNode d = objectMapper.readTree(driveResp.body());
@@ -200,7 +206,7 @@ public class LiveGraphClient implements GraphClient {
     public DeltaSyncResult fetchDeltaChanges(String driveId, String deltaToken) {
         String url = (deltaToken != null && !deltaToken.isBlank())
                 ? deltaToken
-                : GRAPH_V1_BASE + "/drives/" + driveId + "/root/delta?$select=id,name,size,file,folder,parentReference,@microsoft.graph.downloadUrl";
+                : graphBaseUrl + "/drives/" + driveId + "/root/delta?$select=id,name,size,file,folder,parentReference,@microsoft.graph.downloadUrl";
 
         HttpResponse<String> response = executeGraphRequest(url);
         List<DriveItem> updatedItems = new ArrayList<>();
@@ -227,7 +233,7 @@ public class LiveGraphClient implements GraphClient {
                     long size = itemNode.has("size") ? itemNode.get("size").asLong() : 0L;
                     String downloadUrl = itemNode.has("@microsoft.graph.downloadUrl")
                             ? itemNode.get("@microsoft.graph.downloadUrl").asText()
-                            : GRAPH_V1_BASE + "/drives/" + driveId + "/items/" + itemId + "/content";
+                            : graphBaseUrl + "/drives/" + driveId + "/items/" + itemId + "/content";
 
                     String mimeType = "application/octet-stream";
                     if (itemNode.has("file") && itemNode.get("file").has("mimeType")) {
@@ -263,7 +269,7 @@ public class LiveGraphClient implements GraphClient {
 
     @Override
     public EffectiveExposure fetchPermissions(String driveId, String itemId) {
-        String url = GRAPH_V1_BASE + "/drives/" + driveId + "/items/" + itemId + "/permissions";
+        String url = graphBaseUrl + "/drives/" + driveId + "/items/" + itemId + "/permissions";
         HttpResponse<String> response = executeGraphRequest(url);
 
         try {
@@ -324,7 +330,7 @@ public class LiveGraphClient implements GraphClient {
             // Enterprise Optimization: Download via SAS URL directly from Azure Blob without passing through Graph API Gateway!
             String url = (directDownloadUrl != null && !directDownloadUrl.isBlank())
                     ? directDownloadUrl
-                    : GRAPH_V1_BASE + "/drives/" + driveId + "/items/" + itemId + "/content";
+                    : graphBaseUrl + "/drives/" + driveId + "/items/" + itemId + "/content";
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder().uri(URI.create(url)).GET();
             if (!url.contains(".blob.core.windows.net")) {

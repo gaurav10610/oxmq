@@ -104,3 +104,29 @@ Streams file bytes in 64 KB chunks through:
 2. EICAR virus signature detector.
 3. Shannon entropy calculator ($H > 7.5$ flagged as suspicious ransomware/packed).
 4. MIME magic number mismatch detector (e.g. PE Windows Executable `MZ` header disguised as `.docx`).
+
+---
+
+## 6. Enterprise Mock Microsoft 365 Server & Local Docker Infrastructure
+
+To enable 100% faithful testing on local developer machines without relying on paid Azure AD / Microsoft 365 enterprise tenant subscriptions, OxGuard 365 includes a dedicated **Enterprise Mock Microsoft 365 Server** and **Dockerized PostgreSQL persistence**:
+
+### 6.1 Exact Microsoft Graph API v1.0 Contract
+The mock server implements the exact HTTP wire protocol and JSON payload format of Microsoft Graph v1.0:
+* **OAuth2 Token Exchange:** `POST /oauth2/v2.0/token` returns standard Azure AD Bearer tokens.
+* **SharePoint Discovery:** `GET /v1.0/sites/getAllSites` and `GET /v1.0/sites/{siteId}/drives`.
+* **OneDrive Discovery:** `GET /v1.0/users` and `GET /v1.0/users/{userId}/drive`.
+* **Delta Sync:** `GET /v1.0/drives/{driveId}/root/delta` with pagination and delta links.
+* **Permissions / ACL:** `GET /v1.0/drives/{driveId}/items/{itemId}/permissions`.
+* **Binary File Streaming:** Serves physical files from disk under `./data/m365-storage` with realistic headers (`Content-Type`, `Content-Length`) and `@microsoft.graph.downloadUrl` SAS bypass.
+
+> **Single Configuration Toggle:** In `application.yml`, the connector (`LiveGraphClient`) points to `graph-base-url: "http://localhost:8081/v1.0"`. To connect to live Microsoft cloud in production, only the hostname changes to `https://graph.microsoft.com/v1.0` while 100% of the connector and inspection code remains unchanged.
+
+### 6.2 Dockerized PostgreSQL Database
+* Run via `docker-compose.yml` (`docker compose up -d`):
+  * `oxguard-postgres`: PostgreSQL 16 Alpine on port 5432 (`oxguard / oxguard`).
+  * `oxguard-redis`: Redis 7 Alpine on port 6379.
+* Managed via Spring Data JPA with entities:
+  * `oxguard_scanned_files`: Storing file metadata, exposure levels, threat verdicts, SHA-256 hashes, and scan origins.
+  * `oxguard_monitored_drives`: Tracking discovered SharePoint document libraries and user OneDrives.
+

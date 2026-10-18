@@ -1,117 +1,120 @@
 package io.oxmq.oxguard.service;
 
+import io.oxmq.oxguard.entity.MonitoredDriveEntity;
+import io.oxmq.oxguard.entity.ScannedFileEntity;
 import io.oxmq.oxguard.model.ExposureLevel;
 import io.oxmq.oxguard.model.MonitoredDrive;
 import io.oxmq.oxguard.model.ScanOrigin;
 import io.oxmq.oxguard.model.ScannedFileRecord;
 import io.oxmq.oxguard.model.ThreatVerdict;
-import java.util.ArrayList;
-import java.util.Collections;
+import io.oxmq.oxguard.repository.SpringDataMonitoredDriveRepository;
+import io.oxmq.oxguard.repository.SpringDataScannedFileRepository;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * High-performance in-memory repository for security-scanned files and drive inventory.
+ * Enterprise Repository for security-scanned files and drive inventory backed by PostgreSQL.
  */
 @Repository
 public class FileInventoryRepository {
 
-    private final Map<String, ScannedFileRecord> files = new ConcurrentHashMap<>();
-    private final Map<String, MonitoredDrive> drives = new ConcurrentHashMap<>();
+    private final SpringDataScannedFileRepository fileRepo;
+    private final SpringDataMonitoredDriveRepository driveRepo;
 
-    private final AtomicLong totalFilesScanned = new AtomicLong(0);
-    private final AtomicLong publicExposures = new AtomicLong(0);
-    private final AtomicLong externalGuestExposures = new AtomicLong(0);
-    private final AtomicLong orgWideExposures = new AtomicLong(0);
-    private final AtomicLong internalExposures = new AtomicLong(0);
-    private final AtomicLong privateExposures = new AtomicLong(0);
+    public FileInventoryRepository(
+            SpringDataScannedFileRepository fileRepo,
+            SpringDataMonitoredDriveRepository driveRepo
+    ) {
+        this.fileRepo = fileRepo;
+        this.driveRepo = driveRepo;
+    }
 
-    private final AtomicLong malwareThreats = new AtomicLong(0);
-    private final AtomicLong suspiciousEntropyThreats = new AtomicLong(0);
-    private final AtomicLong mimeMismatchThreats = new AtomicLong(0);
-
-    private final AtomicLong forwardScans = new AtomicLong(0);
-    private final AtomicLong backwardScans = new AtomicLong(0);
-
+    @Transactional
     public void saveDrive(MonitoredDrive drive) {
-        drives.put(drive.driveId(), drive);
+        driveRepo.save(MonitoredDriveEntity.fromModel(drive));
     }
 
     public List<MonitoredDrive> getAllDrives() {
-        return new ArrayList<>(drives.values());
+        return driveRepo.findAll().stream()
+                .map(MonitoredDriveEntity::toModel)
+                .collect(Collectors.toList());
     }
 
+    @Transactional
     public void saveFile(ScannedFileRecord record) {
-        ScannedFileRecord previous = files.put(record.fileId(), record);
-        if (previous == null) {
-            totalFilesScanned.incrementAndGet();
-            if (record.scanOrigin() == ScanOrigin.FORWARD) {
-                forwardScans.incrementAndGet();
-            } else {
-                backwardScans.incrementAndGet();
-            }
-
-            if (record.exposureLevel() == ExposureLevel.PUBLIC_ANONYMOUS) publicExposures.incrementAndGet();
-            else if (record.exposureLevel() == ExposureLevel.EXTERNAL_GUEST) externalGuestExposures.incrementAndGet();
-            else if (record.exposureLevel() == ExposureLevel.ORGANIZATION_WIDE) orgWideExposures.incrementAndGet();
-            else if (record.exposureLevel() == ExposureLevel.INTERNAL_RESTRICTED) internalExposures.incrementAndGet();
-            else if (record.exposureLevel() == ExposureLevel.PRIVATE) privateExposures.incrementAndGet();
-
-            if (record.threatVerdict() == ThreatVerdict.MALWARE_DETECTED) malwareThreats.incrementAndGet();
-            else if (record.threatVerdict() == ThreatVerdict.SUSPICIOUS_ENTROPY) suspiciousEntropyThreats.incrementAndGet();
-            else if (record.threatVerdict() == ThreatVerdict.MIME_MISMATCH) mimeMismatchThreats.incrementAndGet();
+        Optional<ScannedFileEntity> existing = fileRepo.findByFileId(record.fileId());
+        if (existing.isPresent()) {
+            ScannedFileEntity entity = existing.get();
+            entity.setFileName(record.fileName());
+            entity.setFilePath(record.filePath());
+            entity.setFileSize(record.fileSize());
+            entity.setMimeType(record.mimeType());
+            entity.setExposureLevel(record.exposureLevel());
+            entity.setHasUniquePermissions(record.hasUniquePermissions());
+            entity.setThreatVerdict(record.threatVerdict());
+            entity.setThreatDetails(record.threatDetails());
+            entity.setSha256(record.sha256());
+            entity.setScanOrigin(record.scanOrigin());
+            entity.setScannedAtTimestamp(record.scannedAtTimestamp());
+            fileRepo.save(entity);
+        } else {
+            fileRepo.save(ScannedFileEntity.fromRecord(record));
         }
     }
 
     public List<ScannedFileRecord> getAllFiles() {
-        List<ScannedFileRecord> list = new ArrayList<>(files.values());
-        list.sort((a, b) -> Long.compare(b.scannedAtTimestamp(), a.scannedAtTimestamp())); // Latest first
-        return list;
+        return fileRepo.findAllByOrderByScannedAtTimestampDesc().stream()
+                .map(ScannedFileEntity::toRecord)
+                .collect(Collectors.toList());
     }
 
     public ScannedFileRecord getFile(String fileId) {
-        return files.get(fileId);
+        return fileRepo.findByFileId(fileId)
+                .map(ScannedFileEntity::toRecord)
+                .orElse(null);
     }
 
     public Map<String, Object> getMetrics() {
-        long total = totalFilesScanned.get();
-        long threats = malwareThreats.get() + suspiciousEntropyThreats.get() + mimeMismatchThreats.get();
-        long fwd = forwardScans.get();
-        long bwd = backwardScans.get();
+        long total = fileRepo.count();
+        long threats = fileRepo.countByThreatVerdictNot(ThreatVerdict.CLEAN);
+        long fwd = fileRepo.countByScanOrigin(ScanOrigin.FORWARD);
+        long bwd = fileRepo.countByScanOrigin(ScanOrigin.BACKWARD);
 
-        Map<String, Object> map = new java.util.LinkedHashMap<>();
+        long pub = fileRepo.countByExposureLevel(ExposureLevel.PUBLIC_ANONYMOUS);
+        long ext = fileRepo.countByExposureLevel(ExposureLevel.EXTERNAL_GUEST);
+        long org = fileRepo.countByExposureLevel(ExposureLevel.ORGANIZATION_WIDE);
+        long internal = fileRepo.countByExposureLevel(ExposureLevel.INTERNAL_RESTRICTED);
+        long priv = fileRepo.countByExposureLevel(ExposureLevel.PRIVATE);
+
+        long malware = fileRepo.countByThreatVerdict(ThreatVerdict.MALWARE_DETECTED);
+        long entropy = fileRepo.countByThreatVerdict(ThreatVerdict.SUSPICIOUS_ENTROPY);
+        long mime = fileRepo.countByThreatVerdict(ThreatVerdict.MIME_MISMATCH);
+
+        Map<String, Object> map = new LinkedHashMap<>();
         map.put("totalFiles", total);
-        map.put("publicExposures", publicExposures.get());
-        map.put("externalGuestExposures", externalGuestExposures.get());
-        map.put("orgWideExposures", orgWideExposures.get());
-        map.put("internalExposures", internalExposures.get());
-        map.put("privateExposures", privateExposures.get());
+        map.put("publicExposures", pub);
+        map.put("externalGuestExposures", ext);
+        map.put("orgWideExposures", org);
+        map.put("internalExposures", internal);
+        map.put("privateExposures", priv);
         map.put("totalThreats", threats);
-        map.put("malwareThreats", malwareThreats.get());
-        map.put("suspiciousEntropyThreats", suspiciousEntropyThreats.get());
-        map.put("mimeMismatchThreats", mimeMismatchThreats.get());
+        map.put("malwareThreats", malware);
+        map.put("suspiciousEntropyThreats", entropy);
+        map.put("mimeMismatchThreats", mime);
         map.put("forwardScans", fwd);
         map.put("backwardScans", bwd);
-        map.put("totalDrives", drives.size());
+        map.put("totalDrives", driveRepo.count());
         return map;
     }
 
+    @Transactional
     public void clear() {
-        files.clear();
-        drives.clear();
-        totalFilesScanned.set(0);
-        publicExposures.set(0);
-        externalGuestExposures.set(0);
-        orgWideExposures.set(0);
-        internalExposures.set(0);
-        privateExposures.set(0);
-        malwareThreats.set(0);
-        suspiciousEntropyThreats.set(0);
-        mimeMismatchThreats.set(0);
-        forwardScans.set(0);
-        backwardScans.set(0);
+        fileRepo.deleteAllInBatch();
+        driveRepo.deleteAllInBatch();
     }
 }
