@@ -201,3 +201,16 @@ During full concurrent load of 5,000 physical files across 25 drives:
 - **Bull-Board DAG Completion:** **15,634 total jobs completed** (`file-aggregate`: 5,201, `file-malware`: 5,201, `file-permission`: 5,201, `drive-delta`: 27, `tenant-discovery`: 5) with **0 failed jobs**.
 - **Data Loss Rate:** **0.00%** (5,000 out of 5,000 files cataloged with exact threat and exposure breakdown).
 
+---
+
+## 10. Promotion to OxMQ Native Enterprise Plugins
+
+The multi-tenant scaling patterns developed and validated in OxGuard 365 were distilled and promoted into first-class, reusable native plugins in `io.oxmq`:
+
+1. **`JobInterceptor` SPI (`oxmq-core`):** Native lifecycle hooks (`beforeProcess`, `afterProcess`, `onError`) wired transparently into `OxmqWorker` and `@OxmqListener` via `OxmqListenerAnnotationBeanPostProcessor`.
+2. **`GroupRateLimiterPlugin` (`oxmq-core`):** Atomic Redis sliding-window token bucket partitioned by custom group key with dynamic limits, headroom calculation, and Micrometer yield counters.
+3. **`RateLimitSentinelPlugin` (`oxmq-core`):** Distributed upstream 429/503 circuit-breaker and cooldown sentinel catching `RateLimitCooldownException` and preemptively deferring jobs with `skipAttempt=true`.
+4. **`PriorityQuotaGovernorPlugin` (`oxmq-core`):** Headroom-based yielding: lower-priority background jobs automatically defer execution to reserve quota for real-time priority jobs.
+5. **Observability Stack:** Out-of-the-box Prometheus scraping (`/actuator/prometheus`) and pre-provisioned Grafana dashboards (`http://localhost:3001/d/oxmq-overview`) visualizing queue backlogs, completion throughput, and per-tenant rate yield rates.
+6. **Zero Lua Script Divergence:** All plugins leverage BullMQ's native Lua script `moveToDelayed-*.lua` with `skipAttempt=true`, ensuring 100% byte-for-byte polyglot compatibility with upstream BullMQ.
+

@@ -144,7 +144,7 @@ public class LiveGraphClient implements GraphClient {
                         .orElse(3L);
                 log.warn("Microsoft Graph Throttling (HTTP {}) on tenant [{}] URL [{}] -> Retry-After: {}s",
                         response.statusCode(), tId, url, retryAfterSeconds);
-                throw new GraphThrottlingException(retryAfterSeconds, "Microsoft Graph rate limit exceeded for tenant: " + tId);
+                throw new GraphThrottlingException(retryAfterSeconds, tId, "Microsoft Graph rate limit exceeded for tenant: " + tId);
             }
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -398,7 +398,7 @@ public class LiveGraphClient implements GraphClient {
                 long retryAfterSeconds = response.headers().firstValue("Retry-After")
                         .map(Long::parseLong)
                         .orElse(3L);
-                throw new GraphThrottlingException(retryAfterSeconds, "Rate limit exceeded during download for tenant: " + tenantId);
+                throw new GraphThrottlingException(retryAfterSeconds, tenantId, "Rate limit exceeded during download for tenant: " + tenantId);
             }
 
             if (response.statusCode() != 200) {

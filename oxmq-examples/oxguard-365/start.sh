@@ -119,12 +119,36 @@ else
     echo -e " ${GREEN}[READY]${NC}"
 fi
 
-# 4. Ensure Application Jar is Built
-if [ ! -f "${JAR_FILE}" ]; then
-    echo -e "${BLUE}▶ Packaging OxGuard 365 fat JAR via Maven Wrapper...${NC}"
-    (cd "${REPO_ROOT}" && ./mvnw package -pl oxmq-examples/oxguard-365 -DskipTests -q)
-    echo -e "${GREEN}  JAR successfully created: ${JAR_FILE}${NC}"
+echo -n "  Waiting for Prometheus (9090) to respond..."
+PROM_RETRY=0
+until curl -s http://localhost:9090/-/healthy >/dev/null 2>&1 || [ ${PROM_RETRY} -eq 20 ]; do
+    echo -n "."
+    sleep 1
+    PROM_RETRY=$((PROM_RETRY + 1))
+done
+if [ ${PROM_RETRY} -eq 20 ]; then
+    echo -e " ${YELLOW}[WARNING] (Prometheus starting in background)${NC}"
+else
+    echo -e " ${GREEN}[READY]${NC}"
 fi
+
+echo -n "  Waiting for Grafana (3001) to respond..."
+GRAF_RETRY=0
+until curl -s http://localhost:3001/api/health >/dev/null 2>&1 || [ ${GRAF_RETRY} -eq 20 ]; do
+    echo -n "."
+    sleep 1
+    GRAF_RETRY=$((GRAF_RETRY + 1))
+done
+if [ ${GRAF_RETRY} -eq 20 ]; then
+    echo -e " ${YELLOW}[WARNING] (Grafana starting in background)${NC}"
+else
+    echo -e " ${GREEN}[READY]${NC}"
+fi
+
+# 4. Ensure Application Jar is Built
+echo -e "${BLUE}▶ Packaging OxGuard 365 fat JAR via Maven Wrapper...${NC}"
+(cd "${REPO_ROOT}" && ./mvnw package -pl oxmq-examples/oxguard-365 -DskipTests -q)
+echo -e "${GREEN}  JAR successfully created: ${JAR_FILE}${NC}"
 
 # 5. Start OxGuard 365 Spring Boot Application
 echo -e "${BLUE}▶ Launching OxGuard 365 (Spring Boot + Mock Office 365 Server)...${NC}"
@@ -163,6 +187,8 @@ echo -e "\n${BOLD}${GREEN}======================================================
 echo -e "${BOLD}${GREEN}  🚀 OXGUARD 365 STACK IS LIVE AND OPERATIONAL!${NC}"
 echo -e "${BOLD}${GREEN}==============================================================================${NC}"
 echo -e "  🌐 ${BOLD}OxGuard DSPM Dashboard:${NC}    ${CYAN}http://localhost:8080${NC}"
+echo -e "  📈 ${BOLD}Grafana Metrics Telemetry:${NC} ${CYAN}http://localhost:3001/d/oxmq-overview${NC}"
+echo -e "  🔥 ${BOLD}Prometheus Metrics:${NC}        ${CYAN}http://localhost:9090${NC}"
 echo -e "  📊 ${BOLD}Bull-Board Queue Monitor:${NC}  ${CYAN}http://localhost:3000${NC}"
 echo -e "  🏢 ${BOLD}Mock Office 365 Server:${NC}    ${CYAN}http://localhost:8081${NC}"
 echo -e "  🐘 ${BOLD}PostgreSQL Database:${NC}       ${CYAN}localhost:5432${NC} (db: oxguard, user: oxguard)"

@@ -446,6 +446,49 @@ public class NotificationWorker {
 
 ---
 
+## 🔌 Enterprise Plugins & Interceptors SPI
+
+OxMQ provides a zero-overhead **Interceptor & Plugin SPI** (`JobInterceptor`) that hooks seamlessly into worker lifecycles (`beforeProcess`, `afterProcess`, `onError`) without modifying any upstream BullMQ Lua scripts:
+
+```java
+// Spring Boot auto-discovers and attaches all JobInterceptor beans to workers automatically
+@Bean
+public GroupRateLimiterPlugin groupRateLimiter(RedisConnectionManager cm, MeterRegistry registry) {
+    return GroupRateLimiterPlugin.builder()
+            .connectionManager(cm)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .dynamicLimit(tenantId -> subscriptionService.getRateLimit(tenantId))
+            .meterRegistry(registry) // Emits 'oxmq.plugin.ratelimiter.yields'
+            .build();
+}
+
+@Bean
+public RateLimitSentinelPlugin rateLimitSentinel(RedisConnectionManager cm, MeterRegistry registry) {
+    return RateLimitSentinelPlugin.builder()
+            .connectionManager(cm)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .errorMatcher(t -> t instanceof RateLimitCooldownException)
+            .meterRegistry(registry) // Emits 'oxmq.plugin.sentinel.delays' and 'oxmq.plugin.sentinel.cooldowns'
+            .build();
+}
+
+@Bean
+public PriorityQuotaGovernorPlugin priorityGovernor(GroupRateLimiterPlugin limiter, MeterRegistry registry) {
+    return PriorityQuotaGovernorPlugin.builder()
+            .rateLimiter(limiter)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .headroomYieldThreshold(0.25) // Defer low-priority jobs when < 25% token headroom remains
+            .priorityThreshold(1)         // Priority 1 jobs (e.g. real-time webhooks) are protected!
+            .meterRegistry(registry)      // Emits 'oxmq.plugin.governor.yields'
+            .build();
+}
+```
+
+### Out-of-the-Box Prometheus & Grafana Dashboards
+Every OxMQ deployment can be monitored via Grafana using the bundled template in `oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`. It displays real-time job throughput, active queue backlogs, p50/p95/p99 duration latencies, and multi-tenant rate yield telemetries.
+
+---
+
 ## 🌲 Parent-Child DAG Workflows (`FlowProducer`)
 
 Build complex multi-stage distributed pipelines where parent jobs automatically await parallel child completion:

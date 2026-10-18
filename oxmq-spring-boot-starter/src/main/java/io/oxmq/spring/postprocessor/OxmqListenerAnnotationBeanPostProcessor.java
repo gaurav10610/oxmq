@@ -258,6 +258,13 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
 
         builder.processor(job -> invokeListenerMethod(bean, method, job));
 
+        if (this.applicationContext != null) {
+            Map<String, io.oxmq.interceptor.JobInterceptor> interceptors = this.applicationContext.getBeansOfType(io.oxmq.interceptor.JobInterceptor.class);
+            if (!interceptors.isEmpty()) {
+                builder.interceptors(new java.util.ArrayList<>(interceptors.values()));
+            }
+        }
+
         Worker<?> worker = builder.build();
         registeredWorkers.add(worker);
         if (running) {
@@ -370,6 +377,13 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 throw t;
             }
         });
+
+        if (this.applicationContext != null) {
+            Map<String, io.oxmq.interceptor.JobInterceptor> interceptors = this.applicationContext.getBeansOfType(io.oxmq.interceptor.JobInterceptor.class);
+            if (!interceptors.isEmpty()) {
+                builder.interceptors(new java.util.ArrayList<>(interceptors.values()));
+            }
+        }
 
         Worker<?> worker = builder.build();
         registeredWorkers.add(worker);

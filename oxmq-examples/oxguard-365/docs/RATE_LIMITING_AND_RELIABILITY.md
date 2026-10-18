@@ -42,71 +42,86 @@ OxGuard tracks quota dynamically using a **Token Bucket** in Redis:
 
 ```mermaid
 flowchart TD
-    Req[File Scan Worker Starts] --> CheckHeadroom{Scan Origin?}
+    Req[Worker Claims Job] --> Interceptor[OxMQ JobInterceptor Pipeline]
     
-    CheckHeadroom -->|Forward P1| Pass[Consume Token & Scan File]
-    CheckHeadroom -->|Backward P10| HeadroomCheck{Remaining Quota < 25%?}
+    subgraph OxMQ_Native_Plugins["Native OxMQ Plugins (Zero Boilerplate in Worker)"]
+        Sentinel["1. RateLimitSentinelPlugin: Cooldown Active?"]
+        Limiter["2. GroupRateLimiterPlugin: Quota Exceeded?"]
+        Governor["3. PriorityQuotaGovernorPlugin: Headroom < 25%?"]
+    end
     
-    HeadroomCheck -->|Yes: Quota Tight| Yield["Proactively Yield!
-    throw DelayedException(2s)"]
-    HeadroomCheck -->|No: Headroom Safe| Pass
+    Interceptor --> Sentinel
+    Sentinel -->|Yes: Cooldown Active| Delay1["Non-Destructive Deferral
+    (moveToDelayed, skipAttempt=true)"]
+    Sentinel -->|No| Limiter
     
-    Yield --> RedisDelayed[OxMQ re-schedules job into Redis Delayed Set]
-    RedisDelayed -.->|After 2s| Req
+    Limiter -->|Yes: Token Depleted| Delay2["Non-Destructive Deferral
+    (moveToDelayed, skipAttempt=true)"]
+    Limiter -->|No| Governor
+    
+    Governor -->|Priority 1: VIP Forward| Pass[Invoke Worker Business Logic]
+    Governor -->|Priority 10 & Headroom < 25%| Yield["Yield Low-Priority Crawl
+    (moveToDelayed, skipAttempt=true)"]
+    Governor -->|Priority 10 & Headroom >= 25%| Pass
 ```
 
 #### How it works in code:
-In `DriveDeltaSyncWorker.java`, `FilePermissionWorker.java`, and `FileMalwareWorker.java`:
+Workers like `DriveDeltaSyncWorker.java`, `FilePermissionWorker.java`, and `FileMalwareWorker.java` contain **zero boilerplate** rate-limit checks:
 
 ```java
-// If this is a background backward crawl AND token capacity is running low (< 25%)
-if (payload.scanOrigin() == ScanOrigin.BACKWARD && cooldownService.checkHeadroomYield(payload.tenantId())) {
-    // Proactively yield! Put this job to sleep for 2 seconds
-    throw new DelayedException(Duration.ofSeconds(2));
+@OxmqListener(queue = OxGuardQueueConstants.QUEUE_FILE_PERMISSION, concurrency = 30)
+public EffectiveExposure processPermissionScan(FileScanPayload payload, @Header("jobId") String jobId) {
+    // Zero rate-limiting or cooldown boilerplate!
+    // OxMQ's GroupRateLimiterPlugin, RateLimitSentinelPlugin, and PriorityQuotaGovernorPlugin
+    // automatically intercept and non-destructively delay jobs BEFORE this method is invoked!
+    
+    cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
+    EffectiveExposure exposure = graphClient.fetchPermissions(payload.tenantId(), payload.driveId(), payload.itemId());
+    return exposureEngine.evaluate(exposure.permissions());
 }
 ```
 
-#### Why `DelayedException` is the Game-Changer:
+#### Why Non-Destructive Delay is the Game-Changer:
 - **Traditional Queues:** Workers use `Thread.sleep(2000)` (which holds the thread, starves memory, and blocks other jobs) or fail the job (which consumes one of your 3 retry attempts).
-- **OxMQ's `DelayedException`:** OxMQ executes an atomic Redis Lua script that moves the job from the `active` list directly to the `delayed` sorted set for 2,000 ms. 
+- **OxMQ Interceptor Delay:** OxMQ calls BullMQ's native Lua script `moveToDelayed-*.lua` with `skipAttempt=true`. 
   - **Zero CPU or Thread Waste:** The Java Virtual Thread immediately exits and handles another job.
   - **No Penalty:** The job's retry attempt counter is **not incremented**. It is a graceful deferral.
+  - **100% Upstream Lua Compatibility:** Zero modifications to BullMQ's official Lua scripts.
 
 ---
 
-### 4. Handling HTTP 429 Throttling: The Distributed Sentinel Pattern
+### 4. Handling HTTP 429 Throttling: The Native OxMQ Sentinel Plugin
 
 When Microsoft Graph API gets overwhelmed, it returns HTTP 429 with a header like `Retry-After: 5`.
 
 If 50 concurrent worker threads are running, what usually happens is a **Thundering Herd**: all 50 threads hit Graph API, all 50 get 429s, and Microsoft extends the penalty lockout.
 
-OxGuard solves this using a **Distributed Redis Sentinel** in `TenantCooldownService.java`:
+OxMQ solves this natively via `RateLimitSentinelPlugin`:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Worker1 as Worker A
     actor Worker2 as Worker B
-    participant Redis as Redis Sentinel
+    participant Sentinel as OxMQ RateLimitSentinelPlugin (Redis)
     participant Graph as Microsoft Graph API
 
     Worker1->>Graph: GET /drives/root/delta
     Graph-->>Worker1: HTTP 429 (Retry-After: 5s)
     
-    Note over Worker1,Redis: Worker A sets distributed lockout
-    Worker1->>Redis: SETEX "oxguard:tenant:cooldown:tenant1" 5s
-    Worker1-->>Worker1: throw DelayedException(5s)
+    Note over Worker1,Sentinel: LiveGraphClient throws RateLimitCooldownException(5s, tenantId)
+    Worker1->>Sentinel: onError() sets distributed lockout in Redis
+    Sentinel-->>Worker1: moveToDelayed(5s, skipAttempt=true)
     
-    Note over Worker2: Worker B has a pending file for same tenant
-    Worker2->>Redis: GET "oxguard:tenant:cooldown:tenant1"
-    Redis-->>Worker2: Cooldown active (4.8s remaining)
+    Note over Worker2: Worker B claims pending file for same tenant
+    Worker2->>Sentinel: beforeProcess() checks Redis sentinel
+    Sentinel-->>Worker2: Cooldown active (4.8s remaining) -> Defer immediately!
     
-    Note over Worker2: Defers immediately without touching the network!
-    Worker2-->>Worker2: throw DelayedException(4.8s)
+    Note over Worker2: Defers non-destructively WITHOUT sending any HTTP request!
 ```
 
-1. **First Worker Hits 429:** Intercepts `Retry-After: 5s`, sets the Redis key `oxguard:tenant:cooldown:<tenantId>`, and defers itself with `throw new DelayedException(5s)`.
-2. **All Other Workers Check Redis First:** Before making any network call, other workers check `cooldownService.getRemainingCooldownMs(tenantId)`. If the lock is active, they **immediately defer via `DelayedException` without sending a single packet over the wire**.
+1. **First Worker Hits 429:** Client throws `RateLimitCooldownException(5s, tenantId)`. `RateLimitSentinelPlugin.onError()` captures it, writes `oxmq:sentinel:tenant:<tenantId>` into Redis, and defers the job without attempt penalty.
+2. **All Other Workers Intercepted Automatically:** Before any worker invokes its listener method, `RateLimitSentinelPlugin.beforeProcess()` checks Redis. If the sentinel is active, it **immediately defers the job via `InterceptorDecision.delay(remainingMs, true)` without sending a single packet over the wire**.
 3. **Microsoft Graph is Protected:** The tenant cools down, and jobs resume the exact millisecond the lock expires.
 
 ---

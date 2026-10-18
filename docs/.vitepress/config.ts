@@ -37,6 +37,7 @@ export default withMermaid(
             { text: 'Spring Boot 3+ Starter', link: '/guide/spring-boot' },
             { text: 'Context Isolation & Namespacing', link: '/guide/namespacing' },
             { text: 'Virtual Threads (Loom)', link: '/guide/virtual-threads' },
+            { text: 'Plugins & Interceptors', link: '/guide/plugins' },
             { text: 'Configuration Reference', link: '/guide/configuration' },
             { text: 'Full Manual (Getting Started)', link: '/GETTING_STARTED' }
           ]

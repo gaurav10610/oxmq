@@ -69,6 +69,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final RateLimiter rateLimiter;
+    private final List<io.oxmq.interceptor.JobInterceptor> interceptors;
 
     private final Semaphore concurrencySemaphore;
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -105,6 +106,9 @@ public class OxmqWorker<T> implements Worker<T> {
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = builder.serializer != null ? builder.serializer : new JacksonJobSerializer();
         this.metrics = builder.metrics != null ? builder.metrics : new OxmqMetrics();
+        this.interceptors = builder.interceptors != null && !builder.interceptors.isEmpty()
+                ? List.copyOf(builder.interceptors)
+                : List.of();
 
         if (builder.rateLimitMax > 0 && builder.rateLimitDuration != null) {
             this.rateLimiter = new RateLimiter(connectionManager.getCommandConnection(), this.scriptManager,
@@ -223,6 +227,23 @@ public class OxmqWorker<T> implements Worker<T> {
         long startTime = System.nanoTime();
         activeExecutions.put(job.getId(), new ActiveExecution<>(job, Thread.currentThread()));
         try {
+            // 1. Interceptor pre-processing
+            if (!interceptors.isEmpty()) {
+                for (io.oxmq.interceptor.JobInterceptor interceptor : interceptors) {
+                    io.oxmq.interceptor.InterceptorDecision decision = interceptor.beforeProcess(job);
+                    if (decision != null && decision.isDelay()) {
+                        bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                                job.getId(), workerId, decision.delayMs(), decision.skipAttempt());
+                        log.debug("Job {} [id: {}] intercepted before processing; moved to delayed ({} ms, skipAttempt={})",
+                                job.getName(), job.getId(), decision.delayMs(), decision.skipAttempt());
+                        return;
+                    } else if (decision != null && decision.isReject()) {
+                        failJob(job, new io.oxmq.exception.JobRejectedException(decision.reason()), Duration.ZERO);
+                        return;
+                    }
+                }
+            }
+
             log.debug("Executing job {} [id: {}] on queue {}", job.getName(), job.getId(), queueName);
             Object result = processor.process(job);
 
@@ -232,6 +253,17 @@ public class OxmqWorker<T> implements Worker<T> {
             completeJob(job, result, duration);
             metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
+
+            // 2. Interceptor post-processing
+            if (!interceptors.isEmpty()) {
+                for (io.oxmq.interceptor.JobInterceptor interceptor : interceptors) {
+                    try {
+                        interceptor.afterProcess(job, result, duration);
+                    } catch (Throwable it) {
+                        log.warn("Error in interceptor afterProcess for job {}: {}", job.getId(), it.getMessage());
+                    }
+                }
+            }
 
         } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
             long durationNanos = System.nanoTime() - startTime;
@@ -259,9 +291,30 @@ public class OxmqWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            failJob(job, t, duration);
-            metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
-            log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
+            boolean handledByInterceptor = false;
+            if (!interceptors.isEmpty()) {
+                for (io.oxmq.interceptor.JobInterceptor interceptor : interceptors) {
+                    try {
+                        io.oxmq.interceptor.ErrorDecision decision = interceptor.onError(job, t, duration);
+                        if (decision != null && (decision.isCooldown() || decision.isDelay())) {
+                            bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                                    job.getId(), workerId, decision.delayMs(), decision.skipAttempt());
+                            log.info("Job {} [id: {}] moved to delayed via interceptor onError (delay: {} ms, skipAttempt: {})",
+                                    job.getName(), job.getId(), decision.delayMs(), decision.skipAttempt());
+                            handledByInterceptor = true;
+                            break;
+                        }
+                    } catch (Throwable it) {
+                        log.warn("Error in interceptor onError for job {}: {}", job.getId(), it.getMessage());
+                    }
+                }
+            }
+
+            if (!handledByInterceptor) {
+                failJob(job, t, duration);
+                metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
+                log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
+            }
         } finally {
             activeExecutions.remove(job.getId());
             lockExtender.unregisterJob(job.getId());
@@ -674,6 +727,22 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> metrics(OxmqMetrics metrics) {
             this.metrics = metrics;
+            return this;
+        }
+
+        private final List<io.oxmq.interceptor.JobInterceptor> interceptors = new java.util.ArrayList<>();
+
+        public Builder<T> interceptor(io.oxmq.interceptor.JobInterceptor interceptor) {
+            if (interceptor != null) {
+                this.interceptors.add(interceptor);
+            }
+            return this;
+        }
+
+        public Builder<T> interceptors(List<io.oxmq.interceptor.JobInterceptor> interceptors) {
+            if (interceptors != null) {
+                this.interceptors.addAll(interceptors);
+            }
             return this;
         }
 

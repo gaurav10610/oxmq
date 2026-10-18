@@ -84,16 +84,16 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     if [ "${CLEAN_MODE}" = true ]; then
         echo -e "${BLUE}▶ Removing Docker containers and volumes (Clean mode)...${NC}"
         docker compose -f "${COMPOSE_FILE}" down -v --remove-orphans 2>/dev/null || true
-        for container in oxguard-bullboard oxguard-postgres oxguard-redis oxmq-redis; do
+        for container in oxguard-bullboard oxguard-postgres oxguard-redis oxmq-redis oxguard-prometheus oxguard-grafana; do
             if docker ps -a -q -f name="^/${container}$" | grep -q .; then
                 docker rm -f "${container}" 2>/dev/null || true
             fi
         done
         echo -e "${GREEN}  ✔ Containers and data volumes removed.${NC}"
     else
-        echo -e "${BLUE}▶ Stopping Docker containers (PostgreSQL, Redis, Bull-Board)...${NC}"
+        echo -e "${BLUE}▶ Stopping Docker containers (PostgreSQL, Redis, Bull-Board, Prometheus, Grafana)...${NC}"
         docker compose -f "${COMPOSE_FILE}" stop 2>/dev/null || true
-        for container in oxguard-bullboard oxguard-postgres oxguard-redis oxmq-redis; do
+        for container in oxguard-bullboard oxguard-postgres oxguard-redis oxmq-redis oxguard-prometheus oxguard-grafana; do
             if docker ps -q -f name="^/${container}$" | grep -q .; then
                 docker stop "${container}" 2>/dev/null || true
             fi

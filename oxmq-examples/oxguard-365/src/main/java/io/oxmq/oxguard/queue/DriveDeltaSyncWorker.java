@@ -1,13 +1,11 @@
 package io.oxmq.oxguard.queue;
 
 import io.oxmq.FlowProducer;
-import io.oxmq.exception.DelayedException;
 import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.FlowJob;
 import io.oxmq.model.JobOptions;
 import io.oxmq.oxguard.connector.DeltaSyncResult;
 import io.oxmq.oxguard.connector.GraphClient;
-import io.oxmq.oxguard.connector.GraphThrottlingException;
 import io.oxmq.oxguard.model.DriveDeltaSyncPayload;
 import io.oxmq.oxguard.model.DriveItem;
 import io.oxmq.oxguard.model.FileAggregatePayload;
@@ -16,7 +14,6 @@ import io.oxmq.oxguard.model.ScanOrigin;
 import io.oxmq.oxguard.service.TenantCooldownService;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
-import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,34 +48,8 @@ public class DriveDeltaSyncWorker {
             DriveDeltaSyncPayload payload,
             @Header("jobId") String jobId
     ) {
-        // 1. Approach 5: Check if tenant is currently in a throttling cooldown
-        long remainingCooldown = cooldownService.getRemainingCooldownMs(payload.tenantId());
-        if (remainingCooldown > 0) {
-            log.info("Tenant [{}] is in 429 cooldown. Deferring delta sync for drive [{}] for {}ms without network call",
-                    payload.tenantId(), payload.driveId(), remainingCooldown);
-            throw new DelayedException(Duration.ofMillis(remainingCooldown));
-        }
-
-        // 2. Backward Scan Yielding: Check available tenant token headroom
-        if (payload.scanOrigin() == ScanOrigin.BACKWARD) {
-            if (cooldownService.checkHeadroomYield(payload.tenantId())) {
-                log.info("Backward crawl yielding for drive [{}] to prioritize forward events. Deferring 5s",
-                        payload.driveId());
-                throw new DelayedException(Duration.ofSeconds(5));
-            }
-        }
-
-        DeltaSyncResult deltaResult;
-        try {
-            cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-            deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), null);
-        } catch (GraphThrottlingException gte) {
-            cooldownService.record429Hit(payload.tenantId());
-            log.warn("Delta sync throttled (HTTP 429) for tenant [{}]. Setting cooldown for {}s and deferring job",
-                    payload.tenantId(), gte.getRetryAfterSeconds());
-            cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());
-            throw new DelayedException(Duration.ofMillis(gte.getRetryAfterMillis()));
-        }
+        cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
+        DeltaSyncResult deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), null);
 
 
         List<DriveItem> updatedItems = deltaResult.updatedItems();
