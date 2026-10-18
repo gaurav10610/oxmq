@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OxGuard 365 :: Enterprise SaaS DSPM & Threat Analysis</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            500: '#0284c7',
+                            600: '#0369a1',
+                            700: '#075985',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
+
+    <!-- Top Navigation Header -->
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-4 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <span class="text-2xl">🛡️</span>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
+                        OXGUARD 365
+                    </h1>
+                    <p class="text-xs text-slate-400">Enterprise SaaS DSPM & Threat Analysis Engine (Java 17 + OxMQ)</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div id="connectionStatus" class="flex items-center space-x-2 text-xs px-3 py-1.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>LIVE STREAM ACTIVE</span>
+                </div>
+                <button onclick="triggerCrawl()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-blue-900/40 flex items-center space-x-1.5">
+                    <span>🔄</span>
+                    <span>Trigger Baseline Crawl (P10)</span>
+                </button>
+                <button onclick="triggerUploadModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-900/40 flex items-center space-x-1.5">
+                    <span>⚡</span>
+                    <span>Simulate Real-Time Upload (P1)</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto w-full px-6 py-6 flex-1 space-y-6">
+
+        <!-- Metrics Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Scanned</div>
+                <div id="metricTotalFiles" class="text-2xl font-bold text-white mt-1">0</div>
+                <div class="text-[10px] text-slate-500 mt-1">Across all drives</div>
+            </div>
+            <div class="bg-slate-900 border border-red-950/60 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-red-400 uppercase tracking-wider font-semibold">Public Links</div>
+                <div id="metricPublic" class="text-2xl font-bold text-red-400 mt-1">0</div>
+                <div class="text-[10px] text-red-500/80 mt-1">🔴 Anonymous public access</div>
+            </div>
+            <div class="bg-slate-900 border border-amber-950/60 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-amber-400 uppercase tracking-wider font-semibold">External Guests</div>
+                <div id="metricExternal" class="text-2xl font-bold text-amber-400 mt-1">0</div>
+                <div class="text-[10px] text-amber-500/80 mt-1">🟠 Third-party partners</div>
+            </div>
+            <div class="bg-slate-900 border border-yellow-950/60 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-yellow-400 uppercase tracking-wider font-semibold">Org-Wide</div>
+                <div id="metricOrgWide" class="text-2xl font-bold text-yellow-400 mt-1">0</div>
+                <div class="text-[10px] text-yellow-500/80 mt-1">🟡 All tenant employees</div>
+            </div>
+            <div class="bg-slate-900 border border-purple-950/60 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-purple-400 uppercase tracking-wider font-semibold">Threats Found</div>
+                <div id="metricThreats" class="text-2xl font-bold text-purple-400 mt-1">0</div>
+                <div class="text-[10px] text-purple-500/80 mt-1">🛑 Malware / Entropy / Mismatch</div>
+            </div>
+            <div class="bg-slate-900 border border-blue-950/60 rounded-xl p-4 shadow-sm">
+                <div class="text-xs text-sky-400 uppercase tracking-wider font-semibold">Forward vs Back</div>
+                <div id="metricRatio" class="text-xl font-bold text-sky-300 mt-1">0 / 0</div>
+                <div class="text-[10px] text-sky-500/80 mt-1">⚡ Priority 1 vs 🔄 P10</div>
+            </div>
+        </div>
+
+        <!-- Architecture Callout / OxMQ Features -->
+        <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="flex items-start space-x-2">
+                <span class="text-lg">🌲</span>
+                <div>
+                    <div class="font-semibold text-slate-100">FlowProducer DAG</div>
+                    <div class="text-slate-400 text-[11px]">Parallel Pillar 1 (Exposure) & Pillar 2 (Malware) converge into Aggregator.</div>
+                </div>
+            </div>
+            <div class="flex items-start space-x-2">
+                <span class="text-lg">⚖️</span>
+                <div>
+                    <div class="font-semibold text-slate-100">Priority Arbitration</div>
+                    <div class="text-slate-400 text-[11px]">Forward events (P1) strictly preempt backward baseline crawl (P10).</div>
+                </div>
+            </div>
+            <div class="flex items-start space-x-2">
+                <span class="text-lg">🛡️</span>
+                <div>
+                    <div class="font-semibold text-slate-100">Approach 5 429 Sentinel</div>
+                    <div class="text-slate-400 text-[11px]">Dynamic <code>DelayedException</code> + Redis sentinel locks tenant during Graph rate limits.</div>
+                </div>
+            </div>
+            <div class="flex items-start space-x-2">
+                <span class="text-lg">⏱️</span>
+                <div>
+                    <div class="font-semibold text-slate-100">15s Auto-Save Debounce</div>
+                    <div class="text-slate-400 text-[11px]">OxMQ v6 deduplication collapses rapid Office 365 edits into 1 inspection job.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters & Search Toolbar -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800">
+            <div class="flex items-center space-x-3">
+                <label class="text-xs font-semibold text-slate-400">Exposure:</label>
+                <select id="filterExposure" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                    <option value="">All Exposures</option>
+                    <option value="PUBLIC_ANONYMOUS">🔴 Public Anonymous</option>
+                    <option value="EXTERNAL_GUEST">🟠 External Guest</option>
+                    <option value="ORGANIZATION_WIDE">🟡 Organization Wide</option>
+                    <option value="INTERNAL_RESTRICTED">🟢 Internal Restricted</option>
+                    <option value="PRIVATE">🔒 Private</option>
+                </select>
+
+                <label class="text-xs font-semibold text-slate-400">Threat:</label>
+                <select id="filterThreat" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                    <option value="">All Threats</option>
+                    <option value="CLEAN">🟢 Clean</option>
+                    <option value="MALWARE_DETECTED">🛑 Malware Detected (EICAR)</option>
+                    <option value="SUSPICIOUS_ENTROPY">⚠️ Suspicious High Entropy</option>
+                    <option value="MIME_MISMATCH">⚠️ Executable MIME Mismatch</option>
+                </select>
+
+                <label class="text-xs font-semibold text-slate-400">Origin:</label>
+                <select id="filterOrigin" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                    <option value="">All Scans</option>
+                    <option value="FORWARD">⚡ Forward Scan (P1)</option>
+                    <option value="BACKWARD">🔄 Backward Scan (P10)</option>
+                </select>
+            </div>
+            <div class="text-xs text-slate-400">
+                Auto-updating via Server-Sent Events (SSE)
+            </div>
+        </div>
+
+        <!-- Scanned Files Table -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                        <tr>
+                            <th class="px-4 py-3">File Name & Path</th>
+                            <th class="px-4 py-3">Drive / Library</th>
+                            <th class="px-4 py-3">Size</th>
+                            <th class="px-4 py-3">Exposure Level (Pillar 1)</th>
+                            <th class="px-4 py-3">Threat Analysis (Pillar 2)</th>
+                            <th class="px-4 py-3">Scan Origin</th>
+                            <th class="px-4 py-3">Timestamp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="filesTableBody" class="divide-y divide-slate-800/60 font-mono">
+                        <tr>
+                            <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+                                No files scanned yet. Click "Trigger Baseline Crawl" to initiate discovery.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Simulate Upload Modal -->
+    <div id="uploadModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+                    <span>⚡</span>
+                    <span>Simulate Real-Time Forward Upload (P1)</span>
+                </h3>
+                <button onclick="closeUploadModal()" class="text-slate-400 hover:text-white">✕</button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block text-slate-400 mb-1">File Name</label>
+                    <input id="modalFileName" type="text" value="Executive_Passcode_Vault.xlsx" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">Target Drive</label>
+                    <select id="modalDriveId" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                        <option value="sp-drive-1">SharePoint: Finance_Team_Docs</option>
+                        <option value="sp-drive-2">SharePoint: Legal_Compliance_Vault</option>
+                        <option value="od-drive-ceo">OneDrive: ceo@contoso.com</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">Exposure Level</label>
+                    <select id="modalExposure" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                        <option value="PUBLIC_ANONYMOUS">🔴 Public Anonymous (Open Sharing Link)</option>
+                        <option value="EXTERNAL_GUEST">🟠 External Guest (Vendor Access)</option>
+                        <option value="ORGANIZATION_WIDE">🟡 Organization Wide (All Employees)</option>
+                        <option value="INTERNAL_RESTRICTED">🟢 Internal Restricted</option>
+                        <option value="PRIVATE">🔒 Private</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">Inject Threat Payload</label>
+                    <select id="modalThreat" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                        <option value="CLEAN">🟢 Clean (Standard Business Document)</option>
+                        <option value="EICAR">🛑 EICAR Virus Signature Match</option>
+                        <option value="ENTROPY">⚠️ High Entropy (Ransomware/Encrypted)</option>
+                        <option value="MIME_MISMATCH">⚠️ PE Executable Header (MZ) in Office Doc</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button onclick="closeUploadModal()" class="px-3 py-2 rounded-lg text-xs text-slate-400 hover:text-white">Cancel</button>
+                <button onclick="submitForwardUpload()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">
+                    Enqueue Priority 1 Scan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Client-side script -->
+    <script>
+        function triggerCrawl() {
+            fetch('/api/v1/dashboard/trigger/crawl', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => alert('Baseline Crawl queued at Priority 10 across all document libraries!'))
+                .catch(err => alert('Failed triggering crawl: ' + err));
+        }
+
+        function triggerUploadModal() {
+            document.getElementById('uploadModal').classList.remove('hidden');
+        }
+
+        function closeUploadModal() {
+            document.getElementById('uploadModal').classList.add('hidden');
+        }
+
+        function submitForwardUpload() {
+            const fileName = document.getElementById('modalFileName').value;
+            const driveId = document.getElementById('modalDriveId').value;
+            const exposure = document.getElementById('modalExposure').value;
+            const threatType = document.getElementById('modalThreat').value;
+
+            const url = `/api/v1/dashboard/trigger/upload?fileName=${encodeURIComponent(fileName)}&driveId=${encodeURIComponent(driveId)}&exposure=${encodeURIComponent(exposure)}&threatType=${encodeURIComponent(threatType)}`;
+
+            fetch(url, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    closeUploadModal();
+                    loadFiles();
+                    loadMetrics();
+                })
+                .catch(err => alert('Failed enqueueing upload: ' + err));
+        }
+
+        function loadMetrics() {
+            fetch('/api/v1/dashboard/metrics')
+                .then(r => r.json())
+                .then(m => {
+                    document.getElementById('metricTotalFiles').innerText = m.totalFiles || 0;
+                    document.getElementById('metricPublic').innerText = m.publicExposures || 0;
+                    document.getElementById('metricExternal').innerText = m.externalGuestExposures || 0;
+                    document.getElementById('metricOrgWide').innerText = m.orgWideExposures || 0;
+                    document.getElementById('metricThreats').innerText = m.totalThreats || 0;
+                    document.getElementById('metricRatio').innerText = (m.forwardScans || 0) + ' / ' + (m.backwardScans || 0);
+                });
+        }
+
+        function loadFiles() {
+            const exp = document.getElementById('filterExposure').value;
+            const thr = document.getElementById('filterThreat').value;
+            const ori = document.getElementById('filterOrigin').value;
+
+            let url = '/api/v1/dashboard/files?';
+            if (exp) url += 'exposure=' + exp + '&';
+            if (thr) url += 'threat=' + thr + '&';
+            if (ori) url += 'origin=' + ori + '&';
+
+            fetch(url)
+                .then(r => r.json())
+                .then(files => {
+                    const tbody = document.getElementById('filesTableBody');
+                    if (!files || files.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No matching files found.</td></tr>`;
+                        return;
+                    }
+
+                    tbody.innerHTML = files.map(f => {
+                        let expBadge = '';
+                        if (f.exposureLevel === 'PUBLIC_ANONYMOUS') {
+                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800">🔴 Public (Link)</span>`;
+                        } else if (f.exposureLevel === 'EXTERNAL_GUEST') {
+                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-950 text-amber-400 border border-amber-800">🟠 External Guest</span>`;
+                        } else if (f.exposureLevel === 'ORGANIZATION_WIDE') {
+                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-yellow-950 text-yellow-400 border border-yellow-800">🟡 Org-Wide</span>`;
+                        } else if (f.exposureLevel === 'INTERNAL_RESTRICTED') {
+                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Internal</span>`;
+                        } else {
+                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔒 Private</span>`;
+                        }
+
+                        let threatBadge = '';
+                        if (f.threatVerdict === 'CLEAN') {
+                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Clean</span>`;
+                        } else if (f.threatVerdict === 'MALWARE_DETECTED') {
+                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800 animate-pulse font-bold">🛑 Malware (EICAR)</span>`;
+                        } else if (f.threatVerdict === 'SUSPICIOUS_ENTROPY') {
+                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-purple-950 text-purple-400 border border-purple-800">⚠️ High Entropy</span>`;
+                        } else if (f.threatVerdict === 'MIME_MISMATCH') {
+                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-pink-950 text-pink-400 border border-pink-800">⚠️ Executable Mismatch</span>`;
+                        }
+
+                        let originBadge = f.scanOrigin === 'FORWARD'
+                            ? `<span class="px-2 py-0.5 rounded text-[10px] bg-sky-950 text-sky-400 font-bold border border-sky-800">⚡ FORWARD (P1)</span>`
+                            : `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔄 BACKWARD (P10)</span>`;
+
+                        let dateStr = new Date(f.scannedAtTimestamp).toLocaleTimeString();
+
+                        return `
+                            <tr class="hover:bg-slate-800/40 transition">
+                                <td class="px-4 py-3">
+                                    <div class="font-semibold text-slate-200">${f.fileName}</div>
+                                    <div class="text-[10px] text-slate-500 truncate max-w-xs">${f.filePath}</div>
+                                </td>
+                                <td class="px-4 py-3 text-slate-300">${f.driveId}</td>
+                                <td class="px-4 py-3 text-slate-400">${Math.round(f.fileSize / 1024)} KB</td>
+                                <td class="px-4 py-3">${expBadge}</td>
+                                <td class="px-4 py-3">${threatBadge}</td>
+                                <td class="px-4 py-3">${originBadge}</td>
+                                <td class="px-4 py-3 text-slate-500">${dateStr}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                });
+        }
+
+        // Connect to Live SSE Telemetry Stream
+        function setupSseStream() {
+            const eventSource = new EventSource('/api/v1/dashboard/stream');
+            eventSource.addEventListener('file-scanned', function(e) {
+                loadMetrics();
+                loadFiles();
+            });
+            eventSource.addEventListener('threat-alert', function(e) {
+                loadMetrics();
+                loadFiles();
+            });
+            eventSource.onerror = function() {
+                document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>RECONNECTING...</span>`;
+            };
+            eventSource.onopen = function() {
+                document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>LIVE STREAM ACTIVE</span>`;
+            };
+        }
+
+        // Initialize on page load
+        window.onload = function() {
+            loadMetrics();
+            loadFiles();
+            setupSseStream();
+        };
+    </script>
+</body>
+</html>

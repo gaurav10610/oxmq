@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: oxguard-365
+
+server:
+  port: 8080
+
+oxmq:
+  redis:
+    url: redis://localhost:6379
+  worker:
+    concurrency: 25
+    lock-duration: 45s
+    stalled-interval: 30s
+    virtual-threads: false # Java 17 LTS uses tuned platform thread pool
+
+oxguard:
+  client:
+    mode: MOCK # Options: MOCK or LIVE
+  mock:
+    total-sites: 5
+    total-users: 15
+    files-per-drive: 40
+    simulate-429-burst: true
+    eicar-ratio: 0.05
+    suspicious-entropy-ratio: 0.05
+    mime-mismatch-ratio: 0.05
+  azure:
+    tenant-id: "mock-tenant-id"
+    client-id: "mock-client-id"
+    client-secret: "mock-client-secret"
+  webhook:
+    client-state: "oxguard-secret-state-token"
+    notification-url: "http://localhost:8080/api/v1/webhooks/graph"
+  rate-limit:
+    max-requests-per-second: 50
+    headroom-yield-threshold: 0.25 # 25% remaining token capacity yields backward crawl
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
