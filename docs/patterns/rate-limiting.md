@@ -78,3 +78,18 @@ queue.add(
 1. Each `groupKey` maintains an independent Redis sorted set: `bull:<queue>:limiter:<groupKey>`.
 2. As jobs are claimed, timestamps are added to the set.
 3. If the group limit is reached, BullMQ's `moveToActive-11.lua` leaves the job in `WAITING` until the sliding window expires, while continuing to process jobs for other tenants!
+
+---
+
+## 🚀 Enterprise Scaling: Beyond Basic Rate Limiting
+
+While standard `groupKey` protects individual queues with static thresholds, enterprise multi-tenant architectures often require:
+- **Dynamic Tier Limits**: Scaling burst capacity based on active subscription tiers (e.g. 50 req/s for SMB vs 500 req/s for Enterprise).
+- **Cluster-Wide Circuit Breaking (HTTP 429 Sentinel)**: Automatically deferring upcoming jobs when external SaaS APIs trigger throttling, without burning retry attempts.
+- **Priority Headroom Governance**: Forcing low-priority historical sweeps to yield quota when a tenant approaches quota exhaustion, strictly reserving headroom for real-time operations.
+
+For these capabilities, see the [Plugins & Interceptors Guide](/guide/plugins) for:
+- [`GroupRateLimiterPlugin`](/guide/plugins#1-groupratelimiterplugin-multi-tenant-token-bucket)
+- [`RateLimitSentinelPlugin`](/guide/plugins#2-ratelimitsentinelplugin-external-429-cooldown-sentinel)
+- [`PriorityQuotaGovernorPlugin`](/guide/plugins#3-priorityquotagovernorplugin-headroom-based-yielding)
+

@@ -365,3 +365,44 @@ worker.start();
 OxmqClient shippingClient = client.forService("shipping-service");
 shippingClient.queue("dispatch", DispatchRequest.class).add("pkg-1", request);
 ```
+
+---
+
+## 🔌 Enterprise Plugins & Interceptors Reference
+
+OxMQ provides built-in enterprise plugins configurable programmatically or via Spring Boot beans:
+
+### 1. `GroupRateLimiterPlugin.Builder`
+
+| Method | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `connectionManager(RedisConnectionManager)` | Required | — | Shared Redis connection manager. |
+| `keyPrefix(String)` | `String` | `"oxmq:limiter"` | Redis key prefix for distributed token buckets. |
+| `groupKeyResolver(Function<Job<?>, String>)` | Required | — | Resolves partition key (e.g. `tenantId`) from the job. |
+| `limit(int)` | `int` | `0` | Static maximum executions per window (`0` means unlimited). |
+| `dynamicLimit(Function<String, Integer>)` | `Function` | `null` | Dynamic limit resolved per group key (e.g. license tier lookup). |
+| `windowDuration(Duration)` | `Duration` | `1s` | Sliding window duration. |
+| `retryDelayMs(long)` | `long` | `100` | Delay backoff in milliseconds when quota is exhausted. |
+| `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional Micrometer registry for `oxmq.plugin.ratelimiter.yields`. |
+
+### 2. `RateLimitSentinelPlugin.Builder`
+
+| Method | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `connectionManager(RedisConnectionManager)` | Required | — | Shared Redis connection manager. |
+| `keyPrefix(String)` | `String` | `"oxmq:sentinel"` | Redis key prefix for cluster-wide cooldown flags. |
+| `groupKeyResolver(Function<Job<?>, String>)` | Required | — | Resolves partition key from the job. |
+| `errorMatcher(Predicate<Throwable>)` | `Predicate` | `RateLimitCooldownException.class::isInstance` | Predicate matching throttling exceptions. |
+| `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional registry for sentinel delays and cooldowns. |
+
+### 3. `PriorityQuotaGovernorPlugin.Builder`
+
+| Method | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `rateLimiter(GroupRateLimiterPlugin)` | Required | — | Underlying rate limiter used to query remaining token headroom. |
+| `groupKeyResolver(Function<Job<?>, String>)` | Required | — | Resolves partition key from the job. |
+| `headroomYieldThreshold(double)` | `double` | `0.20` | Fraction (0.0 to 1.0) of remaining capacity below which low-priority jobs yield. |
+| `priorityThreshold(int)` | `int` | `1` | Priority cutoff: jobs with `priority <= threshold` are protected and never yield. |
+| `yieldDelayMs(long)` | `long` | `200` | Non-destructive delay in milliseconds for yielded jobs. |
+| `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional registry for `oxmq.plugin.governor.yields`. |
+

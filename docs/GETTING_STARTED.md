@@ -7,7 +7,7 @@ Welcome to **OxMQ**! OxMQ brings the battle-tested power of **BullMQ** to the Ja
 
 ## 📦 1. Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0).
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0).
 
 ### Option 1: JitPack (Recommended — Zero-Auth)
 
@@ -27,14 +27,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 </dependencies>
 ```
@@ -47,9 +47,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.4.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.5.0")
     // or for Spring Boot 3 applications:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.4.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
 }
 ```
 
@@ -71,14 +71,14 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
     <!-- or for Spring Boot 3: -->
     <!--
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
     -->
 </dependencies>
@@ -111,15 +111,16 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-core:1.4.0")
-    // implementation("io.oxmq:oxmq-spring-boot-starter:1.4.0")
+    implementation("io.oxmq:oxmq-core:1.5.0")
+    // implementation("io.oxmq:oxmq-spring-boot-starter:1.5.0")
 }
 ```
 
 ### Option 3: Pre-built Release JARs
-Direct download links from [GitHub Releases v1.4.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0):
-- [`oxmq-core-1.4.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.4.0/oxmq-core-1.4.0.jar)
-- [`oxmq-spring-boot-starter-1.4.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.4.0/oxmq-spring-boot-starter-1.4.0.jar)
+Direct download links from [GitHub Releases v1.5.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0):
+- [`oxmq-core-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxmq-core-1.5.0.jar)
+- [`oxmq-spring-boot-starter-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxmq-spring-boot-starter-1.5.0.jar)
+- [`oxguard-365-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxguard-365-1.5.0.jar)
 
 ---
 

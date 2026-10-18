@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PID_FILE="${SCRIPT_DIR}/.oxguard.pid"
 LOG_FILE="${SCRIPT_DIR}/oxguard.log"
-JAR_FILE="${SCRIPT_DIR}/target/oxguard-365-1.4.0.jar"
+JAR_FILE="${SCRIPT_DIR}/target/oxguard-365-1.5.0.jar"
 
 # ANSI Colors
 GREEN='\033[0;32m'
