@@ -112,6 +112,110 @@ public class FileInventoryRepository {
         return map;
     }
 
+    public Map<String, Object> getHierarchy() {
+        List<MonitoredDrive> drives = getAllDrives();
+        List<ScannedFileRecord> allFiles = getAllFiles();
+
+        Map<String, List<ScannedFileRecord>> filesByDrive = allFiles.stream()
+                .collect(Collectors.groupingBy(ScannedFileRecord::driveId));
+
+        // If drives table is empty, synthesize from files
+        if (drives.isEmpty()) {
+            for (String driveId : filesByDrive.keySet()) {
+                io.oxmq.oxguard.model.DriveType type = driveId.startsWith("od-") 
+                        ? io.oxmq.oxguard.model.DriveType.USER_ONEDRIVE 
+                        : io.oxmq.oxguard.model.DriveType.SHAREPOINT_LIBRARY;
+                String name = driveId;
+                if ("sp-drive-finance".equals(driveId)) name = "Finance & Operations / Financial Documents";
+                else if ("sp-drive-hr".equals(driveId)) name = "Human Resources / Employee Records";
+                else if ("sp-drive-legal".equals(driveId)) name = "Corporate Legal / Contracts & Compliance";
+                else if ("sp-drive-it".equals(driveId)) name = "IT & Infrastructure / System Architecture";
+                else if ("od-drive-ciso".equals(driveId)) name = "Alex Chen (CISO) / Personal OneDrive";
+                else if ("od-drive-cfo".equals(driveId)) name = "Sarah Miller (CFO) / Personal OneDrive";
+                else if ("od-drive-lead-architect".equals(driveId)) name = "Marcus Vance (Lead Architect) / Personal OneDrive";
+
+                drives.add(new MonitoredDrive(driveId, "contoso-enterprise-tenant", type, name, "admin", null, null));
+            }
+        }
+
+        List<Map<String, Object>> sharepointSites = new java.util.ArrayList<>();
+        List<Map<String, Object>> oneDrives = new java.util.ArrayList<>();
+
+        for (MonitoredDrive drive : drives) {
+            List<ScannedFileRecord> driveFiles = filesByDrive.getOrDefault(drive.driveId(), java.util.Collections.emptyList());
+
+            // Group files by folder path
+            Map<String, List<ScannedFileRecord>> byFolder = new LinkedHashMap<>();
+            for (ScannedFileRecord f : driveFiles) {
+                String cleanPath = f.filePath();
+                if (cleanPath.contains("root:")) {
+                    cleanPath = cleanPath.substring(cleanPath.indexOf("root:") + 5);
+                }
+                int lastSlash = cleanPath.lastIndexOf('/');
+                String folder = (lastSlash > 0) ? cleanPath.substring(0, lastSlash) : "/General";
+                byFolder.computeIfAbsent(folder, k -> new java.util.ArrayList<>()).add(f);
+            }
+
+            List<Map<String, Object>> folderList = new java.util.ArrayList<>();
+            for (Map.Entry<String, List<ScannedFileRecord>> entry : byFolder.entrySet()) {
+                String folderPath = entry.getKey();
+                List<ScannedFileRecord> files = entry.getValue();
+                String folderName = folderPath.substring(folderPath.lastIndexOf('/') + 1);
+
+                long folderThreats = files.stream().filter(f -> f.threatVerdict() != ThreatVerdict.CLEAN).count();
+                long folderPublic = files.stream().filter(f -> f.exposureLevel() == ExposureLevel.PUBLIC_ANONYMOUS).count();
+
+                Map<String, Object> folderNode = new LinkedHashMap<>();
+                folderNode.put("folderName", folderName);
+                folderNode.put("folderPath", folderPath);
+                folderNode.put("totalFiles", files.size());
+                folderNode.put("threatCount", folderThreats);
+                folderNode.put("publicExposureCount", folderPublic);
+                folderNode.put("files", files);
+                folderList.add(folderNode);
+            }
+
+            long driveThreats = driveFiles.stream().filter(f -> f.threatVerdict() != ThreatVerdict.CLEAN).count();
+            long drivePublic = driveFiles.stream().filter(f -> f.exposureLevel() == ExposureLevel.PUBLIC_ANONYMOUS).count();
+
+            Map<String, Object> driveNode = new LinkedHashMap<>();
+            driveNode.put("driveId", drive.driveId());
+            driveNode.put("name", drive.name());
+            driveNode.put("driveType", drive.driveType().name());
+            driveNode.put("ownerPrincipal", drive.ownerPrincipal());
+            driveNode.put("totalFiles", driveFiles.size());
+            driveNode.put("threatCount", driveThreats);
+            driveNode.put("publicExposureCount", drivePublic);
+            driveNode.put("folders", folderList);
+
+            if (drive.driveType() == io.oxmq.oxguard.model.DriveType.SHAREPOINT_LIBRARY) {
+                String siteName = drive.name();
+                String libName = "Document Library";
+                if (siteName.contains("/")) {
+                    String[] parts = siteName.split("/", 2);
+                    siteName = parts[0].trim();
+                    libName = parts[1].trim();
+                }
+                driveNode.put("siteName", siteName);
+                driveNode.put("libraryName", libName);
+                sharepointSites.add(driveNode);
+            } else {
+                driveNode.put("ownerName", drive.name().replace("'s OneDrive", "").replace("Personal OneDrive", "").replace("/", "").trim());
+                driveNode.put("libraryName", "Personal OneDrive");
+                oneDrives.add(driveNode);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("tenantId", "contoso-enterprise-tenant");
+        result.put("totalFiles", allFiles.size());
+        result.put("totalThreats", allFiles.stream().filter(f -> f.threatVerdict() != ThreatVerdict.CLEAN).count());
+        result.put("totalDrives", drives.size());
+        result.put("sharepointSites", sharepointSites);
+        result.put("oneDrives", oneDrives);
+        return result;
+    }
+
     @Transactional
     public void clear() {
         fileRepo.deleteAllInBatch();

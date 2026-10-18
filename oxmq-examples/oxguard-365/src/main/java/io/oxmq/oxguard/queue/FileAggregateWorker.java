@@ -29,19 +29,25 @@ public class FileAggregateWorker {
     private final FileInventoryRepository repository;
     private final LiveMetricsService metricsService;
     private final ObjectMapper objectMapper;
+    private final io.oxmq.oxguard.service.TenantCooldownService cooldownService;
 
     public FileAggregateWorker(
             FileInventoryRepository repository,
             LiveMetricsService metricsService,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            io.oxmq.oxguard.service.TenantCooldownService cooldownService
     ) {
         this.repository = repository;
         this.metricsService = metricsService;
         this.objectMapper = objectMapper;
+        this.cooldownService = cooldownService;
     }
 
     @OxmqListener(queue = OxGuardQueueConstants.QUEUE_FILE_AGGREGATE, concurrency = 15)
     public ScannedFileRecord processAggregate(Job<FileAggregatePayload> job) {
+        if (job.getAttemptsMade() > 1) {
+            cooldownService.recordRetryRecovered();
+        }
         FileAggregatePayload payload = (FileAggregatePayload) job.getData();
         Map<String, Object> childrenValues = job.getChildrenValues();
 

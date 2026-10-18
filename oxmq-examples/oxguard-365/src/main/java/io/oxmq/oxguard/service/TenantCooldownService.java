@@ -7,6 +7,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import io.oxmq.oxguard.model.ScanOrigin;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.LongAdder;
+
 /**
  * Approach 5: Distributed Tenant Cooldown Sentinel Service.
  * Manages Redis keys for tenant throttling cooldown and token bucket headroom yielding.
@@ -20,7 +26,14 @@ public class TenantCooldownService {
 
     private final RedisConnectionManager connectionManager;
     private final double headroomYieldThreshold;
-    private final int maxRequestsPerSecond;
+    private final AtomicInteger maxRequestsPerSecond;
+
+    // Real-time API Quota Telemetry Counters
+    private final LongAdder forwardApiQuotaUsed = new LongAdder();
+    private final LongAdder backwardApiQuotaUsed = new LongAdder();
+    private final LongAdder backwardYieldCount = new LongAdder();
+    private final LongAdder throttles429HitCount = new LongAdder();
+    private final LongAdder retriesRecoveredCount = new LongAdder();
 
     public TenantCooldownService(
             RedisConnectionManager connectionManager,
@@ -29,7 +42,7 @@ public class TenantCooldownService {
     ) {
         this.connectionManager = connectionManager;
         this.headroomYieldThreshold = headroomYieldThreshold;
-        this.maxRequestsPerSecond = maxRequestsPerSecond;
+        this.maxRequestsPerSecond = new AtomicInteger(maxRequestsPerSecond);
     }
 
     /**
@@ -69,9 +82,15 @@ public class TenantCooldownService {
     }
 
     /**
-     * Records an API call for tenant token bucket tracking.
+     * Records an API call for tenant token bucket tracking partitioned by ScanOrigin.
      */
-    public void recordTenantApiCall(String tenantId) {
+    public void recordTenantApiCall(String tenantId, ScanOrigin origin) {
+        if (origin == ScanOrigin.FORWARD) {
+            forwardApiQuotaUsed.increment();
+        } else {
+            backwardApiQuotaUsed.increment();
+        }
+
         try {
             RedisCommands<String, String> sync = connectionManager.sync();
             String key = RATE_USAGE_KEY_PREFIX + tenantId + ":" + (System.currentTimeMillis() / 1000L);
@@ -82,6 +101,22 @@ public class TenantCooldownService {
         } catch (Exception e) {
             log.debug("Error recording tenant API call: {}", e.getMessage());
         }
+    }
+
+    public void recordTenantApiCall(String tenantId) {
+        recordTenantApiCall(tenantId, ScanOrigin.BACKWARD);
+    }
+
+    public void recordBackwardYield() {
+        backwardYieldCount.increment();
+    }
+
+    public void record429Hit() {
+        throttles429HitCount.increment();
+    }
+
+    public void recordRetryRecovered() {
+        retriesRecoveredCount.increment();
     }
 
     /**
@@ -95,10 +130,12 @@ public class TenantCooldownService {
             String val = sync.get(key);
             if (val != null) {
                 int used = Integer.parseInt(val);
-                double remainingRatio = 1.0 - ((double) used / (double) maxRequestsPerSecond);
+                int limit = maxRequestsPerSecond.get();
+                double remainingRatio = 1.0 - ((double) used / (double) limit);
                 if (remainingRatio < headroomYieldThreshold) {
-                    log.info("Token bucket headroom low ({}% remaining for tenant [{}]). Yielding backward crawl!",
-                            Math.round(remainingRatio * 100), tenantId);
+                    backwardYieldCount.increment();
+                    log.info("Token bucket headroom low ({}% remaining for tenant [{}], used {}/{}). Yielding backward crawl!",
+                            Math.round(remainingRatio * 100), tenantId, used, limit);
                     return true;
                 }
             }
@@ -106,5 +143,49 @@ public class TenantCooldownService {
             log.debug("Error checking headroom yield: {}", e.getMessage());
         }
         return false;
+    }
+
+    public void setMaxRequestsPerSecond(int limit) {
+        if (limit > 0) {
+            this.maxRequestsPerSecond.set(limit);
+            log.info("Tenant rate limit updated to {} req/s", limit);
+        }
+    }
+
+    public int getMaxRequestsPerSecond() {
+        return maxRequestsPerSecond.get();
+    }
+
+    public Map<String, Object> getQuotaTelemetry(String tenantId) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        int limit = maxRequestsPerSecond.get();
+        int usedInSecond = 0;
+        try {
+            RedisCommands<String, String> sync = connectionManager.sync();
+            String key = RATE_USAGE_KEY_PREFIX + tenantId + ":" + (System.currentTimeMillis() / 1000L);
+            String val = sync.get(key);
+            if (val != null) {
+                usedInSecond = Integer.parseInt(val);
+            }
+        } catch (Exception ignored) {}
+
+        int remainingTokens = Math.max(0, limit - usedInSecond);
+        double remainingRatio = Math.max(0.0, 1.0 - ((double) usedInSecond / (double) limit));
+        long cooldownRemaining = getRemainingCooldownMs(tenantId);
+
+        map.put("maxRequestsPerSecond", limit);
+        map.put("currentSecondUsage", usedInSecond);
+        map.put("remainingTokens", remainingTokens);
+        map.put("headroomYieldThreshold", headroomYieldThreshold);
+        map.put("remainingHeadroomPercent", Math.round(remainingRatio * 1000.0) / 10.0);
+        map.put("isYieldingActive", remainingRatio < headroomYieldThreshold);
+        map.put("forwardApiQuotaUsed", forwardApiQuotaUsed.sum());
+        map.put("backwardApiQuotaUsed", backwardApiQuotaUsed.sum());
+        map.put("backwardYieldCount", backwardYieldCount.sum());
+        map.put("throttles429HitCount", throttles429HitCount.sum());
+        map.put("retriesRecoveredCount", retriesRecoveredCount.sum());
+        map.put("is429CooldownActive", cooldownRemaining > 0);
+        map.put("cooldownRemainingMs", cooldownRemaining);
+        return map;
     }
 }

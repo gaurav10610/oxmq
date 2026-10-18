@@ -27,33 +27,39 @@
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
 
     <!-- Top Navigation Header -->
-    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-4 sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto flex items-center justify-between">
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-3.5 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div class="flex items-center space-x-3">
                 <span class="text-2xl">🛡️</span>
                 <div>
-                    <h1 class="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent">
-                        OXGUARD 365
+                    <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent flex items-center space-x-2">
+                        <span>OXGUARD 365</span>
+                        <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800">Enterprise DSPM</span>
                     </h1>
-                    <p class="text-xs text-slate-400">Enterprise SaaS DSPM & Threat Analysis Engine (Java 17 + OxMQ)</p>
+                    <p class="text-xs text-slate-400">Microsoft 365 Multi-Tenant Exposure & Threat Analysis Engine (OxMQ + Java 17)</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-4">
+            <div class="flex flex-wrap items-center gap-2.5">
                 <div id="connectionStatus" class="flex items-center space-x-2 text-xs px-3 py-1.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>LIVE STREAM ACTIVE</span>
+                    <span>LIVE SSE</span>
                 </div>
-                <button onclick="triggerCrawl()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-blue-900/40 flex items-center space-x-1.5">
+                <a href="http://localhost:3000" target="_blank" class="bg-amber-600/90 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-amber-950/40 flex items-center space-x-1.5 border border-amber-500/40" title="Inspect Queue Depths, Worker Locks, and Completed DAGs in Bull-Board">
+                    <span>📊</span>
+                    <span>Bull-Board UI (:3000)</span>
+                    <span class="text-[10px]">↗</span>
+                </a>
+                <button onclick="triggerCrawl()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-blue-900/40 flex items-center space-x-1">
                     <span>🔄</span>
-                    <span>Trigger Baseline Crawl (P10)</span>
+                    <span>Baseline Crawl (P10)</span>
                 </button>
-                <button onclick="seedAndCrawl(1000)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-indigo-900/40 flex items-center space-x-1.5">
+                <button onclick="seedAndCrawl(1000)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-indigo-900/40 flex items-center space-x-1">
                     <span>🚀</span>
                     <span>Scan 1,000+ Files</span>
                 </button>
-                <button onclick="triggerUploadModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-900/40 flex items-center space-x-1.5">
+                <button onclick="triggerUploadModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-emerald-900/40 flex items-center space-x-1">
                     <span>⚡</span>
-                    <span>Simulate Real-Time Upload (P1)</span>
+                    <span>Simulate Upload (P1)</span>
                 </button>
             </div>
         </div>
@@ -62,135 +68,230 @@
     <!-- Main Container -->
     <main class="max-w-7xl mx-auto w-full px-6 py-6 flex-1 space-y-6">
 
-        <!-- Metrics Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Total Scanned</div>
+        <!-- Top Metrics Cards Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-3.5">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Total Scanned</div>
                 <div id="metricTotalFiles" class="text-2xl font-bold text-white mt-1">0</div>
-                <div class="text-[10px] text-slate-500 mt-1">Across all drives</div>
+                <div class="text-[10px] text-slate-500 mt-0.5">Across all drives</div>
             </div>
-            <div class="bg-slate-900 border border-red-950/60 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-red-400 uppercase tracking-wider font-semibold">Public Links</div>
+            <div class="bg-slate-900 border border-red-950/60 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-red-400 uppercase tracking-wider font-semibold">Public Links</div>
                 <div id="metricPublic" class="text-2xl font-bold text-red-400 mt-1">0</div>
-                <div class="text-[10px] text-red-500/80 mt-1">🔴 Anonymous public access</div>
+                <div class="text-[10px] text-red-500/80 mt-0.5">🔴 Anonymous link access</div>
             </div>
-            <div class="bg-slate-900 border border-amber-950/60 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-amber-400 uppercase tracking-wider font-semibold">External Guests</div>
+            <div class="bg-slate-900 border border-amber-950/60 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-amber-400 uppercase tracking-wider font-semibold">External Guests</div>
                 <div id="metricExternal" class="text-2xl font-bold text-amber-400 mt-1">0</div>
-                <div class="text-[10px] text-amber-500/80 mt-1">🟠 Third-party partners</div>
+                <div class="text-[10px] text-amber-500/80 mt-0.5">🟠 Vendor/Partner shared</div>
             </div>
-            <div class="bg-slate-900 border border-yellow-950/60 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-yellow-400 uppercase tracking-wider font-semibold">Org-Wide</div>
+            <div class="bg-slate-900 border border-yellow-950/60 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-yellow-400 uppercase tracking-wider font-semibold">Org-Wide</div>
                 <div id="metricOrgWide" class="text-2xl font-bold text-yellow-400 mt-1">0</div>
-                <div class="text-[10px] text-yellow-500/80 mt-1">🟡 All tenant employees</div>
+                <div class="text-[10px] text-yellow-500/80 mt-0.5">🟡 All tenant employees</div>
             </div>
-            <div class="bg-slate-900 border border-purple-950/60 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-purple-400 uppercase tracking-wider font-semibold">Threats Found</div>
+            <div class="bg-slate-900 border border-purple-950/60 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-purple-400 uppercase tracking-wider font-semibold">Threats Found</div>
                 <div id="metricThreats" class="text-2xl font-bold text-purple-400 mt-1">0</div>
-                <div class="text-[10px] text-purple-500/80 mt-1">🛑 Malware / Entropy / Mismatch</div>
+                <div class="text-[10px] text-purple-500/80 mt-0.5">🛑 Malware / Entropy / PE</div>
             </div>
-            <div class="bg-slate-900 border border-blue-950/60 rounded-xl p-4 shadow-sm">
-                <div class="text-xs text-sky-400 uppercase tracking-wider font-semibold">Forward vs Back</div>
+            <div class="bg-slate-900 border border-blue-950/60 rounded-xl p-3.5 shadow-sm">
+                <div class="text-[11px] text-sky-400 uppercase tracking-wider font-semibold">Forward vs Back</div>
                 <div id="metricRatio" class="text-xl font-bold text-sky-300 mt-1">0 / 0</div>
-                <div class="text-[10px] text-sky-500/80 mt-1">⚡ Priority 1 vs 🔄 P10</div>
+                <div class="text-[10px] text-sky-500/80 mt-0.5">⚡ Priority 1 vs 🔄 P10</div>
             </div>
         </div>
 
-        <!-- Architecture Callout / OxMQ Features -->
-        <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 text-xs text-slate-300 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div class="flex items-start space-x-2">
-                <span class="text-lg">🌲</span>
-                <div>
-                    <div class="font-semibold text-slate-100">FlowProducer DAG</div>
-                    <div class="text-slate-400 text-[11px]">Parallel Pillar 1 (Exposure) & Pillar 2 (Malware) converge into Aggregator.</div>
+        <!-- Real-Time API Rate Limiting & Quota Telemetry Panel -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-base">🎯</span>
+                    <h2 class="text-sm font-bold text-white tracking-tight">API Quota, Token Bucket & Throttling Sentinel</h2>
+                    <span id="quotaYieldBadge" class="text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">HEADROOM HEALTHY (&gt;25%)</span>
+                    <span id="cooldownBadge" class="hidden text-[10px] px-2 py-0.5 rounded font-semibold bg-red-950 text-red-400 border border-red-800 animate-pulse">⚠️ 429 COOLDOWN ACTIVE</span>
+                </div>
+                <div class="flex items-center space-x-2 text-xs">
+                    <span class="text-slate-400 text-xs">Rate Limit:</span>
+                    <button onclick="setRateLimit(30)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">30 req/s (Tight)</button>
+                    <button onclick="setRateLimit(60)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">60 req/s (Medium)</button>
+                    <button onclick="setRateLimit(500)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">500 req/s (High)</button>
+                    <button onclick="simulate429Burst(20)" class="px-2.5 py-1 rounded bg-red-950/80 hover:bg-red-900 text-[11px] font-semibold text-red-300 border border-red-800 flex items-center space-x-1" title="Trigger 20 consecutive HTTP 429 responses to verify OxMQ backoff">
+                        <span>💥</span>
+                        <span>Simulate 429 Burst</span>
+                    </button>
                 </div>
             </div>
-            <div class="flex items-start space-x-2">
-                <span class="text-lg">⚖️</span>
-                <div>
-                    <div class="font-semibold text-slate-100">Priority Arbitration</div>
-                    <div class="text-slate-400 text-[11px]">Forward events (P1) strictly preempt backward baseline crawl (P10).</div>
+
+            <!-- Token Capacity Progress Bar -->
+            <div class="space-y-1">
+                <div class="flex justify-between text-xs text-slate-400">
+                    <span>Current Second Token Consumption: <strong id="tokenConsumptionText" class="text-slate-200">0 / 50 req/s</strong></span>
+                    <span>Remaining Capacity: <strong id="tokenRemainingText" class="text-emerald-400">100%</strong></span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden flex">
+                    <div id="tokenProgressBar" class="bg-gradient-to-r from-emerald-500 to-sky-500 h-2 transition-all duration-300" style="width: 100%"></div>
                 </div>
             </div>
-            <div class="flex items-start space-x-2">
-                <span class="text-lg">🛡️</span>
-                <div>
-                    <div class="font-semibold text-slate-100">Approach 5 429 Sentinel</div>
-                    <div class="text-slate-400 text-[11px]">Dynamic <code>DelayedException</code> + Redis sentinel locks tenant during Graph rate limits.</div>
+
+            <!-- Quota Sub-Metrics -->
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-3 pt-1 text-xs">
+                <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+                    <div class="text-slate-400 text-[10px] uppercase font-semibold">⚡ Forward Quota (P1)</div>
+                    <div id="quotaFwdUsed" class="text-base font-bold text-sky-400 mt-0.5">0 calls</div>
+                    <div class="text-[10px] text-slate-500">Real-time webhook events</div>
                 </div>
-            </div>
-            <div class="flex items-start space-x-2">
-                <span class="text-lg">⏱️</span>
-                <div>
-                    <div class="font-semibold text-slate-100">15s Auto-Save Debounce</div>
-                    <div class="text-slate-400 text-[11px]">OxMQ v6 deduplication collapses rapid Office 365 edits into 1 inspection job.</div>
+                <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+                    <div class="text-slate-400 text-[10px] uppercase font-semibold">🔄 Backward Quota (P10)</div>
+                    <div id="quotaBwdUsed" class="text-base font-bold text-indigo-400 mt-0.5">0 calls</div>
+                    <div class="text-[10px] text-slate-500">Historical baseline crawl</div>
+                </div>
+                <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+                    <div class="text-slate-400 text-[10px] uppercase font-semibold">🛑 Backward Yield Events</div>
+                    <div id="quotaYieldCount" class="text-base font-bold text-amber-400 mt-0.5">0 times</div>
+                    <div class="text-[10px] text-slate-500">Yielded to protect P1 headroom</div>
+                </div>
+                <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+                    <div class="text-slate-400 text-[10px] uppercase font-semibold">⚠️ 429 Throttles Encountered</div>
+                    <div id="quota429Hits" class="text-base font-bold text-red-400 mt-0.5">0</div>
+                    <div class="text-[10px] text-slate-500">Graph activity limits hit</div>
+                </div>
+                <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
+                    <div class="text-slate-400 text-[10px] uppercase font-semibold">🔁 Retries Recovered</div>
+                    <div id="quotaRecovered" class="text-base font-bold text-emerald-400 mt-0.5">0 (0% Loss)</div>
+                    <div class="text-[10px] text-slate-500">Delayed jobs completed</div>
                 </div>
             </div>
         </div>
 
-        <!-- Filters & Search Toolbar -->
-        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-4 rounded-xl border border-slate-800">
-            <div class="flex items-center space-x-3">
-                <label class="text-xs font-semibold text-slate-400">Exposure:</label>
-                <select id="filterExposure" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
-                    <option value="">All Exposures</option>
-                    <option value="PUBLIC_ANONYMOUS">🔴 Public Anonymous</option>
-                    <option value="EXTERNAL_GUEST">🟠 External Guest</option>
-                    <option value="ORGANIZATION_WIDE">🟡 Organization Wide</option>
-                    <option value="INTERNAL_RESTRICTED">🟢 Internal Restricted</option>
-                    <option value="PRIVATE">🔒 Private</option>
-                </select>
-
-                <label class="text-xs font-semibold text-slate-400">Threat:</label>
-                <select id="filterThreat" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
-                    <option value="">All Threats</option>
-                    <option value="CLEAN">🟢 Clean</option>
-                    <option value="MALWARE_DETECTED">🛑 Malware Detected (EICAR)</option>
-                    <option value="SUSPICIOUS_ENTROPY">⚠️ Suspicious High Entropy</option>
-                    <option value="MIME_MISMATCH">⚠️ Executable MIME Mismatch</option>
-                </select>
-
-                <label class="text-xs font-semibold text-slate-400">Origin:</label>
-                <select id="filterOrigin" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
-                    <option value="">All Scans</option>
-                    <option value="FORWARD">⚡ Forward Scan (P1)</option>
-                    <option value="BACKWARD">🔄 Backward Scan (P10)</option>
-                </select>
+        <!-- Navigation Tabs: Flat Table vs Tree Hierarchy vs Embedded Bull-Board -->
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div class="flex space-x-2">
+                <button id="tabTable" onclick="switchView('table')" class="px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm">
+                    <span>📋</span>
+                    <span>Flat Scanned Files Table</span>
+                </button>
+                <button id="tabHierarchy" onclick="switchView('hierarchy')" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800">
+                    <span>🌳</span>
+                    <span>Top-to-Bottom Hierarchy (Site ➔ Library ➔ Folder ➔ File)</span>
+                </button>
+                <button id="tabBullboard" onclick="switchView('bullboard')" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800">
+                    <span>📊</span>
+                    <span>Embedded Bull-Board Monitor</span>
+                </button>
             </div>
-            <div class="text-xs text-slate-400">
-                Auto-updating via Server-Sent Events (SSE)
+            <div class="text-xs text-slate-500 font-mono">
+                PostgreSQL Container: <span class="text-emerald-400">oxguard-postgres</span>
             </div>
         </div>
 
-        <!-- Scanned Files Table -->
-        <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left text-xs">
-                    <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
-                        <tr>
-                            <th class="px-4 py-3">File Name & Path</th>
-                            <th class="px-4 py-3">Drive / Library</th>
-                            <th class="px-4 py-3">Size</th>
-                            <th class="px-4 py-3">Exposure Level (Pillar 1)</th>
-                            <th class="px-4 py-3">Threat Analysis (Pillar 2)</th>
-                            <th class="px-4 py-3">Scan Origin</th>
-                            <th class="px-4 py-3">Timestamp</th>
-                        </tr>
-                    </thead>
-                    <tbody id="filesTableBody" class="divide-y divide-slate-800/60 font-mono">
-                        <tr>
-                            <td colspan="7" class="px-4 py-8 text-center text-slate-500">
-                                No files scanned yet. Click "Trigger Baseline Crawl" to initiate discovery.
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+        <!-- VIEW 1: Flat Table View -->
+        <div id="viewTable" class="space-y-4">
+            <!-- Filters & Search Toolbar -->
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-3.5 rounded-xl border border-slate-800">
+                <div class="flex flex-wrap items-center gap-3">
+                    <label class="text-xs font-semibold text-slate-400">Exposure:</label>
+                    <select id="filterExposure" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                        <option value="">All Exposures</option>
+                        <option value="PUBLIC_ANONYMOUS">🔴 Public Anonymous</option>
+                        <option value="EXTERNAL_GUEST">🟠 External Guest</option>
+                        <option value="ORGANIZATION_WIDE">🟡 Organization Wide</option>
+                        <option value="INTERNAL_RESTRICTED">🟢 Internal Restricted</option>
+                        <option value="PRIVATE">🔒 Private</option>
+                    </select>
+
+                    <label class="text-xs font-semibold text-slate-400">Threat:</label>
+                    <select id="filterThreat" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                        <option value="">All Threats</option>
+                        <option value="CLEAN">🟢 Clean</option>
+                        <option value="MALWARE_DETECTED">🛑 Malware Detected (EICAR)</option>
+                        <option value="SUSPICIOUS_ENTROPY">⚠️ Suspicious High Entropy</option>
+                        <option value="MIME_MISMATCH">⚠️ Executable MIME Mismatch</option>
+                    </select>
+
+                    <label class="text-xs font-semibold text-slate-400">Origin:</label>
+                    <select id="filterOrigin" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                        <option value="">All Scans</option>
+                        <option value="FORWARD">⚡ Forward Scan (P1)</option>
+                        <option value="BACKWARD">🔄 Backward Scan (P10)</option>
+                    </select>
+                </div>
+                <div class="text-xs text-slate-400">
+                    Showing latest 100 records (Virtual Window)
+                </div>
+            </div>
+
+            <!-- Scanned Files Table -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-sm">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                            <tr>
+                                <th class="px-4 py-3">File Name & Hierarchical Path</th>
+                                <th class="px-4 py-3">Drive / Library</th>
+                                <th class="px-4 py-3">Size</th>
+                                <th class="px-4 py-3">Exposure (Pillar 1)</th>
+                                <th class="px-4 py-3">Threat Verdict (Pillar 2)</th>
+                                <th class="px-4 py-3">Scan Origin</th>
+                                <th class="px-4 py-3">Timestamp</th>
+                            </tr>
+                        </thead>
+                        <tbody id="filesTableBody" class="divide-y divide-slate-800/60 font-mono">
+                            <tr>
+                                <td colspan="7" class="px-4 py-8 text-center text-slate-500">
+                                    No files scanned yet. Click "Scan 1,000+ Files" to initiate discovery.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- VIEW 2: Top-to-Bottom Tenant Hierarchy View -->
+        <div id="viewHierarchy" class="hidden space-y-4">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900 p-3.5 rounded-xl border border-slate-800">
+                <div class="flex items-center space-x-3">
+                    <span class="text-lg">🏢</span>
+                    <div>
+                        <div class="font-bold text-sm text-white">Contoso 365 Enterprise Organization Tree</div>
+                        <div class="text-[11px] text-slate-400">Site Collection ➔ Document Libraries ➔ Folder Directories ➔ Files</div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <input id="hierarchySearchInput" oninput="filterHierarchyTree()" type="text" placeholder="Filter files or folders..." class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:ring-1 focus:ring-blue-500 w-64">
+                    <button onclick="expandAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">+ Expand All</button>
+                    <button onclick="collapseAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">- Collapse All</button>
+                    <button onclick="loadHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <!-- Hierarchy Tree Container -->
+            <div id="hierarchyTreeContainer" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 font-mono text-xs">
+                <div class="text-center py-10 text-slate-500">Loading enterprise hierarchy tree...</div>
+            </div>
+        </div>
+
+        <!-- VIEW 3: Embedded Bull-Board Monitor View -->
+        <div id="viewBullboard" class="hidden space-y-4">
+            <div class="flex items-center justify-between bg-slate-900 p-3.5 rounded-xl border border-slate-800 text-xs">
+                <div class="flex items-center space-x-2">
+                    <span class="text-base">📊</span>
+                    <span class="text-slate-300">Bull-Board Queue Monitoring Dashboard embedded via iframe from <strong class="text-amber-400">http://localhost:3000</strong></span>
+                </div>
+                <a href="http://localhost:3000" target="_blank" class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold flex items-center space-x-1">
+                    <span>Open in Full Tab</span>
+                    <span>↗</span>
+                </a>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+                <iframe src="http://localhost:3000" class="w-full h-[760px] border-none bg-slate-950"></iframe>
             </div>
         </div>
     </main>
 
     <!-- Simulate Upload Modal -->
-    <div id="uploadModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div id="uploadModal" class="hidden fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                 <h3 class="text-sm font-bold text-white flex items-center space-x-2">
@@ -205,13 +306,15 @@
                     <input id="modalFileName" type="text" value="Executive_Passcode_Vault.xlsx" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
                 </div>
                 <div>
-                    <label class="block text-slate-400 mb-1">Target Drive</label>
+                    <label class="block text-slate-400 mb-1">Target Drive / Library</label>
                     <select id="modalDriveId" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
-                        <option value="sp-drive-finance">SharePoint: Finance_Team_Docs</option>
-                        <option value="sp-drive-hr">SharePoint: HR_Policies_Docs</option>
-                        <option value="sp-drive-legal">SharePoint: Legal_Compliance_Vault</option>
-                        <option value="od-drive-ciso">OneDrive: ciso@contoso.com</option>
-                        <option value="od-drive-cfo">OneDrive: cfo@contoso.com</option>
+                        <option value="sp-drive-finance">SharePoint: Finance & Operations / Financial Documents</option>
+                        <option value="sp-drive-hr">SharePoint: Human Resources / Employee Records</option>
+                        <option value="sp-drive-legal">SharePoint: Corporate Legal / Contracts & Compliance</option>
+                        <option value="sp-drive-it">SharePoint: IT & Infrastructure / System Architecture</option>
+                        <option value="od-drive-ciso">OneDrive: Alex Chen (CISO) Personal OneDrive</option>
+                        <option value="od-drive-cfo">OneDrive: Sarah Miller (CFO) Personal OneDrive</option>
+                        <option value="od-drive-lead-architect">OneDrive: Marcus Vance (Lead Architect) Personal OneDrive</option>
                     </select>
                 </div>
                 <div>
@@ -229,7 +332,7 @@
                     <select id="modalThreat" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
                         <option value="CLEAN">🟢 Clean (Standard Business Document)</option>
                         <option value="EICAR">🛑 EICAR Virus Signature Match</option>
-                        <option value="ENTROPY">⚠️ High Entropy (Ransomware/Encrypted)</option>
+                        <option value="ENTROPY">⚠️ High Entropy (Ransomware Payload)</option>
                         <option value="MIME_MISMATCH">⚠️ PE Executable Header (MZ) in Office Doc</option>
                     </select>
                 </div>
@@ -245,6 +348,30 @@
 
     <!-- Client-side script -->
     <script>
+        let currentHierarchyData = null;
+
+        function switchView(viewName) {
+            document.getElementById('viewTable').classList.add('hidden');
+            document.getElementById('viewHierarchy').classList.add('hidden');
+            document.getElementById('viewBullboard').classList.add('hidden');
+
+            document.getElementById('tabTable').className = "px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800";
+            document.getElementById('tabHierarchy').className = "px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800";
+            document.getElementById('tabBullboard').className = "px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800";
+
+            if (viewName === 'table') {
+                document.getElementById('viewTable').classList.remove('hidden');
+                document.getElementById('tabTable').className = "px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm";
+            } else if (viewName === 'hierarchy') {
+                document.getElementById('viewHierarchy').classList.remove('hidden');
+                document.getElementById('tabHierarchy').className = "px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm";
+                loadHierarchy();
+            } else if (viewName === 'bullboard') {
+                document.getElementById('viewBullboard').classList.remove('hidden');
+                document.getElementById('tabBullboard').className = "px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 text-white transition flex items-center space-x-1.5 shadow-sm";
+            }
+        }
+
         function triggerCrawl() {
             fetch('/api/v1/dashboard/trigger/crawl', { method: 'POST' })
                 .then(r => r.json())
@@ -259,6 +386,24 @@
                     triggerCrawl();
                 })
                 .catch(err => alert('Failed seeding: ' + err));
+        }
+
+        function setRateLimit(limit) {
+            fetch('/api/v1/dashboard/ratelimit?limit=' + limit, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    loadQuotaTelemetry();
+                })
+                .catch(err => alert('Failed updating rate limit: ' + err));
+        }
+
+        function simulate429Burst(count) {
+            fetch('/api/v1/dashboard/simulate-429?enabled=true&burstCount=' + count, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    loadQuotaTelemetry();
+                })
+                .catch(err => alert('Failed triggering 429 burst: ' + err));
         }
 
         function triggerUploadModal() {
@@ -283,6 +428,7 @@
                     closeUploadModal();
                     loadFiles();
                     loadMetrics();
+                    loadQuotaTelemetry();
                 })
                 .catch(err => alert('Failed enqueueing upload: ' + err));
         }
@@ -298,6 +444,47 @@
                     document.getElementById('metricThreats').innerText = m.totalThreats || 0;
                     document.getElementById('metricRatio').innerText = (m.forwardScans || 0) + ' / ' + (m.backwardScans || 0);
                 });
+        }
+
+        function loadQuotaTelemetry() {
+            fetch('/api/v1/dashboard/quota')
+                .then(r => r.json())
+                .then(q => {
+                    const limit = q.maxRequestsPerSecond || 50;
+                    const used = q.currentSecondUsage || 0;
+                    const remainingTokens = q.remainingTokens || 0;
+                    const headroomPct = q.remainingHeadroomPercent || 100;
+
+                    document.getElementById('tokenConsumptionText').innerText = `${used} / ${limit} req/s`;
+                    document.getElementById('tokenRemainingText').innerText = `${headroomPct}% (${remainingTokens} tokens)`;
+
+                    const bar = document.getElementById('tokenProgressBar');
+                    bar.style.width = Math.max(5, Math.min(100, headroomPct)) + '%';
+
+                    if (headroomPct < 25) {
+                        bar.className = "bg-gradient-to-r from-red-500 to-amber-500 h-2 transition-all duration-300";
+                        document.getElementById('quotaYieldBadge').className = "text-[10px] px-2 py-0.5 rounded font-bold bg-amber-950 text-amber-400 border border-amber-800 animate-pulse";
+                        document.getElementById('quotaYieldBadge').innerText = "🛑 YIELDING TO FORWARD (<25%)";
+                    } else {
+                        bar.className = "bg-gradient-to-r from-emerald-500 to-sky-500 h-2 transition-all duration-300";
+                        document.getElementById('quotaYieldBadge').className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800";
+                        document.getElementById('quotaYieldBadge').innerText = "HEADROOM HEALTHY (>25%)";
+                    }
+
+                    if (q.is429CooldownActive) {
+                        document.getElementById('cooldownBadge').classList.remove('hidden');
+                        document.getElementById('cooldownBadge').innerText = `⚠️ 429 COOLDOWN (${Math.round(q.cooldownRemainingMs / 1000)}s)`;
+                    } else {
+                        document.getElementById('cooldownBadge').classList.add('hidden');
+                    }
+
+                    document.getElementById('quotaFwdUsed').innerText = (q.forwardApiQuotaUsed || 0) + ' calls';
+                    document.getElementById('quotaBwdUsed').innerText = (q.backwardApiQuotaUsed || 0) + ' calls';
+                    document.getElementById('quotaYieldCount').innerText = (q.backwardYieldCount || 0) + ' times';
+                    document.getElementById('quota429Hits').innerText = q.throttles429HitCount || 0;
+                    document.getElementById('quotaRecovered').innerText = `${q.retriesRecoveredCount || 0} (100% Recovery)`;
+                })
+                .catch(err => console.debug('Quota telemetry polling error:', err));
         }
 
         function loadFiles() {
@@ -321,30 +508,8 @@
 
                     const displayFiles = files.slice(0, 100);
                     tbody.innerHTML = displayFiles.map(f => {
-                        let expBadge = '';
-                        if (f.exposureLevel === 'PUBLIC_ANONYMOUS') {
-                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800">🔴 Public (Link)</span>`;
-                        } else if (f.exposureLevel === 'EXTERNAL_GUEST') {
-                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-950 text-amber-400 border border-amber-800">🟠 External Guest</span>`;
-                        } else if (f.exposureLevel === 'ORGANIZATION_WIDE') {
-                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-yellow-950 text-yellow-400 border border-yellow-800">🟡 Org-Wide</span>`;
-                        } else if (f.exposureLevel === 'INTERNAL_RESTRICTED') {
-                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Internal</span>`;
-                        } else {
-                            expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔒 Private</span>`;
-                        }
-
-                        let threatBadge = '';
-                        if (f.threatVerdict === 'CLEAN') {
-                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Clean</span>`;
-                        } else if (f.threatVerdict === 'MALWARE_DETECTED') {
-                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800 animate-pulse font-bold">🛑 Malware (EICAR)</span>`;
-                        } else if (f.threatVerdict === 'SUSPICIOUS_ENTROPY') {
-                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-purple-950 text-purple-400 border border-purple-800">⚠️ High Entropy</span>`;
-                        } else if (f.threatVerdict === 'MIME_MISMATCH') {
-                            threatBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-pink-950 text-pink-400 border border-pink-800">⚠️ Executable Mismatch</span>`;
-                        }
-
+                        let expBadge = getExposureBadge(f.exposureLevel);
+                        let threatBadge = getThreatBadge(f.threatVerdict);
                         let originBadge = f.scanOrigin === 'FORWARD'
                             ? `<span class="px-2 py-0.5 rounded text-[10px] bg-sky-950 text-sky-400 font-bold border border-sky-800">⚡ FORWARD (P1)</span>`
                             : `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔄 BACKWARD (P10)</span>`;
@@ -369,22 +534,257 @@
                 });
         }
 
+        function getExposureBadge(level) {
+            if (level === 'PUBLIC_ANONYMOUS') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800">🔴 Public (Link)</span>`;
+            } else if (level === 'EXTERNAL_GUEST') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-amber-950 text-amber-400 border border-amber-800">🟠 External Guest</span>`;
+            } else if (level === 'ORGANIZATION_WIDE') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-yellow-950 text-yellow-400 border border-yellow-800">🟡 Org-Wide</span>`;
+            } else if (level === 'INTERNAL_RESTRICTED') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Internal</span>`;
+            } else {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔒 Private</span>`;
+            }
+        }
+
+        function getThreatBadge(verdict) {
+            if (verdict === 'CLEAN') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">🟢 Clean</span>`;
+            } else if (verdict === 'MALWARE_DETECTED') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800 animate-pulse font-bold">🛑 Malware (EICAR)</span>`;
+            } else if (verdict === 'SUSPICIOUS_ENTROPY') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-purple-950 text-purple-400 border border-purple-800">⚠️ High Entropy</span>`;
+            } else if (verdict === 'MIME_MISMATCH') {
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-pink-950 text-pink-400 border border-pink-800">⚠️ Executable Mismatch</span>`;
+            }
+            return verdict;
+        }
+
+        // --- HIERARCHY TREE RENDERER ---
+        function loadHierarchy() {
+            fetch('/api/v1/dashboard/hierarchy')
+                .then(r => r.json())
+                .then(data => {
+                    currentHierarchyData = data;
+                    renderHierarchyTree(data);
+                })
+                .catch(err => {
+                    document.getElementById('hierarchyTreeContainer').innerHTML = `<div class="text-red-400">Failed loading hierarchy: ${err}</div>`;
+                });
+        }
+
+        function renderHierarchyTree(data, filterQuery = '') {
+            const container = document.getElementById('hierarchyTreeContainer');
+            if (!data) return;
+
+            const q = filterQuery.toLowerCase();
+            let html = '';
+
+            // Section 1: SharePoint Document Libraries
+            html += `
+                <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+                    <div class="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between border-b border-slate-800 cursor-pointer" onclick="toggleNode('sp-root-node')">
+                        <div class="flex items-center space-x-2">
+                            <span id="sp-root-node-arrow" class="text-slate-400 text-xs transition">▼</span>
+                            <span class="text-base">📁</span>
+                            <span class="font-bold text-slate-100">SharePoint Enterprise Sites (${(data.sharepointSites || []).length} Document Libraries)</span>
+                        </div>
+                        <span class="text-[11px] text-slate-400">Team Sites & Compliance Hubs</span>
+                    </div>
+                    <div id="sp-root-node" class="p-3 space-y-3">
+            `;
+
+            (data.sharepointSites || []).forEach((site, sIdx) => {
+                const siteId = `site-${sIdx}`;
+                const threatBadge = site.threatCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${site.threatCount} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
+                const publicBadge = site.publicExposureCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${site.publicExposureCount} Public</span>` : '';
+
+                html += `
+                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/60 ml-2">
+                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-850 cursor-pointer hover:bg-slate-800/50" onclick="toggleNode('${siteId}')">
+                            <div class="flex items-center space-x-2">
+                                <span id="${siteId}-arrow" class="text-slate-400 text-xs">▼</span>
+                                <span>🏛️</span>
+                                <span class="font-bold text-sky-300">${site.siteName || site.name}</span>
+                                <span class="text-slate-500 text-[11px]">/ ${site.libraryName || 'Document Library'}</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-slate-400 text-[11px]">${site.totalFiles} files</span>
+                                ${threatBadge}
+                                ${publicBadge}
+                            </div>
+                        </div>
+                        <div id="${siteId}" class="p-2 space-y-2 bg-slate-950/30">
+                            ${renderFolders(site.folders, siteId, q)}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                </div>
+            `;
+
+            // Section 2: User OneDrives
+            html += `
+                <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
+                    <div class="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between border-b border-slate-800 cursor-pointer" onclick="toggleNode('od-root-node')">
+                        <div class="flex items-center space-x-2">
+                            <span id="od-root-node-arrow" class="text-slate-400 text-xs transition">▼</span>
+                            <span class="text-base">☁️</span>
+                            <span class="font-bold text-slate-100">User Personal OneDrives (${(data.oneDrives || []).length} Provisioned Accounts)</span>
+                        </div>
+                        <span class="text-[11px] text-slate-400">Executive & Staff Storage</span>
+                    </div>
+                    <div id="od-root-node" class="p-3 space-y-3">
+            `;
+
+            (data.oneDrives || []).forEach((od, oIdx) => {
+                const odId = `onedrive-${oIdx}`;
+                const threatBadge = od.threatCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${od.threatCount} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
+                const publicBadge = od.publicExposureCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${od.publicExposureCount} Public</span>` : '';
+
+                html += `
+                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/60 ml-2">
+                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-850 cursor-pointer hover:bg-slate-800/50" onclick="toggleNode('${odId}')">
+                            <div class="flex items-center space-x-2">
+                                <span id="${odId}-arrow" class="text-slate-400 text-xs">▼</span>
+                                <span>👤</span>
+                                <span class="font-bold text-indigo-300">${od.ownerName || od.name}</span>
+                                <span class="text-slate-500 text-[11px]">(Personal OneDrive)</span>
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-slate-400 text-[11px]">${od.totalFiles} files</span>
+                                ${threatBadge}
+                                ${publicBadge}
+                            </div>
+                        </div>
+                        <div id="${odId}" class="p-2 space-y-2 bg-slate-950/30">
+                            ${renderFolders(od.folders, odId, q)}
+                        </div>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        function renderFolders(folders, parentId, query) {
+            if (!folders || folders.length === 0) {
+                return `<div class="text-slate-500 text-xs p-2">No folders found in this drive.</div>`;
+            }
+
+            return folders.map((f, fIdx) => {
+                const folderDomId = `${parentId}-folder-${fIdx}`;
+                let matchingFiles = f.files || [];
+                if (query) {
+                    matchingFiles = matchingFiles.filter(item => item.fileName.toLowerCase().includes(query) || (f.folderPath || '').toLowerCase().includes(query));
+                    if (matchingFiles.length === 0 && !f.folderPath.toLowerCase().includes(query)) {
+                        return ''; // Hidden by query
+                    }
+                }
+
+                const threatBadge = f.threatCount > 0 ? `<span class="text-red-400 font-bold">🔴 ${f.threatCount} Threats</span>` : `<span class="text-slate-500">0 Threats</span>`;
+
+                return `
+                    <div class="border border-slate-800/60 rounded-md overflow-hidden bg-slate-950/50 ml-3">
+                        <div class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 text-xs" onclick="toggleNode('${folderDomId}')">
+                            <div class="flex items-center space-x-1.5">
+                                <span id="${folderDomId}-arrow" class="text-slate-500 text-[10px]">▼</span>
+                                <span>📂</span>
+                                <span class="font-semibold text-slate-200">${f.folderPath}</span>
+                            </div>
+                            <div class="flex items-center space-x-3 text-[11px]">
+                                <span class="text-slate-400">${matchingFiles.length} files</span>
+                                ${threatBadge}
+                            </div>
+                        </div>
+                        <div id="${folderDomId}" class="divide-y divide-slate-800/40 bg-slate-900/30 ml-4 border-l border-slate-800/80">
+                            ${matchingFiles.slice(0, 30).map(file => {
+                                const expBadge = getExposureBadge(file.exposureLevel);
+                                const threatBadge = getThreatBadge(file.threatVerdict);
+                                const originBadge = file.scanOrigin === 'FORWARD' ? '<span class="text-sky-400 font-bold text-[10px]">⚡ P1</span>' : '<span class="text-slate-500 text-[10px]">🔄 P10</span>';
+                                return `
+                                    <div class="px-3 py-1.5 flex items-center justify-between text-[11px] hover:bg-slate-800/30">
+                                        <div class="flex items-center space-x-2">
+                                            <span>📄</span>
+                                            <span class="text-slate-200 font-medium">${file.fileName}</span>
+                                            <span class="text-slate-500 text-[10px]">(${Math.round(file.fileSize / 1024)} KB)</span>
+                                            ${originBadge}
+                                        </div>
+                                        <div class="flex items-center space-x-2">
+                                            ${expBadge}
+                                            ${threatBadge}
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                            ${matchingFiles.length > 30 ? `<div class="p-1.5 text-center text-[10px] text-slate-500">+ ${matchingFiles.length - 30} more files in this folder</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleNode(nodeId) {
+            const el = document.getElementById(nodeId);
+            const arrow = document.getElementById(nodeId + '-arrow');
+            if (!el) return;
+            if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+                if (arrow) arrow.innerText = '▼';
+            } else {
+                el.classList.add('hidden');
+                if (arrow) arrow.innerText = '▶';
+            }
+        }
+
+        function expandAllHierarchy() {
+            document.querySelectorAll('#hierarchyTreeContainer [id$="-node"], #hierarchyTreeContainer [id^="site-"], #hierarchyTreeContainer [id^="onedrive-"]').forEach(el => {
+                el.classList.remove('hidden');
+                const arrow = document.getElementById(el.id + '-arrow');
+                if (arrow) arrow.innerText = '▼';
+            });
+        }
+
+        function collapseAllHierarchy() {
+            document.querySelectorAll('#hierarchyTreeContainer [id*="folder-"]').forEach(el => {
+                el.classList.add('hidden');
+                const arrow = document.getElementById(el.id + '-arrow');
+                if (arrow) arrow.innerText = '▶';
+            });
+        }
+
+        function filterHierarchyTree() {
+            const q = document.getElementById('hierarchySearchInput').value;
+            renderHierarchyTree(currentHierarchyData, q);
+        }
+
         // Connect to Live SSE Telemetry Stream
         function setupSseStream() {
             const eventSource = new EventSource('/api/v1/dashboard/stream');
             eventSource.addEventListener('file-scanned', function(e) {
                 loadMetrics();
                 loadFiles();
+                loadQuotaTelemetry();
             });
             eventSource.addEventListener('threat-alert', function(e) {
                 loadMetrics();
                 loadFiles();
+                loadQuotaTelemetry();
             });
             eventSource.onerror = function() {
                 document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>RECONNECTING...</span>`;
             };
             eventSource.onopen = function() {
-                document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>LIVE STREAM ACTIVE</span>`;
+                document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span><span>LIVE SSE</span>`;
             };
         }
 
@@ -392,7 +792,9 @@
         window.onload = function() {
             loadMetrics();
             loadFiles();
+            loadQuotaTelemetry();
             setupSseStream();
+            setInterval(loadQuotaTelemetry, 1000); // Poll quota stats every second for real-time token bucket animation
         };
     </script>
 </body>

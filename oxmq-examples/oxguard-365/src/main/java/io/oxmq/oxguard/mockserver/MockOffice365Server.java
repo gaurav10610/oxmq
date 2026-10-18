@@ -33,6 +33,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,10 +60,27 @@ public class MockOffice365Server {
     private final String webhookClientState;
     private final ObjectMapper objectMapper;
 
+    public static final Map<String, List<String>> DRIVE_FOLDERS = Map.of(
+            "sp-drive-finance", List.of("/Budgets/2026/Q1", "/Budgets/2026/Q2", "/Confidential/Audits", "/Ledgers/General", "/Tax/Filings"),
+            "sp-drive-hr", List.of("/Employee Records/2026", "/Payroll/Executive", "/Benefits/Health", "/Onboarding/Engineering", "/Compliance/Policies"),
+            "sp-drive-legal", List.of("/Contracts/Vendors", "/NDAs/Partners", "/Compliance/SOX", "/Intellectual Property/Patents", "/Litigation/Active"),
+            "sp-drive-it", List.of("/Backups/Databases", "/Security/Certificates", "/Architecture/Blueprints", "/Infrastructure/Terraform", "/Credentials/Vault"),
+            "od-drive-ciso", List.of("/Security Audits/2026", "/Incidents/Postmortems", "/Vulnerability Reports/Q3", "/Confidential/Threat Intel", "/Personal Notes"),
+            "od-drive-cfo", List.of("/Financial Models/2026", "/Board Decks/Drafts", "/Investor Relations/Q3", "/M&A/Target Analysis", "/Personal Taxes"),
+            "od-drive-lead-architect", List.of("/OxMQ Architecture/Core", "/Benchmarks/Cluster Testing", "/Design Docs/v1.4", "/Prototypes/Loom", "/Research Papers")
+    );
+
     private HttpServer httpServer;
     private final AtomicBoolean throttledOnce = new AtomicBoolean(false);
     private final Map<String, MockFileInfo> filesInventory = new ConcurrentHashMap<>();
     private final Map<String, List<String>> driveFiles = new ConcurrentHashMap<>();
+
+    // Dynamic Rate Limiter & 429 Burst State
+    private final AtomicInteger maxRequestsPerSecond = new AtomicInteger(50);
+    private final AtomicInteger burstCountRemaining = new AtomicInteger(0);
+    private final AtomicBoolean burstEnabled = new AtomicBoolean(false);
+    private final AtomicInteger currentSecondRequests = new AtomicInteger(0);
+    private volatile long currentSecond = System.currentTimeMillis() / 1000L;
 
     public record MockFileInfo(
             String fileId,
@@ -93,6 +111,7 @@ public class MockOffice365Server {
         this.webhookUrl = webhookUrl;
         this.webhookClientState = webhookClientState;
         this.objectMapper = objectMapper;
+        this.burstEnabled.set(simulate429Burst);
     }
 
     public MockOffice365Server(
@@ -156,25 +175,25 @@ public class MockOffice365Server {
         createPhysicalFile(storageDir, "Corporate_Finance_2026.docx",
                 "CONFIDENTIAL - Contoso Financial Strategy 2026.\nRevenue projections and quarterly targets.\nPrepared by CFO.",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "sp-drive-finance", "private");
+                "sp-drive-finance", "private", "/Budgets/2026/Q1");
 
         // Seed 2: Real Clean PDF Doc
         createPhysicalFile(storageDir, "Employee_Handbook_2026.pdf",
                 "%PDF-1.5\n% Contoso Employee Handbook 2026.\n1. Code of conduct.\n2. Security standards.\n%%EOF",
                 "application/pdf",
-                "sp-drive-hr", "organization");
+                "sp-drive-hr", "organization", "/Employee Records/2026");
 
         // Seed 3: Real Clean Excel Spreadsheet
         createPhysicalFile(storageDir, "Q4_Sales_Pipeline.xlsx",
                 "Client,Region,DealSize,Status\nAcme Corp,North America,$1200000,Closed Won\nInitech,EMEA,$450000,In Negotiation",
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "sp-drive-finance", "users"); // External guest access
+                "sp-drive-finance", "users", "/Budgets/2026/Q2"); // External guest access
 
         // Seed 4: Real EICAR Standard Antivirus Test File
         createPhysicalFile(storageDir, "security_audit_eicar.txt",
                 "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
                 "text/plain",
-                "od-drive-ciso", "private");
+                "od-drive-ciso", "private", "/Security Audits/2026");
 
         // Seed 5: Real High-Entropy Ransomware Payload (Shannon entropy > 7.95)
         byte[] randomEntropyBytes = new byte[16384];
@@ -182,7 +201,7 @@ public class MockOffice365Server {
         createPhysicalBinaryFile(storageDir, "locked_database_backup.dat.aes",
                 randomEntropyBytes,
                 "application/octet-stream",
-                "sp-drive-it", "private");
+                "sp-drive-it", "private", "/Backups/Databases");
 
         // Seed 6: Real Executable MIME Mismatch File (MZ Windows PE Header disguised as .docx)
         byte[] peHeaderDisguised = new byte[8192];
@@ -196,19 +215,19 @@ public class MockOffice365Server {
         createPhysicalBinaryFile(storageDir, "Executive_Payroll_Statement.docx",
                 peHeaderDisguised,
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "sp-drive-finance", "anonymous"); // Public Link!
+                "sp-drive-finance", "anonymous", "/Confidential/Audits"); // Public Link!
 
         // Seed 7: Customer PII CSV
         createPhysicalFile(storageDir, "Customer_PII_Export.csv",
                 "id,name,email,ssn\n101,John Doe,john@example.com,123-45-6789\n102,Jane Smith,jane@example.com,987-65-4321",
                 "text/csv",
-                "od-drive-cfo", "users");
+                "od-drive-cfo", "users", "/Financial Models/2026");
 
         // Seed 8: Clean Legal Contract
         createPhysicalFile(storageDir, "Master_Services_Agreement_Vendor.pdf",
                 "%PDF-1.5\n% Contoso Master Services Agreement.\nNon-disclosure and data protection agreement.\n%%EOF",
                 "application/pdf",
-                "sp-drive-legal", "users");
+                "sp-drive-legal", "users", "/Contracts/Vendors");
     }
 
     public synchronized void seedAdditionalFiles(int targetTotal) {
@@ -224,6 +243,46 @@ public class MockOffice365Server {
 
     public int getTotalFiles() {
         return filesInventory.size();
+    }
+
+    public void setRateLimit(int limit) {
+        if (limit > 0) {
+            this.maxRequestsPerSecond.set(limit);
+            log.info("Mock M365 Server rate limit set to {} req/s", limit);
+        }
+    }
+
+    public int getRateLimit() {
+        return maxRequestsPerSecond.get();
+    }
+
+    public void trigger429Burst(int count) {
+        this.burstCountRemaining.set(count);
+        log.warn("Mock M365 Server triggering 429 burst for next {} requests", count);
+    }
+
+    public void setSimulate429Burst(boolean enabled) {
+        this.burstEnabled.set(enabled);
+        log.warn("Mock M365 Server simulate 429 burst mode: {}", enabled);
+    }
+
+    public boolean shouldThrottleRequest() {
+        if (burstCountRemaining.get() > 0) {
+            burstCountRemaining.decrementAndGet();
+            return true;
+        }
+        if (burstEnabled.get()) {
+            return true;
+        }
+
+        long nowSec = System.currentTimeMillis() / 1000L;
+        if (nowSec != currentSecond) {
+            currentSecond = nowSec;
+            currentSecondRequests.set(0);
+        }
+
+        int count = currentSecondRequests.incrementAndGet();
+        return count > maxRequestsPerSecond.get();
     }
 
     private void seedBulkFiles(Path storageDir, int targetTotal) throws IOException {
@@ -249,20 +308,23 @@ public class MockOffice365Server {
             String mimeType;
             String scope = scopes[i % scopes.length];
 
+            List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Documents/General"));
+            String folder = folderList.get(i % folderList.size());
+
             if (typeRoll < 3) {
                 // ~3% EICAR malware test
                 fileName = "security_audit_sample_" + i + ".txt";
                 mimeType = "text/plain";
                 createPhysicalFile(storageDir, fileName,
                         "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
-                        mimeType, driveId, scope);
+                        mimeType, driveId, scope, folder);
             } else if (typeRoll < 6) {
                 // ~3% High entropy ransomware payload
                 fileName = "encrypted_database_backup_" + i + ".dat.aes";
                 mimeType = "application/octet-stream";
                 byte[] entropyBytes = new byte[8192];
                 rng.nextBytes(entropyBytes);
-                createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, driveId, scope);
+                createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, driveId, scope, folder);
             } else if (typeRoll < 9) {
                 // ~3% Executable MIME Mismatch (PE MZ Header disguised as docx)
                 fileName = "Executive_Bonus_Allocation_" + i + ".docx";
@@ -273,31 +335,31 @@ public class MockOffice365Server {
                 peBytes[1] = 'Z';
                 peBytes[2] = (byte) 0x90;
                 peBytes[3] = 0x00;
-                createPhysicalBinaryFile(storageDir, fileName, peBytes, mimeType, driveId, scope);
+                createPhysicalBinaryFile(storageDir, fileName, peBytes, mimeType, driveId, scope, folder);
             } else if (typeRoll < 40) {
                 // Word Doc
                 fileName = "Enterprise_Business_Plan_" + i + ".docx";
                 mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
                 String content = "Contoso Enterprise Strategic Directive #" + i + ".\nQuarterly operational objectives and deliverables.\nConfidential.";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
             } else if (typeRoll < 70) {
                 // PDF Document
                 fileName = "Corporate_Governance_Report_" + i + ".pdf";
                 mimeType = "application/pdf";
                 String content = "%PDF-1.5\n% Contoso Corporate Governance Report #" + i + "\nSection 1: Enterprise Compliance & Risk Management.\n%%EOF";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
             } else if (typeRoll < 90) {
                 // Excel Spreadsheet
                 fileName = "Departmental_Expenditure_Q" + ((i % 4) + 1) + "_" + i + ".xlsx";
                 mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
                 String content = "Department,CostCenter,AllocatedBudget,SpentToDate\nEngineering,CC-401,$250000,$180000\nOperations,CC-202,$120000,$95000";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
             } else {
                 // CSV Data Table
                 fileName = "Client_Ledger_Extract_" + i + ".csv";
                 mimeType = "text/csv";
                 String content = "id,account,balance,status\n" + i + ",ACCT-" + (10000 + i) + ",$" + (5000 + (i * 12)) + ",ACTIVE";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
             }
         }
     }
@@ -308,34 +370,41 @@ public class MockOffice365Server {
             Files.createDirectories(storageDir);
             Path targetFile = storageDir.resolve(fileName);
             Files.write(targetFile, content);
-            registerFile(fileName, targetFile, mimeType, driveId, exposureScope);
+            List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Uploads/RealTime"));
+            String folder = folderList.get(0);
+            registerFile(fileName, targetFile, mimeType, driveId, exposureScope, folder);
             log.info("Physically wrote forward file to disk: [{}] ({} bytes)", targetFile.toAbsolutePath(), content.length);
         } catch (IOException e) {
             log.error("Failed saving forward file to disk: {}", e.getMessage(), e);
         }
     }
 
-    private void createPhysicalFile(Path dir, String fileName, String content, String mimeType, String driveId, String exposureScope) throws IOException {
+    private void createPhysicalFile(Path dir, String fileName, String content, String mimeType, String driveId, String exposureScope, String folderPath) throws IOException {
         Path filePath = dir.resolve(fileName);
         if (!Files.exists(filePath)) {
             Files.writeString(filePath, content, StandardCharsets.UTF_8);
         }
-        registerFile(fileName, filePath, mimeType, driveId, exposureScope);
+        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderPath);
     }
 
-    private void createPhysicalBinaryFile(Path dir, String fileName, byte[] content, String mimeType, String driveId, String exposureScope) throws IOException {
+    private void createPhysicalBinaryFile(Path dir, String fileName, byte[] content, String mimeType, String driveId, String exposureScope, String folderPath) throws IOException {
         Path filePath = dir.resolve(fileName);
         if (!Files.exists(filePath)) {
             Files.write(filePath, content);
         }
-        registerFile(fileName, filePath, mimeType, driveId, exposureScope);
+        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderPath);
     }
 
     private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String exposureScope) {
+        List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Uploads/RealTime"));
+        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderList.get(0));
+    }
+
+    private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String exposureScope, String folderPath) {
         String fileId = "file-" + UUID.nameUUIDFromBytes((driveId + ":" + fileName).getBytes(StandardCharsets.UTF_8)).toString().replace("-", "").substring(0, 12);
         long size = filePath.toFile().length();
         MockFileInfo info = new MockFileInfo(
-                fileId, driveId, fileName, "/Documents/" + fileName, size, mimeType, exposureScope,
+                fileId, driveId, fileName, folderPath, size, mimeType, exposureScope,
                 filePath.getFileName().toString(), System.currentTimeMillis()
         );
         filesInventory.put(fileId, info);
@@ -464,7 +533,7 @@ public class MockOffice365Server {
                     fileObj.put("mimeType", info.mimeType());
 
                     ObjectNode parentRef = item.putObject("parentReference");
-                    parentRef.put("path", "/drives/" + driveId + "/root:");
+                    parentRef.put("path", "/drives/" + driveId + "/root:" + info.path());
                 }
             }
 
@@ -475,10 +544,12 @@ public class MockOffice365Server {
 
         // 2. Permissions query: /v1.0/drives/{driveId}/items/{itemId}/permissions
         if (path.contains("/permissions")) {
-            // Check Approach 5 Rate Limiting simulation
-            if (simulate429Burst && throttledOnce.compareAndSet(false, true)) {
+            // Check Rate Limiting and 429 burst simulation
+            if (shouldThrottleRequest()) {
                 exchange.getResponseHeaders().set("Retry-After", "3");
-                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"Throttled by Mock Graph\"}}");
+                exchange.getResponseHeaders().set("X-RateLimit-Limit", String.valueOf(maxRequestsPerSecond.get()));
+                exchange.getResponseHeaders().set("X-RateLimit-Remaining", "0");
+                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"Throttled by Mock Microsoft Graph (HTTP 429)\"}}");
                 return;
             }
 
@@ -516,6 +587,15 @@ public class MockOffice365Server {
     }
 
     private void handleFileDownload(HttpExchange exchange) throws IOException {
+        // Check Rate Limiting and 429 burst simulation on SAS download
+        if (shouldThrottleRequest()) {
+            exchange.getResponseHeaders().set("Retry-After", "3");
+            exchange.getResponseHeaders().set("X-RateLimit-Limit", String.valueOf(maxRequestsPerSecond.get()));
+            exchange.getResponseHeaders().set("X-RateLimit-Remaining", "0");
+            sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"Throttled SAS File Download (HTTP 429)\"}}");
+            return;
+        }
+
         String path = exchange.getRequestURI().getPath();
         String fileId = path.substring(path.lastIndexOf('/') + 1);
 

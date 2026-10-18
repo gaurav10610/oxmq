@@ -43,6 +43,7 @@ public class DashboardController {
     private final FileInventoryRepository repository;
     private final LiveMetricsService metricsService;
     private final OxmqTemplate oxmqTemplate;
+    private final io.oxmq.oxguard.service.TenantCooldownService cooldownService;
 
     @Autowired(required = false)
     private MockGraphClient mockGraphClient;
@@ -53,16 +54,63 @@ public class DashboardController {
     public DashboardController(
             FileInventoryRepository repository,
             LiveMetricsService metricsService,
-            OxmqTemplate oxmqTemplate
+            OxmqTemplate oxmqTemplate,
+            io.oxmq.oxguard.service.TenantCooldownService cooldownService
     ) {
         this.repository = repository;
         this.metricsService = metricsService;
         this.oxmqTemplate = oxmqTemplate;
+        this.cooldownService = cooldownService;
     }
 
     @GetMapping("/metrics")
     public ResponseEntity<Map<String, Object>> getMetrics() {
         return ResponseEntity.ok(repository.getMetrics());
+    }
+
+    @GetMapping("/hierarchy")
+    public ResponseEntity<Map<String, Object>> getHierarchy() {
+        return ResponseEntity.ok(repository.getHierarchy());
+    }
+
+    @GetMapping("/quota")
+    public ResponseEntity<Map<String, Object>> getQuotaTelemetry(
+            @RequestParam(value = "tenantId", defaultValue = "contoso-enterprise-tenant") String tenantId
+    ) {
+        return ResponseEntity.ok(cooldownService.getQuotaTelemetry(tenantId));
+    }
+
+    @PostMapping("/ratelimit")
+    public ResponseEntity<Map<String, Object>> updateRateLimit(
+            @RequestParam(value = "limit", defaultValue = "50") int limit
+    ) {
+        cooldownService.setMaxRequestsPerSecond(limit);
+        if (mockOffice365Server != null) {
+            mockOffice365Server.setRateLimit(limit);
+        }
+        return ResponseEntity.ok(Map.of(
+                "status", "UPDATED",
+                "maxRequestsPerSecond", limit,
+                "message", "Rate limit adjusted to " + limit + " req/s"
+        ));
+    }
+
+    @PostMapping("/simulate-429")
+    public ResponseEntity<Map<String, Object>> simulate429Burst(
+            @RequestParam(value = "enabled", defaultValue = "true") boolean enabled,
+            @RequestParam(value = "burstCount", defaultValue = "20") int burstCount
+    ) {
+        if (mockOffice365Server != null) {
+            mockOffice365Server.trigger429Burst(burstCount);
+            mockOffice365Server.setSimulate429Burst(enabled);
+            return ResponseEntity.ok(Map.of(
+                    "status", "TRIGGERED",
+                    "burstCount", burstCount,
+                    "enabled", enabled,
+                    "message", "Triggered " + burstCount + " HTTP 429 burst responses from Mock M365 Server"
+            ));
+        }
+        return ResponseEntity.badRequest().body(Map.of("error", "MockOffice365Server not active"));
     }
 
     @GetMapping("/files")

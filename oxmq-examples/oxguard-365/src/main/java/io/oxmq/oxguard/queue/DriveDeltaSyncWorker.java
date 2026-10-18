@@ -70,9 +70,10 @@ public class DriveDeltaSyncWorker {
 
         DeltaSyncResult deltaResult;
         try {
-            cooldownService.recordTenantApiCall(payload.tenantId());
+            cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
             deltaResult = graphClient.fetchDeltaChanges(payload.driveId(), null);
         } catch (GraphThrottlingException gte) {
+            cooldownService.record429Hit();
             log.warn("Delta sync throttled (HTTP 429). Setting tenant cooldown for {}s and deferring job",
                     gte.getRetryAfterSeconds());
             cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());

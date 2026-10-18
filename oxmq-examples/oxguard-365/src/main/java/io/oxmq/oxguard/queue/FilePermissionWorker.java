@@ -6,6 +6,7 @@ import io.oxmq.oxguard.connector.GraphThrottlingException;
 import io.oxmq.oxguard.engine.ExposureEngine;
 import io.oxmq.oxguard.model.EffectiveExposure;
 import io.oxmq.oxguard.model.FileScanPayload;
+import io.oxmq.oxguard.model.ScanOrigin;
 import io.oxmq.oxguard.service.TenantCooldownService;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
@@ -50,8 +51,17 @@ public class FilePermissionWorker {
             throw new DelayedException(Duration.ofMillis(cooldownRemaining));
         }
 
+        // 2. Backward Scan Yielding: Check available tenant token headroom (< 25%)
+        if (payload.scanOrigin() == ScanOrigin.BACKWARD) {
+            if (cooldownService.checkHeadroomYield(payload.tenantId())) {
+                log.info("Backward scan yielding permission check for [{}] to prioritize forward events. Deferring 2s",
+                        payload.itemName());
+                throw new DelayedException(Duration.ofSeconds(2));
+            }
+        }
+
         try {
-            cooldownService.recordTenantApiCall(payload.tenantId());
+            cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
             EffectiveExposure exposure = graphClient.fetchPermissions(payload.driveId(), payload.itemId());
             EffectiveExposure evaluated = exposureEngine.evaluate(exposure.permissions());
 
@@ -59,6 +69,7 @@ public class FilePermissionWorker {
             return evaluated;
 
         } catch (GraphThrottlingException gte) {
+            cooldownService.record429Hit();
             log.warn("Permission API throttled (HTTP 429) for tenant [{}]. Setting cooldown for {}s",
                     payload.tenantId(), gte.getRetryAfterSeconds());
             cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());
