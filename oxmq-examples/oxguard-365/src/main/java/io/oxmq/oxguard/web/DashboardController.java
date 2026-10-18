@@ -45,23 +45,23 @@ public class DashboardController {
     private final LiveMetricsService metricsService;
     private final OxmqTemplate oxmqTemplate;
     private final TenantCooldownService cooldownService;
+    private final io.oxmq.oxguard.connector.MockAdminClient mockAdminClient;
 
     @Autowired(required = false)
     private MockGraphClient mockGraphClient;
-
-    @Autowired(required = false)
-    private io.oxmq.oxguard.mockserver.MockOffice365Server mockOffice365Server;
 
     public DashboardController(
             FileInventoryRepository repository,
             LiveMetricsService metricsService,
             OxmqTemplate oxmqTemplate,
-            TenantCooldownService cooldownService
+            TenantCooldownService cooldownService,
+            io.oxmq.oxguard.connector.MockAdminClient mockAdminClient
     ) {
         this.repository = repository;
         this.metricsService = metricsService;
         this.oxmqTemplate = oxmqTemplate;
         this.cooldownService = cooldownService;
+        this.mockAdminClient = mockAdminClient;
     }
 
     /**
@@ -143,9 +143,7 @@ public class DashboardController {
     ) {
         if (tenantId != null && !tenantId.isBlank() && !"all".equalsIgnoreCase(tenantId)) {
             cooldownService.setMaxRequestsPerSecond(tenantId, limit);
-            if (mockOffice365Server != null) {
-                mockOffice365Server.setRateLimit(tenantId, limit);
-            }
+            mockAdminClient.setRateLimit(tenantId, limit);
             return ResponseEntity.ok(Map.of(
                     "status", "UPDATED",
                     "tenantId", tenantId,
@@ -154,9 +152,7 @@ public class DashboardController {
             ));
         } else {
             cooldownService.setMaxRequestsPerSecond(limit);
-            if (mockOffice365Server != null) {
-                mockOffice365Server.setRateLimit(limit);
-            }
+            mockAdminClient.setGlobalRateLimit(limit);
             return ResponseEntity.ok(Map.of(
                     "status", "UPDATED_ALL",
                     "maxRequestsPerSecond", limit,
@@ -171,9 +167,8 @@ public class DashboardController {
             @RequestParam(value = "enabled", defaultValue = "true") boolean enabled,
             @RequestParam(value = "burstCount", defaultValue = "20") int burstCount
     ) {
-        if (mockOffice365Server != null) {
-            mockOffice365Server.trigger429Burst(tenantId, burstCount);
-            mockOffice365Server.setSimulate429Burst(tenantId, enabled);
+        boolean ok = mockAdminClient.trigger429Burst(tenantId, burstCount, enabled);
+        if (ok) {
             return ResponseEntity.ok(Map.of(
                     "status", "TRIGGERED",
                     "tenantId", tenantId,
@@ -182,7 +177,7 @@ public class DashboardController {
                     "message", "Triggered " + burstCount + " HTTP 429 burst responses on tenant: " + tenantId
             ));
         }
-        return ResponseEntity.badRequest().body(Map.of("error", "MockOffice365Server not active"));
+        return ResponseEntity.badRequest().body(Map.of("error", "Mock Office 365 Server not reachable on port 8081"));
     }
 
     @GetMapping("/files")
@@ -224,15 +219,16 @@ public class DashboardController {
     public ResponseEntity<Map<String, Object>> seedAdditionalFiles(
             @RequestParam(value = "count", defaultValue = "5000") int count
     ) {
-        if (mockOffice365Server != null) {
-            mockOffice365Server.seedAdditionalFiles(count);
+        boolean ok = mockAdminClient.seedAdditionalFiles(count);
+        if (ok) {
+            Map<String, Object> stats = mockAdminClient.getStats();
             return ResponseEntity.ok(Map.of(
                     "status", "SEEDED",
-                    "totalFiles", mockOffice365Server.getTotalFiles(),
+                    "totalFiles", stats.getOrDefault("totalFiles", count),
                     "message", "Successfully seeded files up to " + count
             ));
         }
-        return ResponseEntity.badRequest().body(Map.of("error", "MockOffice365Server is not active"));
+        return ResponseEntity.badRequest().body(Map.of("error", "Mock Office 365 Server is not reachable on port 8081"));
     }
 
     @PostMapping("/trigger/reset")
@@ -359,13 +355,11 @@ public class DashboardController {
         if (mockGraphClient != null) {
             mockGraphClient.addMockForwardFile(driveId, fileName, exposureLevel, fileBytes);
         }
-        if (mockOffice365Server != null) {
-            String scope = "anonymous";
-            if (exposureLevel == ExposureLevel.EXTERNAL_GUEST) scope = "users";
-            else if (exposureLevel == ExposureLevel.ORGANIZATION_WIDE) scope = "organization";
-            else if (exposureLevel == ExposureLevel.PRIVATE) scope = "private";
-            mockOffice365Server.saveForwardFile(driveId, fileName, scope, fileBytes, "application/octet-stream");
-        }
+        String scope = "anonymous";
+        if (exposureLevel == ExposureLevel.EXTERNAL_GUEST) scope = "users";
+        else if (exposureLevel == ExposureLevel.ORGANIZATION_WIDE) scope = "organization";
+        else if (exposureLevel == ExposureLevel.PRIVATE) scope = "private";
+        mockAdminClient.uploadForwardFile(driveId, fileName, scope, fileBytes, "application/octet-stream");
 
         JobOptions options = JobOptions.builder()
                 .priority(1)

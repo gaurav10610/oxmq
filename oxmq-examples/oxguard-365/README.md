@@ -21,13 +21,14 @@
 * Java 17 LTS
 * Redis running on `localhost:6379` (e.g. `docker run -d -p 6379:6379 redis:7-alpine`)
 
-### 1. Zero-Setup Mode (Mock Engine)
-OxGuard 365 includes an embedded mock engine that simulates Microsoft Graph API with realistic SharePoint sites, user OneDrives, delta sync tokens, controllable 429 bursts, and EICAR malware samples.
+### 1. Zero-Setup Mode (Ultra-Realistic Mock Stack)
+OxGuard 365 features a decoupled architecture with a dedicated standalone Mock Office 365 Server (`mock-office365-server` on port `8081`) simulating all 5 official Microsoft 365 Paid License tiers, Graph v1.0 REST APIs, controllable 429 bursts, and real disk storage with EICAR, MZ executable mismatch, and ransomware entropy payloads.
 
-Run directly with Maven:
+Launch the entire stack with a single command:
 ```bash
-./mvnw clean spring-boot:run -pl oxmq-examples/oxguard-365
+./start.sh
 ```
+This automatically boots Redis 7, PostgreSQL 16, Bull-Board (port 3000), Prometheus (port 9090), Grafana (port 3001), Mock Office 365 Server (port 8081), and OxGuard 365 (port 8080).
 
 Open your browser at:
 👉 **`http://localhost:8080`**
