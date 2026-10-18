@@ -1,7 +1,7 @@
-version: '3.8'
+name: oxguard-365
 
 services:
-  oxmq-redis:
+  oxguard-redis:
     image: redis:7-alpine
     container_name: oxguard-redis
     ports:
@@ -28,9 +28,9 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-    command: ["--redis", "redis://oxmq-redis:6379", "--prefix", "oxguard-365", "--queues", "tenant-discovery-queue,drive-delta-sync-queue,file-permission-queue,file-malware-queue,file-aggregate-queue"]
+    command: ["--redis", "redis://oxguard-redis:6379", "--prefix", "oxguard-365", "--queues", "tenant-discovery-queue,drive-delta-sync-queue,file-permission-queue,file-malware-queue,file-aggregate-queue"]
     depends_on:
-      - oxmq-redis
+      - oxguard-redis
 
 volumes:
   oxguard_pgdata:
