@@ -13,4 +13,4 @@ public record FileScanPayload(
         String mimeType,
         String downloadUrl,
         ScanOrigin scanOrigin
-) {}
+) implements TenantScopedPayload {}

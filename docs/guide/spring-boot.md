@@ -20,7 +20,7 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, native c
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 </dependencies>
 ```
@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.4.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
 }
 ```
 
@@ -49,7 +49,7 @@ dependencies {
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 </dependencies>
 
@@ -69,7 +69,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.oxmq:oxmq-spring-boot-starter:1.4.0")
+    implementation("io.oxmq:oxmq-spring-boot-starter:1.5.0")
 }
 ```
 
@@ -349,3 +349,78 @@ OxMQ exposes real-time queue health and metrics through Spring Boot Actuator.
 - `oxmq.jobs.failed`: Counter of failed jobs.
 - `oxmq.jobs.duration`: Timer recording execution duration per queue.
 - `oxmq.queue.size`: Gauge measuring waiting jobs.
+- `oxmq.plugin.ratelimiter.yields`: Counter of jobs deferred by token bucket exhaustion.
+- `oxmq.plugin.sentinel.delays`: Counter of jobs deferred by upstream HTTP 429 sentinel locks.
+- `oxmq.plugin.governor.yields`: Counter of low-priority jobs yielded to protect high-priority headroom.
+
+---
+
+## 🧩 Auto-Configured Plugins & Interceptors SPI
+
+Any Spring bean implementing `JobInterceptor` is automatically detected by `OxmqListenerAnnotationBeanPostProcessor` and wired into all `@OxmqListener` and `@OxmqBatchListener` instances:
+
+```java
+@Configuration
+public class EnterprisePluginConfiguration {
+
+    // 1. Dynamic Token Bucket per Tenant / Group
+    @Bean
+    public GroupRateLimiterPlugin groupRateLimiter(
+            RedisConnectionManager connectionManager,
+            MeterRegistry meterRegistry
+    ) {
+        return GroupRateLimiterPlugin.builder()
+                .connectionManager(connectionManager)
+                .keyPrefix("oxmq:limiter:tenant")
+                .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+                .dynamicLimit(tenantId -> 100) // 100 req/sec per tenant
+                .windowDuration(Duration.ofSeconds(1))
+                .retryDelayMs(150)
+                .meterRegistry(meterRegistry)
+                .build();
+    }
+
+    // 2. Upstream 429/503 Circuit Breaker Sentinel
+    @Bean
+    public RateLimitSentinelPlugin rateLimitSentinel(
+            RedisConnectionManager connectionManager,
+            MeterRegistry meterRegistry
+    ) {
+        return RateLimitSentinelPlugin.builder()
+                .connectionManager(connectionManager)
+                .keyPrefix("oxmq:sentinel:tenant")
+                .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+                .errorMatcher(t -> t instanceof RateLimitCooldownException)
+                .meterRegistry(meterRegistry)
+                .build();
+    }
+
+    // 3. Priority Headroom Governor
+    @Bean
+    public PriorityQuotaGovernorPlugin quotaGovernor(
+            GroupRateLimiterPlugin rateLimiter,
+            MeterRegistry meterRegistry
+    ) {
+        return PriorityQuotaGovernorPlugin.builder()
+                .rateLimiter(rateLimiter)
+                .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+                .headroomYieldThreshold(0.25) // Reserve 25% quota for priority jobs
+                .priorityThreshold(1)         // Protect priority <= 1
+                .yieldDelayMs(200)
+                .meterRegistry(meterRegistry)
+                .build();
+    }
+}
+```
+
+*For more details on custom interceptors, see the [Plugins & Interceptors Guide](/guide/plugins).*
+
+---
+
+## 📈 Bundled Grafana Dashboard Template
+
+The starter packages a complete, enterprise-grade Grafana dashboard at:
+`oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`
+
+Import this dashboard into Grafana connected to your Prometheus instance (`/actuator/prometheus`) for live queue gauges, throughput charts, error percentiles, and multi-tenant quota yields.
+

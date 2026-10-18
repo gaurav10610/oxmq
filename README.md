@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0"><img src="https://img.shields.io/badge/Release-v1.4.0-blue.svg" alt="Release v1.4.0"></a>
-  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.4.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/Release-v1.5.0-blue.svg" alt="Release v1.5.0"></a>
+  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.5.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
@@ -76,6 +76,10 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **🌐 Redis Cluster DAG Safety** | Hash-tag routing via `FlowProducer.forCluster` | Automatically routes multi-queue DAG parents and children to a shared `{clusterTag}` CRC16 slot, eliminating `CROSSSLOT` failures on distributed Redis Clusters. |
 | **⚡ High-Throughput Batch Dequeue** | Atomic bulk popping up to $N$ jobs (`OxmqBatchWorker`) | **Amortized network roundtrips** for high-volume batch ingestion into ClickHouse, Elasticsearch, PostgreSQL (JDBC batch), and Snowflake with `maxBatchBytes` memory safety. |
 | **⏱️ Sliding-Window Rate Limiting** | Distributed token-bucket rate limiter (`rateLimit.lua`) | Protects external APIs (OpenAI, Stripe, Shopify, Twilio) from HTTP 429 rate limit bans across all cluster instances with dynamic `groupKey`. |
+| **🧩 Interceptors & Plugin SPI** | `JobInterceptor` pipeline (`beforeProcess`, `afterProcess`, `onError`) | Extensible lifecycle hooks for rate limiting, distributed circuit breakers, tracing, and metrics with **100% byte-for-byte upstream Lua invariance**. |
+| **🏢 Multi-Tenant Token Bucket Plugin** | Dynamic burst capacity per group key (`GroupRateLimiterPlugin`) | Single-roundtrip atomic Redis `INCR` + `EXPIRE` token bucket with dynamic license tier lookups, headroom telemetry, and non-destructive yields (`skipAttempt=true`). |
+| **🛡️ Distributed 429 Sentinel Plugin** | Cluster-wide circuit-breaker (`RateLimitSentinelPlugin`) | Intercepts `RateLimitCooldownException`, locks Redis cooldown keys matching `Retry-After`, and pauses external API calls across all cluster nodes without consuming retry attempts. |
+| **⚖️ Priority Quota Governor Plugin** | Headroom-based yielding (`PriorityQuotaGovernorPlugin`) | Automatically yields low-priority background sweeps when tenant capacity drops below safety headroom (e.g. 25%), strictly reserving quota for real-time priority jobs. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling, `jobId` hashing, and `keepLastIfActive` buffer | Millisecond-accurate delayed job triggers and debounced deduplication windows with automated active buffer re-queueing. |
 | **⏳ Request-Reply Awaiting** | Synchronous & async job completion awaiting (`job.waitUntilFinished`) | Zero-race `isFinished-3.lua` checking allows REST/RPC gateways to await async worker output with microsecond-accurate timeout enforcement. |
@@ -84,9 +88,9 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, dynamic listener unregistration (`events.off`), and stream events. |
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
-| **📊 Native Micrometer Telemetry** | High-precision timers, counters, and queue gauges | Microsecond-accurate latency percentiles (`p50`, `p95`, `p99`) with pre-built Grafana dashboards and Prometheus endpoints. |
+| **📊 Native Micrometer & Grafana Dashboards** | Pre-built enterprise Grafana dashboard template & Prometheus counters | Real-time queue depth gauges, throughput charts, error percentiles, and multi-tenant rate limiter yield counters out of the box. |
 | **🧠 Memory & Socket Optimization** | Canonical key interning, ReentrantLock non-pinning locks, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
-| **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic worker lifecycle binding and `/actuator/health` indicator integration. |
+| **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic `JobInterceptor` bean discovery, worker lifecycle binding, and `/actuator/health` indicator integration. |
 
 ---
 
@@ -202,7 +206,7 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0).
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0).
 
 ### Option 1: JitPack (Recommended — Zero-Auth)
 
@@ -222,14 +226,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
 </dependencies>
 ```
@@ -242,9 +246,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.4.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.5.0")
     // or for Spring Boot 3 microservices:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.4.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
 }
 ```
 
@@ -265,14 +269,14 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
     <!-- or for Spring Boot 3: -->
     <!--
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.4.0</version>
+        <version>1.5.0</version>
     </dependency>
     -->
 </dependencies>
@@ -446,6 +450,49 @@ public class NotificationWorker {
 
 ---
 
+## 🔌 Enterprise Plugins & Interceptors SPI
+
+OxMQ provides a zero-overhead **Interceptor & Plugin SPI** (`JobInterceptor`) that hooks seamlessly into worker lifecycles (`beforeProcess`, `afterProcess`, `onError`) without modifying any upstream BullMQ Lua scripts:
+
+```java
+// Spring Boot auto-discovers and attaches all JobInterceptor beans to workers automatically
+@Bean
+public GroupRateLimiterPlugin groupRateLimiter(RedisConnectionManager cm, MeterRegistry registry) {
+    return GroupRateLimiterPlugin.builder()
+            .connectionManager(cm)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .dynamicLimit(tenantId -> subscriptionService.getRateLimit(tenantId))
+            .meterRegistry(registry) // Emits 'oxmq.plugin.ratelimiter.yields'
+            .build();
+}
+
+@Bean
+public RateLimitSentinelPlugin rateLimitSentinel(RedisConnectionManager cm, MeterRegistry registry) {
+    return RateLimitSentinelPlugin.builder()
+            .connectionManager(cm)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .errorMatcher(t -> t instanceof RateLimitCooldownException)
+            .meterRegistry(registry) // Emits 'oxmq.plugin.sentinel.delays' and 'oxmq.plugin.sentinel.cooldowns'
+            .build();
+}
+
+@Bean
+public PriorityQuotaGovernorPlugin priorityGovernor(GroupRateLimiterPlugin limiter, MeterRegistry registry) {
+    return PriorityQuotaGovernorPlugin.builder()
+            .rateLimiter(limiter)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .headroomYieldThreshold(0.25) // Defer low-priority jobs when < 25% token headroom remains
+            .priorityThreshold(1)         // Priority 1 jobs (e.g. real-time webhooks) are protected!
+            .meterRegistry(registry)      // Emits 'oxmq.plugin.governor.yields'
+            .build();
+}
+```
+
+### Out-of-the-Box Prometheus & Grafana Dashboards
+Every OxMQ deployment can be monitored via Grafana using the bundled template in `oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`. It displays real-time job throughput, active queue backlogs, p50/p95/p99 duration latencies, and multi-tenant rate yield telemetries.
+
+---
+
 ## 🌲 Parent-Child DAG Workflows (`FlowProducer`)
 
 Build complex multi-stage distributed pipelines where parent jobs automatically await parallel child completion:
@@ -597,7 +644,9 @@ OxMQ has been rigorously profiled on both **Java 17 LTS (Platform Threads)** and
 Explore our comprehensive technical guides in [`docs/`](docs/):
 
 * 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
+* 🧩 **[Plugins & Interceptors Guide](docs/guide/plugins.md)**: Non-intrusive `JobInterceptor` SPI, dynamic token-bucket rate limiters (`GroupRateLimiterPlugin`), distributed 429 sentinels (`RateLimitSentinelPlugin`), priority quota governance (`PriorityQuotaGovernorPlugin`), and Grafana dashboard templates.
 * 🏢 **[Context Isolation & Namespacing Guide](docs/guide/namespacing.md)**: Deep dive on shared Redis multi-tenancy, service-level auto-inheritance, and Redis Cluster hash-tags.
+* 🛡️ **[OxGuard 365 Enterprise DSPM Showcase](docs/guide/oxguard-365.md)**: Real-world enterprise multi-tenant security architecture processing 5 tenant license tiers, 5,000 files across 25 drives with zero 429 throttling errors.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
 * 🧠 **[Memory Optimization & Tuning Guide](docs/operations/memory-optimization.md)**: Zero-allocation poller hot-path, Lettuce connection multiplexing, lazy DAG child evaluation, stream trimming (`maxLenEvents`), and Redis memory compaction.
 * ⚖️ **[Architectural Comparison](docs/COMPARISON.md)**: Objective, factual comparison of OxMQ (Java 21 Loom) and BullMQ (Node.js).

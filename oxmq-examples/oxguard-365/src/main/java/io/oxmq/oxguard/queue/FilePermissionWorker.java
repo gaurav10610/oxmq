@@ -1,8 +1,6 @@
 package io.oxmq.oxguard.queue;
 
-import io.oxmq.exception.DelayedException;
 import io.oxmq.oxguard.connector.GraphClient;
-import io.oxmq.oxguard.connector.GraphThrottlingException;
 import io.oxmq.oxguard.engine.ExposureEngine;
 import io.oxmq.oxguard.model.EffectiveExposure;
 import io.oxmq.oxguard.model.FileScanPayload;
@@ -10,7 +8,6 @@ import io.oxmq.oxguard.model.ScanOrigin;
 import io.oxmq.oxguard.service.TenantCooldownService;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
-import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -43,37 +40,12 @@ public class FilePermissionWorker {
             FileScanPayload payload,
             @Header("jobId") String jobId
     ) {
-        // 1. Approach 5: Pre-check tenant cooldown sentinel before making external API call
-        long cooldownRemaining = cooldownService.getRemainingCooldownMs(payload.tenantId());
-        if (cooldownRemaining > 0) {
-            log.info("Tenant [{}] is throttled. Deferring permission check for file [{}] for {}ms without HTTP call",
-                    payload.tenantId(), payload.itemName(), cooldownRemaining);
-            throw new DelayedException(Duration.ofMillis(cooldownRemaining));
-        }
+        cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
+        EffectiveExposure exposure = graphClient.fetchPermissions(payload.tenantId(), payload.driveId(), payload.itemId());
+        EffectiveExposure evaluated = exposureEngine.evaluate(exposure.permissions());
 
-        // 2. Backward Scan Yielding: Check available tenant token headroom (< 25%)
-        if (payload.scanOrigin() == ScanOrigin.BACKWARD) {
-            if (cooldownService.checkHeadroomYield(payload.tenantId())) {
-                log.info("Backward scan yielding permission check for [{}] to prioritize forward events. Deferring 2s",
-                        payload.itemName());
-                throw new DelayedException(Duration.ofSeconds(2));
-            }
-        }
+        log.debug("Evaluated permissions for [{}]: exposure={}", payload.itemName(), evaluated.level());
+        return evaluated;
 
-        try {
-            cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-            EffectiveExposure exposure = graphClient.fetchPermissions(payload.driveId(), payload.itemId());
-            EffectiveExposure evaluated = exposureEngine.evaluate(exposure.permissions());
-
-            log.debug("Evaluated permissions for [{}]: exposure={}", payload.itemName(), evaluated.level());
-            return evaluated;
-
-        } catch (GraphThrottlingException gte) {
-            cooldownService.record429Hit();
-            log.warn("Permission API throttled (HTTP 429) for tenant [{}]. Setting cooldown for {}s",
-                    payload.tenantId(), gte.getRetryAfterSeconds());
-            cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());
-            throw new DelayedException(Duration.ofMillis(gte.getRetryAfterMillis()));
-        }
     }
 }

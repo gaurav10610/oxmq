@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OxGuard 365 :: Enterprise SaaS DSPM & Threat Analysis</title>
+    <title>OxGuard 365 :: Multi-Tenant Enterprise DSPM (All 5 Microsoft 365 License Tiers)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -27,19 +27,19 @@
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans antialiased">
 
     <!-- Top Navigation Header -->
-    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-3.5 sticky top-0 z-50">
+    <header class="border-b border-slate-800 bg-slate-900/90 backdrop-blur px-6 py-3 sticky top-0 z-50">
         <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div class="flex items-center space-x-3">
                 <span class="text-2xl">🛡️</span>
                 <div>
                     <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-blue-400 via-sky-300 to-indigo-300 bg-clip-text text-transparent flex items-center space-x-2">
                         <span>OXGUARD 365</span>
-                        <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800">Enterprise DSPM</span>
+                        <span class="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800">Multi-Tenant DSPM</span>
                     </h1>
-                    <p class="text-xs text-slate-400">Microsoft 365 Multi-Tenant Exposure & Threat Analysis Engine (OxMQ + Java 17)</p>
+                    <p class="text-xs text-slate-400">Microsoft 365 Paid License Tiers (SMB ➔ Global) &amp; RU Quota Isolation (OxMQ + Java 17)</p>
                 </div>
             </div>
-            <div class="flex flex-wrap items-center gap-2.5">
+            <div class="flex flex-wrap items-center gap-2">
                 <div id="connectionStatus" class="flex items-center space-x-2 text-xs px-3 py-1.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
                     <span>LIVE SSE</span>
@@ -49,13 +49,13 @@
                     <span>Bull-Board UI (:3000)</span>
                     <span class="text-[10px]">↗</span>
                 </a>
-                <button onclick="triggerCrawl()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-blue-900/40 flex items-center space-x-1">
-                    <span>🔄</span>
-                    <span>Baseline Crawl (P10)</span>
-                </button>
-                <button onclick="seedAndCrawl(1000)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-indigo-900/40 flex items-center space-x-1">
+                <button onclick="triggerCrawlAll()" class="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-md shadow-indigo-900/40 flex items-center space-x-1">
                     <span>🚀</span>
-                    <span>Scan 1,000+ Files</span>
+                    <span>Scan All 5 Tenants (5,000 Files)</span>
+                </button>
+                <button onclick="triggerCrawlSelected()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition border border-slate-700 flex items-center space-x-1">
+                    <span>🔄</span>
+                    <span id="btnCrawlSelectedLabel">Crawl Active Tenant</span>
                 </button>
                 <button onclick="triggerUploadModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition shadow-md shadow-emerald-900/40 flex items-center space-x-1">
                     <span>⚡</span>
@@ -65,37 +65,154 @@
         </div>
     </header>
 
+    <!-- System Telemetry Bar -->
+    <section class="bg-slate-900/60 border-b border-slate-800/80 px-6 py-2 text-xs text-slate-400">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center space-x-4">
+                <span>💻 <strong>JVM Heap:</strong> <span id="sysJvmMem" class="text-slate-200 font-mono">-- MB</span></span>
+                <span>🧵 <strong>Worker Threads:</strong> <span id="sysThreads" class="text-emerald-400 font-mono">-- active</span></span>
+                <span>🗄️ <strong>PostgreSQL Files:</strong> <span id="sysDbFiles" class="text-sky-300 font-mono">--</span></span>
+                <span>📁 <strong>Drives Monitored:</strong> <span id="sysDbDrives" class="text-indigo-300 font-mono">--</span></span>
+            </div>
+            <div class="flex items-center space-x-3 text-[11px] font-mono text-slate-500">
+                <span>Java 17 LTS</span>
+                <span>•</span>
+                <span>Redis 7.2 (oxmq-redis)</span>
+                <span>•</span>
+                <span>Postgres 16 (oxguard-postgres)</span>
+            </div>
+        </div>
+    </section>
+
     <!-- Main Container -->
-    <main class="max-w-7xl mx-auto w-full px-6 py-6 flex-1 space-y-6">
+    <main class="max-w-7xl mx-auto w-full px-6 py-5 flex-1 space-y-5">
+
+        <!-- 5 Official Microsoft 365 Tenant Selector Cards -->
+        <section class="space-y-2">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm">🏢</span>
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300">Connected Microsoft 365 Tenants (5 Official Paid License Tiers)</h2>
+                </div>
+                <div class="text-[11px] text-slate-400">
+                    Filter View: <span id="activeFilterBadge" class="font-bold text-sky-400">All 5 Tenants</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-6 gap-2.5" id="tenantCardsGrid">
+                <!-- All Tenants Card -->
+                <div onclick="selectTenant('all')" id="card-tenant-all" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-blue-950/40 border-blue-500 text-white shadow-md">
+                    <div class="flex items-center justify-between text-[10px] font-bold uppercase tracking-wider">
+                        <span>🌐 Global View</span>
+                        <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                    </div>
+                    <div class="text-sm font-bold mt-1 truncate">All 5 Tenants</div>
+                    <div class="text-[10px] text-slate-400">5,000 files · 25 drives</div>
+                    <div class="mt-2 text-[10px] font-mono font-semibold text-sky-300 bg-blue-950/80 px-2 py-0.5 rounded border border-blue-800/80">
+                        Aggregated DSPM
+                    </div>
+                </div>
+
+                <!-- 1. Acme TinyCorp (SMB) -->
+                <div onclick="selectTenant('tenant-smb-250')" id="card-tenant-smb-250" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300">
+                    <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                        <span class="text-amber-400">Tier 1: SMB</span>
+                        <span class="text-slate-500 font-mono">250 seats</span>
+                    </div>
+                    <div class="text-sm font-bold text-white mt-1 truncate">Acme TinyCorp</div>
+                    <div class="text-[10px] text-slate-400">25 RUs/s burst · 1.2M/day</div>
+                    <div class="mt-2 text-[10px] font-mono flex items-center justify-between text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-900/40">
+                        <span>Files: <strong id="tCount-smb">0</strong></span>
+                        <span id="tBadge-smb" class="text-emerald-400">Active</span>
+                    </div>
+                </div>
+
+                <!-- 2. Contoso Logistics (Mid-Market) -->
+                <div onclick="selectTenant('tenant-mid-2500')" id="card-tenant-mid-2500" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300">
+                    <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                        <span class="text-sky-400">Tier 2: Mid-Mkt</span>
+                        <span class="text-slate-500 font-mono">2,500 seats</span>
+                    </div>
+                    <div class="text-sm font-bold text-white mt-1 truncate">Contoso Logistics</div>
+                    <div class="text-[10px] text-slate-400">50 RUs/s burst · 2.4M/day</div>
+                    <div class="mt-2 text-[10px] font-mono flex items-center justify-between text-sky-300 bg-sky-950/40 px-2 py-0.5 rounded border border-sky-900/40">
+                        <span>Files: <strong id="tCount-mid">0</strong></span>
+                        <span id="tBadge-mid" class="text-emerald-400">Active</span>
+                    </div>
+                </div>
+
+                <!-- 3. Fabrikam Financial (Enterprise E3/E5) -->
+                <div onclick="selectTenant('tenant-ent-10k')" id="card-tenant-ent-10k" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300">
+                    <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                        <span class="text-indigo-400">Tier 3: E3/E5</span>
+                        <span class="text-slate-500 font-mono">10,000 seats</span>
+                    </div>
+                    <div class="text-sm font-bold text-white mt-1 truncate">Fabrikam Financial</div>
+                    <div class="text-[10px] text-slate-400">90 RUs/s burst · 3.6M/day</div>
+                    <div class="mt-2 text-[10px] font-mono flex items-center justify-between text-indigo-300 bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-900/40">
+                        <span>Files: <strong id="tCount-ent">0</strong></span>
+                        <span id="tBadge-ent" class="text-emerald-400">Active</span>
+                    </div>
+                </div>
+
+                <!-- 4. Northwind Health (Large Enterprise) -->
+                <div onclick="selectTenant('tenant-large-35k')" id="card-tenant-large-35k" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300">
+                    <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                        <span class="text-purple-400">Tier 4: Large</span>
+                        <span class="text-slate-500 font-mono">35,000 seats</span>
+                    </div>
+                    <div class="text-sm font-bold text-white mt-1 truncate">Northwind Health</div>
+                    <div class="text-[10px] text-slate-400">150 RUs/s burst · 4.8M/day</div>
+                    <div class="mt-2 text-[10px] font-mono flex items-center justify-between text-purple-300 bg-purple-950/40 px-2 py-0.5 rounded border border-purple-900/40">
+                        <span>Files: <strong id="tCount-large">0</strong></span>
+                        <span id="tBadge-large" class="text-emerald-400">Active</span>
+                    </div>
+                </div>
+
+                <!-- 5. MegaCorp Global (Hyperscale Global) -->
+                <div onclick="selectTenant('tenant-global-100k')" id="card-tenant-global-100k" class="cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300">
+                    <div class="flex items-center justify-between text-[10px] uppercase tracking-wider font-semibold">
+                        <span class="text-emerald-400">Tier 5: Global</span>
+                        <span class="text-slate-500 font-mono">100,000 seats</span>
+                    </div>
+                    <div class="text-sm font-bold text-white mt-1 truncate">MegaCorp Global</div>
+                    <div class="text-[10px] text-slate-400">250 RUs/s burst · 6.0M/day</div>
+                    <div class="mt-2 text-[10px] font-mono flex items-center justify-between text-emerald-300 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-900/40">
+                        <span>Files: <strong id="tCount-global">0</strong></span>
+                        <span id="tBadge-global" class="text-emerald-400">Active</span>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- Top Metrics Cards Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3.5">
-            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3.5 shadow-sm">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Total Scanned</div>
                 <div id="metricTotalFiles" class="text-2xl font-bold text-white mt-1">0</div>
-                <div class="text-[10px] text-slate-500 mt-0.5">Across all drives</div>
+                <div id="metricTotalSubtext" class="text-[10px] text-slate-500 mt-0.5">Across all accounts</div>
             </div>
-            <div class="bg-slate-900 border border-red-950/60 rounded-xl p-3.5 shadow-sm">
+            <div class="bg-slate-900 border border-red-950/60 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-red-400 uppercase tracking-wider font-semibold">Public Links</div>
                 <div id="metricPublic" class="text-2xl font-bold text-red-400 mt-1">0</div>
                 <div class="text-[10px] text-red-500/80 mt-0.5">🔴 Anonymous link access</div>
             </div>
-            <div class="bg-slate-900 border border-amber-950/60 rounded-xl p-3.5 shadow-sm">
+            <div class="bg-slate-900 border border-amber-950/60 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-amber-400 uppercase tracking-wider font-semibold">External Guests</div>
                 <div id="metricExternal" class="text-2xl font-bold text-amber-400 mt-1">0</div>
                 <div class="text-[10px] text-amber-500/80 mt-0.5">🟠 Vendor/Partner shared</div>
             </div>
-            <div class="bg-slate-900 border border-yellow-950/60 rounded-xl p-3.5 shadow-sm">
+            <div class="bg-slate-900 border border-yellow-950/60 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-yellow-400 uppercase tracking-wider font-semibold">Org-Wide</div>
                 <div id="metricOrgWide" class="text-2xl font-bold text-yellow-400 mt-1">0</div>
                 <div class="text-[10px] text-yellow-500/80 mt-0.5">🟡 All tenant employees</div>
             </div>
-            <div class="bg-slate-900 border border-purple-950/60 rounded-xl p-3.5 shadow-sm">
+            <div class="bg-slate-900 border border-purple-950/60 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-purple-400 uppercase tracking-wider font-semibold">Threats Found</div>
                 <div id="metricThreats" class="text-2xl font-bold text-purple-400 mt-1">0</div>
                 <div class="text-[10px] text-purple-500/80 mt-0.5">🛑 Malware / Entropy / PE</div>
             </div>
-            <div class="bg-slate-900 border border-blue-950/60 rounded-xl p-3.5 shadow-sm">
+            <div class="bg-slate-900 border border-blue-950/60 rounded-xl p-3 shadow-sm">
                 <div class="text-[11px] text-sky-400 uppercase tracking-wider font-semibold">Forward vs Back</div>
                 <div id="metricRatio" class="text-xl font-bold text-sky-300 mt-1">0 / 0</div>
                 <div class="text-[10px] text-sky-500/80 mt-0.5">⚡ Priority 1 vs 🔄 P10</div>
@@ -105,32 +222,34 @@
         <!-- Real-Time API Rate Limiting & Quota Telemetry Panel -->
         <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-sm space-y-3">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-                <div class="flex items-center space-x-2">
+                <div class="flex flex-wrap items-center gap-2">
                     <span class="text-base">🎯</span>
-                    <h2 class="text-sm font-bold text-white tracking-tight">API Quota, Token Bucket & Throttling Sentinel</h2>
+                    <h2 class="text-sm font-bold text-white tracking-tight">Per-Tenant Token Bucket &amp; 429 Sentinel Isolation</h2>
+                    <span id="activeTenantGaugeLabel" class="text-[11px] px-2 py-0.5 rounded font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">Acme TinyCorp (SMB: 25 RUs/s)</span>
                     <span id="quotaYieldBadge" class="text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">HEADROOM HEALTHY (&gt;25%)</span>
                     <span id="cooldownBadge" class="hidden text-[10px] px-2 py-0.5 rounded font-semibold bg-red-950 text-red-400 border border-red-800 animate-pulse">⚠️ 429 COOLDOWN ACTIVE</span>
                 </div>
-                <div class="flex items-center space-x-2 text-xs">
-                    <span class="text-slate-400 text-xs">Rate Limit:</span>
-                    <button onclick="setRateLimit(30)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">30 req/s (Tight)</button>
-                    <button onclick="setRateLimit(60)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">60 req/s (Medium)</button>
-                    <button onclick="setRateLimit(500)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-medium text-slate-300 border border-slate-700">500 req/s (High)</button>
-                    <button onclick="simulate429Burst(20)" class="px-2.5 py-1 rounded bg-red-950/80 hover:bg-red-900 text-[11px] font-semibold text-red-300 border border-red-800 flex items-center space-x-1" title="Trigger 20 consecutive HTTP 429 responses to verify OxMQ backoff">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
+                    <button onclick="triggerTenant429('tenant-smb-250', 20)" class="px-2.5 py-1 rounded bg-red-950/80 hover:bg-red-900 text-[11px] font-semibold text-red-300 border border-red-800 flex items-center space-x-1" title="Inject 429 burst on Acme TinyCorp to verify other tenants continue running without interruption">
                         <span>💥</span>
-                        <span>Simulate 429 Burst</span>
+                        <span>Throttle Acme SMB (429)</span>
                     </button>
+                    <button onclick="triggerTenant429(currentSelectedTenant !== 'all' ? currentSelectedTenant : 'tenant-mid-2500', 20)" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-semibold text-slate-300 border border-slate-700 flex items-center space-x-1">
+                        <span>⚡</span>
+                        <span>Throttle Active Tenant</span>
+                    </button>
+                    <button onclick="resetDb()" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-400 border border-slate-700">Reset DB</button>
                 </div>
             </div>
 
             <!-- Token Capacity Progress Bar -->
             <div class="space-y-1">
                 <div class="flex justify-between text-xs text-slate-400">
-                    <span>Current Second Token Consumption: <strong id="tokenConsumptionText" class="text-slate-200">0 / 50 req/s</strong></span>
+                    <span>Active Second RU Consumption: <strong id="tokenConsumptionText" class="text-slate-200">0 / 25 RUs/s</strong></span>
                     <span>Remaining Capacity: <strong id="tokenRemainingText" class="text-emerald-400">100%</strong></span>
                 </div>
-                <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden flex">
-                    <div id="tokenProgressBar" class="bg-gradient-to-r from-emerald-500 to-sky-500 h-2 transition-all duration-300" style="width: 100%"></div>
+                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden flex">
+                    <div id="tokenProgressBar" class="bg-gradient-to-r from-emerald-500 to-sky-500 h-2.5 transition-all duration-300" style="width: 100%"></div>
                 </div>
             </div>
 
@@ -154,7 +273,7 @@
                 <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
                     <div class="text-slate-400 text-[10px] uppercase font-semibold">⚠️ 429 Throttles Encountered</div>
                     <div id="quota429Hits" class="text-base font-bold text-red-400 mt-0.5">0</div>
-                    <div class="text-[10px] text-slate-500">Graph activity limits hit</div>
+                    <div class="text-[10px] text-slate-500">Isolated to throttled tenant</div>
                 </div>
                 <div class="bg-slate-950/60 border border-slate-800/80 rounded-lg p-2.5">
                     <div class="text-slate-400 text-[10px] uppercase font-semibold">🔁 Retries Recovered</div>
@@ -167,13 +286,13 @@
         <!-- Navigation Tabs: Flat Table vs Tree Hierarchy vs Embedded Bull-Board -->
         <div class="flex items-center justify-between border-b border-slate-800 pb-2">
             <div class="flex space-x-2">
-                <button id="tabTable" onclick="switchView('table')" class="px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm">
+                <button id="tabHierarchy" onclick="switchView('hierarchy')" class="px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm">
+                    <span>🌳</span>
+                    <span>Multi-Tenant Hierarchy (Tenant ➔ Site ➔ Library ➔ Folder ➔ File)</span>
+                </button>
+                <button id="tabTable" onclick="switchView('table')" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800">
                     <span>📋</span>
                     <span>Flat Scanned Files Table</span>
-                </button>
-                <button id="tabHierarchy" onclick="switchView('hierarchy')" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800">
-                    <span>🌳</span>
-                    <span>Top-to-Bottom Hierarchy (Site ➔ Library ➔ Folder ➔ File)</span>
                 </button>
                 <button id="tabBullboard" onclick="switchView('bullboard')" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800">
                     <span>📊</span>
@@ -185,11 +304,45 @@
             </div>
         </div>
 
-        <!-- VIEW 1: Flat Table View -->
-        <div id="viewTable" class="space-y-4">
+        <!-- VIEW 1: Top-to-Bottom Multi-Tenant Hierarchy View -->
+        <div id="viewHierarchy" class="space-y-4">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900 p-3.5 rounded-xl border border-slate-800">
+                <div class="flex items-center space-x-3">
+                    <span class="text-lg">🏢</span>
+                    <div>
+                        <div class="font-bold text-sm text-white">Multi-Tenant Enterprise Hierarchy Tree</div>
+                        <div class="text-[11px] text-slate-400">Tenant Account ➔ SharePoint Sites &amp; OneDrives ➔ Folders ➔ Files</div>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <input id="hierarchySearchInput" oninput="filterHierarchyTree()" type="text" placeholder="Filter files or folders..." class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:ring-1 focus:ring-blue-500 w-64">
+                    <button onclick="expandAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">+ Expand All</button>
+                    <button onclick="collapseAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">- Collapse All</button>
+                    <button onclick="loadHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <!-- Hierarchy Tree Container -->
+            <div id="hierarchyTreeContainer" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 font-mono text-xs">
+                <div class="text-center py-10 text-slate-500">Loading multi-tenant hierarchy tree...</div>
+            </div>
+        </div>
+
+        <!-- VIEW 2: Flat Table View -->
+        <div id="viewTable" class="hidden space-y-4">
             <!-- Filters & Search Toolbar -->
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900 p-3.5 rounded-xl border border-slate-800">
                 <div class="flex flex-wrap items-center gap-3">
+                    <label class="text-xs font-semibold text-slate-400">Tenant:</label>
+                    <select id="filterTenant" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
+                        <option value="">All 5 Tenants</option>
+                        <option value="tenant-smb-250">Acme TinyCorp (SMB)</option>
+                        <option value="tenant-mid-2500">Contoso Logistics (Mid)</option>
+                        <option value="tenant-ent-10k">Fabrikam Financial (Ent)</option>
+                        <option value="tenant-large-35k">Northwind Health (Large)</option>
+                        <option value="tenant-global-100k">MegaCorp Global (Global)</option>
+                    </select>
+
                     <label class="text-xs font-semibold text-slate-400">Exposure:</label>
                     <select id="filterExposure" onchange="loadFiles()" class="bg-slate-800 border border-slate-700 text-xs rounded-lg px-2.5 py-1.5 text-slate-200 focus:ring-1 focus:ring-blue-500">
                         <option value="">All Exposures</option>
@@ -227,7 +380,8 @@
                     <table class="w-full text-left text-xs">
                         <thead class="bg-slate-800/80 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                             <tr>
-                                <th class="px-4 py-3">File Name & Hierarchical Path</th>
+                                <th class="px-4 py-3">Tenant Account</th>
+                                <th class="px-4 py-3">File Name &amp; Hierarchical Path</th>
                                 <th class="px-4 py-3">Drive / Library</th>
                                 <th class="px-4 py-3">Size</th>
                                 <th class="px-4 py-3">Exposure (Pillar 1)</th>
@@ -238,37 +392,13 @@
                         </thead>
                         <tbody id="filesTableBody" class="divide-y divide-slate-800/60 font-mono">
                             <tr>
-                                <td colspan="7" class="px-4 py-8 text-center text-slate-500">
-                                    No files scanned yet. Click "Scan 1,000+ Files" to initiate discovery.
+                                <td colspan="8" class="px-4 py-8 text-center text-slate-500">
+                                    No files scanned yet. Click "Scan All 5 Tenants" to initiate discovery.
                                 </td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-            </div>
-        </div>
-
-        <!-- VIEW 2: Top-to-Bottom Tenant Hierarchy View -->
-        <div id="viewHierarchy" class="hidden space-y-4">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-900 p-3.5 rounded-xl border border-slate-800">
-                <div class="flex items-center space-x-3">
-                    <span class="text-lg">🏢</span>
-                    <div>
-                        <div class="font-bold text-sm text-white">Contoso 365 Enterprise Organization Tree</div>
-                        <div class="text-[11px] text-slate-400">Site Collection ➔ Document Libraries ➔ Folder Directories ➔ Files</div>
-                    </div>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <input id="hierarchySearchInput" oninput="filterHierarchyTree()" type="text" placeholder="Filter files or folders..." class="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:ring-1 focus:ring-blue-500 w-64">
-                    <button onclick="expandAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">+ Expand All</button>
-                    <button onclick="collapseAllHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">- Collapse All</button>
-                    <button onclick="loadHierarchy()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-sm">🔄 Refresh</button>
-                </div>
-            </div>
-
-            <!-- Hierarchy Tree Container -->
-            <div id="hierarchyTreeContainer" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 font-mono text-xs">
-                <div class="text-center py-10 text-slate-500">Loading enterprise hierarchy tree...</div>
             </div>
         </div>
 
@@ -302,20 +432,24 @@
             </div>
             <div class="space-y-3 text-xs">
                 <div>
-                    <label class="block text-slate-400 mb-1">File Name</label>
-                    <input id="modalFileName" type="text" value="Executive_Passcode_Vault.xlsx" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                    <label class="block text-slate-400 mb-1">Target Tenant Account</label>
+                    <select id="modalTenantId" onchange="updateModalDrives()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
+                        <option value="tenant-smb-250">Acme TinyCorp (SMB: 250 seats)</option>
+                        <option value="tenant-mid-2500" selected>Contoso Logistics (Mid-Market: 2,500 seats)</option>
+                        <option value="tenant-ent-10k">Fabrikam Financial (Enterprise E5: 10,000 seats)</option>
+                        <option value="tenant-large-35k">Northwind Health (Large: 35,000 seats)</option>
+                        <option value="tenant-global-100k">MegaCorp Global (Hyperscale: 100,000 seats)</option>
+                    </select>
                 </div>
                 <div>
                     <label class="block text-slate-400 mb-1">Target Drive / Library</label>
                     <select id="modalDriveId" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
-                        <option value="sp-drive-finance">SharePoint: Finance & Operations / Financial Documents</option>
-                        <option value="sp-drive-hr">SharePoint: Human Resources / Employee Records</option>
-                        <option value="sp-drive-legal">SharePoint: Corporate Legal / Contracts & Compliance</option>
-                        <option value="sp-drive-it">SharePoint: IT & Infrastructure / System Architecture</option>
-                        <option value="od-drive-ciso">OneDrive: Alex Chen (CISO) Personal OneDrive</option>
-                        <option value="od-drive-cfo">OneDrive: Sarah Miller (CFO) Personal OneDrive</option>
-                        <option value="od-drive-lead-architect">OneDrive: Marcus Vance (Lead Architect) Personal OneDrive</option>
+                        <!-- Populated by updateModalDrives() -->
                     </select>
+                </div>
+                <div>
+                    <label class="block text-slate-400 mb-1">File Name</label>
+                    <input id="modalFileName" type="text" value="Confidential_Board_Review.docx" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white">
                 </div>
                 <div>
                     <label class="block text-slate-400 mb-1">Exposure Level</label>
@@ -348,7 +482,73 @@
 
     <!-- Client-side script -->
     <script>
+        let currentSelectedTenant = 'all';
         let currentHierarchyData = null;
+        let tenantDrivesMap = {
+            'tenant-smb-250': [
+                { id: 'drive-smb-sp-finance', name: 'SharePoint: Acme Finance & Invoices' },
+                { id: 'drive-smb-sp-operations', name: 'SharePoint: Acme Operations & Warehouse' },
+                { id: 'drive-smb-od-founder', name: 'OneDrive: Alice Founder' }
+            ],
+            'tenant-mid-2500': [
+                { id: 'drive-mid-sp-logistics', name: 'SharePoint: Fleet & Logistics Vault' },
+                { id: 'drive-mid-sp-compliance', name: 'SharePoint: Safety & Compliance' },
+                { id: 'drive-mid-od-cfo', name: 'OneDrive: Sarah Miller (CFO)' }
+            ],
+            'tenant-ent-10k': [
+                { id: 'drive-ent-sp-wealth', name: 'SharePoint: Wealth Management & Assets' },
+                { id: 'drive-ent-sp-audits', name: 'SharePoint: SOX & Regulatory Audits' },
+                { id: 'drive-ent-od-risk', name: 'OneDrive: Elena Rostova (CRO)' }
+            ],
+            'tenant-large-35k': [
+                { id: 'drive-large-sp-clinical', name: 'SharePoint: Clinical Research Trials' },
+                { id: 'drive-large-sp-hipaa', name: 'SharePoint: Patient Records & HIPAA Vault' },
+                { id: 'drive-large-od-cmo', name: 'OneDrive: Dr. Aris Thorne (CMO)' }
+            ],
+            'tenant-global-100k': [
+                { id: 'drive-global-sp-treasury', name: 'SharePoint: Global Treasury & M&A' },
+                { id: 'drive-global-sp-rnd', name: 'SharePoint: Core R&D & Patents' },
+                { id: 'drive-global-od-cio', name: 'OneDrive: Global CIO' }
+            ]
+        };
+
+        function selectTenant(tenantId) {
+            currentSelectedTenant = tenantId;
+
+            // Highlight card
+            document.querySelectorAll('#tenantCardsGrid > div').forEach(el => {
+                el.className = "cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-slate-900 border-slate-800 hover:border-slate-700 text-slate-300";
+            });
+            const activeCard = document.getElementById('card-' + tenantId);
+            if (activeCard) {
+                activeCard.className = "cursor-pointer rounded-xl p-3 border transition-all duration-200 bg-blue-950/40 border-blue-500 text-white shadow-md";
+            }
+
+            // Update label
+            const labelMap = {
+                'all': 'All 5 Tenants',
+                'tenant-smb-250': 'Acme TinyCorp (SMB)',
+                'tenant-mid-2500': 'Contoso Logistics (Mid-Market)',
+                'tenant-ent-10k': 'Fabrikam Financial (Enterprise E5)',
+                'tenant-large-35k': 'Northwind Health (Large Enterprise)',
+                'tenant-global-100k': 'MegaCorp Global (Hyperscale Global)'
+            };
+            document.getElementById('activeFilterBadge').innerText = labelMap[tenantId] || tenantId;
+            document.getElementById('btnCrawlSelectedLabel').innerText = tenantId === 'all' ? 'Crawl Contoso Mid' : 'Crawl ' + (labelMap[tenantId] || tenantId).split(' ')[0];
+
+            // Filter table dropdown if in table view
+            const filterTenant = document.getElementById('filterTenant');
+            if (filterTenant) {
+                filterTenant.value = tenantId === 'all' ? '' : tenantId;
+            }
+
+            loadMetrics();
+            loadFiles();
+            loadQuotaTelemetry();
+            if (!document.getElementById('viewHierarchy').classList.contains('hidden')) {
+                loadHierarchy();
+            }
+        }
 
         function switchView(viewName) {
             document.getElementById('viewTable').classList.add('hidden');
@@ -359,54 +559,59 @@
             document.getElementById('tabHierarchy').className = "px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800";
             document.getElementById('tabBullboard').className = "px-4 py-2 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 transition flex items-center space-x-1.5 border border-slate-800";
 
-            if (viewName === 'table') {
-                document.getElementById('viewTable').classList.remove('hidden');
-                document.getElementById('tabTable').className = "px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm";
-            } else if (viewName === 'hierarchy') {
+            if (viewName === 'hierarchy') {
                 document.getElementById('viewHierarchy').classList.remove('hidden');
                 document.getElementById('tabHierarchy').className = "px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm";
                 loadHierarchy();
+            } else if (viewName === 'table') {
+                document.getElementById('viewTable').classList.remove('hidden');
+                document.getElementById('tabTable').className = "px-4 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white transition flex items-center space-x-1.5 shadow-sm";
+                loadFiles();
             } else if (viewName === 'bullboard') {
                 document.getElementById('viewBullboard').classList.remove('hidden');
                 document.getElementById('tabBullboard').className = "px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 text-white transition flex items-center space-x-1.5 shadow-sm";
             }
         }
 
-        function triggerCrawl() {
-            fetch('/api/v1/dashboard/trigger/crawl', { method: 'POST' })
+        function triggerCrawlAll() {
+            fetch('/api/v1/dashboard/trigger/crawl-all', { method: 'POST' })
                 .then(r => r.json())
-                .then(data => alert('Baseline Crawl queued at Priority 10 across all document libraries!'))
+                .then(data => alert('🚀 Concurrently launched baseline crawl across all 5 official tenant tiers (5,000 files)! Check Bull-Board and Dashboard metrics.'))
+                .catch(err => alert('Failed triggering crawl-all: ' + err));
+        }
+
+        function triggerCrawlSelected() {
+            const target = currentSelectedTenant === 'all' ? 'tenant-mid-2500' : currentSelectedTenant;
+            fetch('/api/v1/dashboard/trigger/crawl?tenantId=' + target, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => alert('Baseline Crawl queued for ' + target + ' at Priority 10!'))
                 .catch(err => alert('Failed triggering crawl: ' + err));
         }
 
-        function seedAndCrawl(count) {
-            fetch('/api/v1/dashboard/seed?count=' + count, { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    triggerCrawl();
-                })
-                .catch(err => alert('Failed seeding: ' + err));
-        }
-
-        function setRateLimit(limit) {
-            fetch('/api/v1/dashboard/ratelimit?limit=' + limit, { method: 'POST' })
+        function triggerTenant429(tenantId, count) {
+            fetch(`/api/v1/dashboard/simulate-429?tenantId=${tenantId}&enabled=true&burstCount=${count}`, { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     loadQuotaTelemetry();
-                })
-                .catch(err => alert('Failed updating rate limit: ' + err));
-        }
-
-        function simulate429Burst(count) {
-            fetch('/api/v1/dashboard/simulate-429?enabled=true&burstCount=' + count, { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    loadQuotaTelemetry();
+                    alert(`💥 Triggered 429 burst on [${tenantId}]. Only this tenant's workers will defer for 3s, while other tenants continue running!`);
                 })
                 .catch(err => alert('Failed triggering 429 burst: ' + err));
         }
 
+        function resetDb() {
+            if (confirm('Reset scanned files database?')) {
+                fetch('/api/v1/dashboard/trigger/reset', { method: 'POST' })
+                    .then(r => r.json())
+                    .then(() => {
+                        loadMetrics();
+                        loadFiles();
+                        loadHierarchy();
+                    });
+            }
+        }
+
         function triggerUploadModal() {
+            updateModalDrives();
             document.getElementById('uploadModal').classList.remove('hidden');
         }
 
@@ -414,13 +619,21 @@
             document.getElementById('uploadModal').classList.add('hidden');
         }
 
+        function updateModalDrives() {
+            const tId = document.getElementById('modalTenantId').value;
+            const driveSelect = document.getElementById('modalDriveId');
+            const drives = tenantDrivesMap[tId] || [];
+            driveSelect.innerHTML = drives.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
+        }
+
         function submitForwardUpload() {
-            const fileName = document.getElementById('modalFileName').value;
+            const tenantId = document.getElementById('modalTenantId').value;
             const driveId = document.getElementById('modalDriveId').value;
+            const fileName = document.getElementById('modalFileName').value;
             const exposure = document.getElementById('modalExposure').value;
             const threatType = document.getElementById('modalThreat').value;
 
-            const url = `/api/v1/dashboard/trigger/upload?fileName=${encodeURIComponent(fileName)}&driveId=${encodeURIComponent(driveId)}&exposure=${encodeURIComponent(exposure)}&threatType=${encodeURIComponent(threatType)}`;
+            const url = `/api/v1/dashboard/trigger/upload?tenantId=${encodeURIComponent(tenantId)}&driveId=${encodeURIComponent(driveId)}&fileName=${encodeURIComponent(fileName)}&exposure=${encodeURIComponent(exposure)}&threatType=${encodeURIComponent(threatType)}`;
 
             fetch(url, { method: 'POST' })
                 .then(r => r.json())
@@ -434,7 +647,11 @@
         }
 
         function loadMetrics() {
-            fetch('/api/v1/dashboard/metrics')
+            const url = currentSelectedTenant === 'all'
+                ? '/api/v1/dashboard/metrics'
+                : '/api/v1/dashboard/metrics?tenantId=' + currentSelectedTenant;
+
+            fetch(url)
                 .then(r => r.json())
                 .then(m => {
                     document.getElementById('metricTotalFiles').innerText = m.totalFiles || 0;
@@ -443,11 +660,33 @@
                     document.getElementById('metricOrgWide').innerText = m.orgWideExposures || 0;
                     document.getElementById('metricThreats').innerText = m.totalThreats || 0;
                     document.getElementById('metricRatio').innerText = (m.forwardScans || 0) + ' / ' + (m.backwardScans || 0);
+
+                    // If perTenantCounts available, update tenant badges
+                    if (m.perTenantCounts) {
+                        if (document.getElementById('tCount-smb')) document.getElementById('tCount-smb').innerText = m.perTenantCounts['tenant-smb-250'] || 0;
+                        if (document.getElementById('tCount-mid')) document.getElementById('tCount-mid').innerText = m.perTenantCounts['tenant-mid-2500'] || 0;
+                        if (document.getElementById('tCount-ent')) document.getElementById('tCount-ent').innerText = m.perTenantCounts['tenant-ent-10k'] || 0;
+                        if (document.getElementById('tCount-large')) document.getElementById('tCount-large').innerText = m.perTenantCounts['tenant-large-35k'] || 0;
+                        if (document.getElementById('tCount-global')) document.getElementById('tCount-global').innerText = m.perTenantCounts['tenant-global-100k'] || 0;
+                    }
                 });
         }
 
+        function loadSystemMetrics() {
+            fetch('/api/v1/dashboard/system-metrics')
+                .then(r => r.json())
+                .then(s => {
+                    document.getElementById('sysJvmMem').innerText = `${s.jvmUsedMemoryMB || 0} / ${s.jvmMaxMemoryMB || 0} MB`;
+                    document.getElementById('sysThreads').innerText = `${s.activeThreadCount || 0} active`;
+                    document.getElementById('sysDbFiles').innerText = s.totalFilesScanned || 0;
+                    document.getElementById('sysDbDrives').innerText = s.totalDrivesMonitored || 0;
+                })
+                .catch(err => console.debug('System metrics polling error:', err));
+        }
+
         function loadQuotaTelemetry() {
-            fetch('/api/v1/dashboard/quota')
+            const targetTenant = currentSelectedTenant === 'all' ? 'tenant-mid-2500' : currentSelectedTenant;
+            fetch('/api/v1/dashboard/quota?tenantId=' + targetTenant)
                 .then(r => r.json())
                 .then(q => {
                     const limit = q.maxRequestsPerSecond || 50;
@@ -455,18 +694,19 @@
                     const remainingTokens = q.remainingTokens || 0;
                     const headroomPct = q.remainingHeadroomPercent || 100;
 
-                    document.getElementById('tokenConsumptionText').innerText = `${used} / ${limit} req/s`;
+                    document.getElementById('activeTenantGaugeLabel').innerText = `${q.organizationName || targetTenant} (${q.tier || 'TIER'}: ${limit} RUs/s)`;
+                    document.getElementById('tokenConsumptionText').innerText = `${used} / ${limit} RUs/s`;
                     document.getElementById('tokenRemainingText').innerText = `${headroomPct}% (${remainingTokens} tokens)`;
 
                     const bar = document.getElementById('tokenProgressBar');
                     bar.style.width = Math.max(5, Math.min(100, headroomPct)) + '%';
 
                     if (headroomPct < 25) {
-                        bar.className = "bg-gradient-to-r from-red-500 to-amber-500 h-2 transition-all duration-300";
+                        bar.className = "bg-gradient-to-r from-red-500 to-amber-500 h-2.5 transition-all duration-300";
                         document.getElementById('quotaYieldBadge').className = "text-[10px] px-2 py-0.5 rounded font-bold bg-amber-950 text-amber-400 border border-amber-800 animate-pulse";
                         document.getElementById('quotaYieldBadge').innerText = "🛑 YIELDING TO FORWARD (<25%)";
                     } else {
-                        bar.className = "bg-gradient-to-r from-emerald-500 to-sky-500 h-2 transition-all duration-300";
+                        bar.className = "bg-gradient-to-r from-emerald-500 to-sky-500 h-2.5 transition-all duration-300";
                         document.getElementById('quotaYieldBadge').className = "text-[10px] px-2 py-0.5 rounded font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800";
                         document.getElementById('quotaYieldBadge').innerText = "HEADROOM HEALTHY (>25%)";
                     }
@@ -491,8 +731,10 @@
             const exp = document.getElementById('filterExposure').value;
             const thr = document.getElementById('filterThreat').value;
             const ori = document.getElementById('filterOrigin').value;
+            const ten = document.getElementById('filterTenant') ? document.getElementById('filterTenant').value : (currentSelectedTenant !== 'all' ? currentSelectedTenant : '');
 
             let url = '/api/v1/dashboard/files?';
+            if (ten) url += 'tenantId=' + ten + '&';
             if (exp) url += 'exposure=' + exp + '&';
             if (thr) url += 'threat=' + thr + '&';
             if (ori) url += 'origin=' + ori + '&';
@@ -502,7 +744,7 @@
                 .then(files => {
                     const tbody = document.getElementById('filesTableBody');
                     if (!files || files.length === 0) {
-                        tbody.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No matching files found.</td></tr>`;
+                        tbody.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-500">No matching files found. Click "Scan All 5 Tenants" to initiate ingestion.</td></tr>`;
                         return;
                     }
 
@@ -515,9 +757,11 @@
                             : `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">🔄 BACKWARD (P10)</span>`;
 
                         let dateStr = new Date(f.scannedAtTimestamp).toLocaleTimeString();
+                        let tenantBadge = `<span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300 font-semibold border border-slate-700">${f.tenantId || 'tenant'}</span>`;
 
                         return `
                             <tr class="hover:bg-slate-800/40 transition">
+                                <td class="px-4 py-3">${tenantBadge}</td>
                                 <td class="px-4 py-3">
                                     <div class="font-semibold text-slate-200">${f.fileName}</div>
                                     <div class="text-[10px] text-slate-500 truncate max-w-xs">${f.filePath}</div>
@@ -563,7 +807,11 @@
 
         // --- HIERARCHY TREE RENDERER ---
         function loadHierarchy() {
-            fetch('/api/v1/dashboard/hierarchy')
+            const url = currentSelectedTenant === 'all'
+                ? '/api/v1/dashboard/hierarchy'
+                : '/api/v1/dashboard/hierarchy?tenantId=' + currentSelectedTenant;
+
+            fetch(url)
                 .then(r => r.json())
                 .then(data => {
                     currentHierarchyData = data;
@@ -581,99 +829,103 @@
             const q = filterQuery.toLowerCase();
             let html = '';
 
-            // Section 1: SharePoint Document Libraries
-            html += `
-                <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
-                    <div class="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between border-b border-slate-800 cursor-pointer" onclick="toggleNode('sp-root-node')">
-                        <div class="flex items-center space-x-2">
-                            <span id="sp-root-node-arrow" class="text-slate-400 text-xs transition">▼</span>
-                            <span class="text-base">📁</span>
-                            <span class="font-bold text-slate-100">SharePoint Enterprise Sites (${(data.sharepointSites || []).length} Document Libraries)</span>
-                        </div>
-                        <span class="text-[11px] text-slate-400">Team Sites & Compliance Hubs</span>
-                    </div>
-                    <div id="sp-root-node" class="p-3 space-y-3">
-            `;
+            // Check if tenants array is present
+            const tenants = data.tenants || [];
+            if (tenants.length > 0) {
+                tenants.forEach((tenant, tIdx) => {
+                    const tDomId = `tenant-node-${tIdx}`;
+                    const threatBadge = tenant.totalThreats > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${tenant.totalThreats} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
 
-            (data.sharepointSites || []).forEach((site, sIdx) => {
-                const siteId = `site-${sIdx}`;
-                const threatBadge = site.threatCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${site.threatCount} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
-                const publicBadge = site.publicExposureCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${site.publicExposureCount} Public</span>` : '';
-
-                html += `
-                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/60 ml-2">
-                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-850 cursor-pointer hover:bg-slate-800/50" onclick="toggleNode('${siteId}')">
-                            <div class="flex items-center space-x-2">
-                                <span id="${siteId}-arrow" class="text-slate-400 text-xs">▼</span>
-                                <span>🏛️</span>
-                                <span class="font-bold text-sky-300">${site.siteName || site.name}</span>
-                                <span class="text-slate-500 text-[11px]">/ ${site.libraryName || 'Document Library'}</span>
+                    html += `
+                        <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/60 mb-4 shadow-sm">
+                            <div class="bg-slate-850 px-4 py-3 flex items-center justify-between border-b border-slate-800 cursor-pointer hover:bg-slate-800/40" onclick="toggleNode('${tDomId}')">
+                                <div class="flex items-center space-x-2.5">
+                                    <span id="${tDomId}-arrow" class="text-slate-400 text-xs">▼</span>
+                                    <span class="text-lg">🏢</span>
+                                    <div>
+                                        <span class="font-bold text-slate-100 text-sm">${tenant.organizationName}</span>
+                                        <span class="text-sky-400 text-xs font-mono ml-2">(${tenant.tierDisplayName || tenant.tier})</span>
+                                        <span class="text-slate-400 text-[11px] font-mono ml-1">• ${tenant.seatCount} seats · ${tenant.burstLimitRUsPerSec} RUs/s</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-3">
+                                    <span class="text-slate-400 text-xs font-mono">${tenant.totalFiles} files · ${tenant.totalDrives} drives</span>
+                                    ${threatBadge}
+                                </div>
                             </div>
-                            <div class="flex items-center space-x-2">
-                                <span class="text-slate-400 text-[11px]">${site.totalFiles} files</span>
-                                ${threatBadge}
-                                ${publicBadge}
+                            <div id="${tDomId}" class="p-3 space-y-3">
+                                ${renderTenantDrives(tenant, tDomId, q)}
                             </div>
                         </div>
-                        <div id="${siteId}" class="p-2 space-y-2 bg-slate-950/30">
-                            ${renderFolders(site.folders, siteId, q)}
-                        </div>
-                    </div>
-                `;
-            });
-
-            html += `
-                    </div>
-                </div>
-            `;
-
-            // Section 2: User OneDrives
-            html += `
-                <div class="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/40">
-                    <div class="bg-slate-800/60 px-4 py-2.5 flex items-center justify-between border-b border-slate-800 cursor-pointer" onclick="toggleNode('od-root-node')">
-                        <div class="flex items-center space-x-2">
-                            <span id="od-root-node-arrow" class="text-slate-400 text-xs transition">▼</span>
-                            <span class="text-base">☁️</span>
-                            <span class="font-bold text-slate-100">User Personal OneDrives (${(data.oneDrives || []).length} Provisioned Accounts)</span>
-                        </div>
-                        <span class="text-[11px] text-slate-400">Executive & Staff Storage</span>
-                    </div>
-                    <div id="od-root-node" class="p-3 space-y-3">
-            `;
-
-            (data.oneDrives || []).forEach((od, oIdx) => {
-                const odId = `onedrive-${oIdx}`;
-                const threatBadge = od.threatCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${od.threatCount} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
-                const publicBadge = od.publicExposureCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${od.publicExposureCount} Public</span>` : '';
-
-                html += `
-                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/60 ml-2">
-                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-850 cursor-pointer hover:bg-slate-800/50" onclick="toggleNode('${odId}')">
-                            <div class="flex items-center space-x-2">
-                                <span id="${odId}-arrow" class="text-slate-400 text-xs">▼</span>
-                                <span>👤</span>
-                                <span class="font-bold text-indigo-300">${od.ownerName || od.name}</span>
-                                <span class="text-slate-500 text-[11px]">(Personal OneDrive)</span>
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <span class="text-slate-400 text-[11px]">${od.totalFiles} files</span>
-                                ${threatBadge}
-                                ${publicBadge}
-                            </div>
-                        </div>
-                        <div id="${odId}" class="p-2 space-y-2 bg-slate-950/30">
-                            ${renderFolders(od.folders, odId, q)}
-                        </div>
-                    </div>
-                `;
-            });
-
-            html += `
-                    </div>
-                </div>
-            `;
+                    `;
+                });
+            } else {
+                html = `<div class="text-slate-500 text-center py-8">No tenant hierarchy data found. Click "Scan All 5 Tenants" to initiate.</div>`;
+            }
 
             container.innerHTML = html;
+        }
+
+        function renderTenantDrives(tenant, parentId, query) {
+            let html = '';
+
+            // 1. SharePoint Document Libraries
+            const sites = tenant.sharepointSites || [];
+            if (sites.length > 0) {
+                html += `
+                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/50">
+                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-800/50 text-xs font-semibold text-slate-300">
+                            <span>📁 SharePoint Team Sites (${sites.length} Document Libraries)</span>
+                        </div>
+                        <div class="p-2 space-y-2">
+                            ${sites.map((site, sIdx) => renderDriveNode(site, `${parentId}-sp-${sIdx}`, query)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 2. User OneDrives
+            const onedrives = tenant.oneDrives || [];
+            if (onedrives.length > 0) {
+                html += `
+                    <div class="border border-slate-800/80 rounded-lg overflow-hidden bg-slate-900/50 mt-2">
+                        <div class="px-3.5 py-2 flex items-center justify-between bg-slate-800/50 text-xs font-semibold text-slate-300">
+                            <span>☁️ User Personal OneDrives (${onedrives.length} Provisioned Accounts)</span>
+                        </div>
+                        <div class="p-2 space-y-2">
+                            ${onedrives.map((od, oIdx) => renderDriveNode(od, `${parentId}-od-${oIdx}`, query)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+
+        function renderDriveNode(drive, driveDomId, query) {
+            const threatBadge = drive.threatCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-950 text-red-400 border border-red-800 font-bold">🔴 ${drive.threatCount} Threats</span>` : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-800">Clean</span>`;
+            const publicBadge = drive.publicExposureCount > 0 ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-800">${drive.publicExposureCount} Public</span>` : '';
+
+            return `
+                <div class="border border-slate-800/60 rounded-md overflow-hidden bg-slate-950/40">
+                    <div class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/30 text-xs" onclick="toggleNode('${driveDomId}')">
+                        <div class="flex items-center space-x-2">
+                            <span id="${driveDomId}-arrow" class="text-slate-400 text-xs">▼</span>
+                            <span>${drive.driveType === 'USER_ONEDRIVE' ? '👤' : '🏛️'}</span>
+                            <span class="font-bold text-sky-300">${drive.name}</span>
+                            <span class="text-slate-500 text-[10px] font-mono">(${drive.driveId})</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-slate-400 text-[11px]">${drive.totalFiles} files</span>
+                            ${threatBadge}
+                            ${publicBadge}
+                        </div>
+                    </div>
+                    <div id="${driveDomId}" class="p-2 space-y-1.5 bg-slate-900/30 border-t border-slate-800/40">
+                        ${renderFolders(drive.folders, driveDomId, query)}
+                    </div>
+                </div>
+            `;
         }
 
         function renderFolders(folders, parentId, query) {
@@ -687,15 +939,15 @@
                 if (query) {
                     matchingFiles = matchingFiles.filter(item => item.fileName.toLowerCase().includes(query) || (f.folderPath || '').toLowerCase().includes(query));
                     if (matchingFiles.length === 0 && !f.folderPath.toLowerCase().includes(query)) {
-                        return ''; // Hidden by query
+                        return '';
                     }
                 }
 
                 const threatBadge = f.threatCount > 0 ? `<span class="text-red-400 font-bold">🔴 ${f.threatCount} Threats</span>` : `<span class="text-slate-500">0 Threats</span>`;
 
                 return `
-                    <div class="border border-slate-800/60 rounded-md overflow-hidden bg-slate-950/50 ml-3">
-                        <div class="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 text-xs" onclick="toggleNode('${folderDomId}')">
+                    <div class="border border-slate-800/50 rounded overflow-hidden bg-slate-950/50 ml-3">
+                        <div class="px-2.5 py-1 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 text-xs" onclick="toggleNode('${folderDomId}')">
                             <div class="flex items-center space-x-1.5">
                                 <span id="${folderDomId}-arrow" class="text-slate-500 text-[10px]">▼</span>
                                 <span>📂</span>
@@ -706,13 +958,13 @@
                                 ${threatBadge}
                             </div>
                         </div>
-                        <div id="${folderDomId}" class="divide-y divide-slate-800/40 bg-slate-900/30 ml-4 border-l border-slate-800/80">
-                            ${matchingFiles.slice(0, 30).map(file => {
+                        <div id="${folderDomId}" class="divide-y divide-slate-800/40 bg-slate-900/30 ml-3 border-l border-slate-800/80">
+                            ${matchingFiles.slice(0, 20).map(file => {
                                 const expBadge = getExposureBadge(file.exposureLevel);
                                 const threatBadge = getThreatBadge(file.threatVerdict);
                                 const originBadge = file.scanOrigin === 'FORWARD' ? '<span class="text-sky-400 font-bold text-[10px]">⚡ P1</span>' : '<span class="text-slate-500 text-[10px]">🔄 P10</span>';
                                 return `
-                                    <div class="px-3 py-1.5 flex items-center justify-between text-[11px] hover:bg-slate-800/30">
+                                    <div class="px-3 py-1 flex items-center justify-between text-[11px] hover:bg-slate-800/30">
                                         <div class="flex items-center space-x-2">
                                             <span>📄</span>
                                             <span class="text-slate-200 font-medium">${file.fileName}</span>
@@ -726,7 +978,7 @@
                                     </div>
                                 `;
                             }).join('')}
-                            ${matchingFiles.length > 30 ? `<div class="p-1.5 text-center text-[10px] text-slate-500">+ ${matchingFiles.length - 30} more files in this folder</div>` : ''}
+                            ${matchingFiles.length > 20 ? `<div class="p-1 text-center text-[10px] text-slate-500">+ ${matchingFiles.length - 20} more files</div>` : ''}
                         </div>
                     </div>
                 `;
@@ -747,10 +999,12 @@
         }
 
         function expandAllHierarchy() {
-            document.querySelectorAll('#hierarchyTreeContainer [id$="-node"], #hierarchyTreeContainer [id^="site-"], #hierarchyTreeContainer [id^="onedrive-"]').forEach(el => {
-                el.classList.remove('hidden');
-                const arrow = document.getElementById(el.id + '-arrow');
-                if (arrow) arrow.innerText = '▼';
+            document.querySelectorAll('#hierarchyTreeContainer [id$="-arrow"]').forEach(arrow => {
+                const node = document.getElementById(arrow.id.replace('-arrow', ''));
+                if (node) {
+                    node.classList.remove('hidden');
+                    arrow.innerText = '▼';
+                }
             });
         }
 
@@ -774,11 +1028,13 @@
                 loadMetrics();
                 loadFiles();
                 loadQuotaTelemetry();
+                loadSystemMetrics();
             });
             eventSource.addEventListener('threat-alert', function(e) {
                 loadMetrics();
                 loadFiles();
                 loadQuotaTelemetry();
+                loadSystemMetrics();
             });
             eventSource.onerror = function() {
                 document.getElementById('connectionStatus').innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span><span>RECONNECTING...</span>`;
@@ -792,9 +1048,12 @@
         window.onload = function() {
             loadMetrics();
             loadFiles();
+            loadHierarchy();
             loadQuotaTelemetry();
+            loadSystemMetrics();
             setupSseStream();
-            setInterval(loadQuotaTelemetry, 1000); // Poll quota stats every second for real-time token bucket animation
+            setInterval(loadQuotaTelemetry, 1000); // 1-second sliding token window animation
+            setInterval(loadSystemMetrics, 3000);  // 3-second system metrics update
         };
     </script>
 </body>

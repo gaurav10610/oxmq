@@ -431,10 +431,25 @@ oxguard:
 1. **Real Physical Files on Disk:** The mock server creates and maintains real physical files on disk under `./data/m365-storage` (real Word docs, real PDFs, spreadsheets, real EICAR test string, high-entropy simulated ransomware, and PE executable headers disguised as docx).
 2. **Exact Graph v1.0 REST API Contract:** Exposes standard endpoints (`/v1.0/sites/getAllSites`, `/sites/{siteId}/drives`, `/users`, `/users/{userId}/drive`, `/drives/{driveId}/root/delta`, `/permissions`, and binary streaming download URL).
 3. **Single Configuration Toggle:** Only the `graph-base-url` changes between local testing (`http://localhost:8081/v1.0`) and production cloud (`https://graph.microsoft.com/v1.0`). All connector code, HTTP request processing, and inspection pipelines are 100% identical.
-4. **PostgreSQL & Redis in Docker:**
-   Start all infrastructure with one command:
+4. **Full Dockerized Infrastructure:**
+   Start all infrastructure (PostgreSQL 16, Redis 7, Bull-Board, Prometheus, Grafana) with one command:
    ```bash
-   docker compose -f oxmq-examples/oxguard-365/docker-compose.yml up -d
+   ./start-oxguard.sh
    ```
-   All file inventories, ACL exposure tiers, malware threat verdicts, and drive checkpoints are stored in PostgreSQL (`oxguard_scanned_files` and `oxguard_monitored_drives`).
+
+### 9.5 Multi-Tenant License Tiers, OxMQ Native Plugins & Grafana Dashboards
+
+OxGuard 365 models all 5 official Microsoft 365 Paid License Tiers simultaneously:
+- **`tenant-smb-250` (Acme TinyCorp):** Small Business (250 seats, 25 RUs/s burst)
+- **`tenant-mid-2500` (Contoso Logistics):** Mid-Market Growth (2,500 seats, 50 RUs/s burst)
+- **`tenant-ent-10k` (Fabrikam Financial):** Enterprise E3/E5 (10,000 seats, 90 RUs/s burst)
+- **`tenant-large-35k` (Northwind Health):** Large Enterprise (35,000 seats, 150 RUs/s burst)
+- **`tenant-global-100k` (MegaCorp Global):** Hyperscale Global (100,000 seats, 250 RUs/s burst)
+
+All rate limiting, circuit breaking, and quota yielding are powered natively by **OxMQ Enterprise Plugins**:
+1. **`GroupRateLimiterPlugin`:** Dynamic token bucket isolation per tenant.
+2. **`RateLimitSentinelPlugin`:** Automatic distributed lockout upon receiving HTTP 429 `Retry-After`.
+3. **`PriorityQuotaGovernorPlugin`:** Headroom-based yielding protecting VIP Priority 1 scans from background Priority 10 crawls.
+4. **Grafana Dashboards:** Pre-provisioned at `http://localhost:3001/d/oxmq-overview` to monitor queue depths, execution throughput, and per-tenant rate yield counters.
+
 

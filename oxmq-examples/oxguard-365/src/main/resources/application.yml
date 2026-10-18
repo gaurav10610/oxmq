@@ -30,7 +30,7 @@ oxguard:
   client:
     mode: LIVE # LiveGraphClient connects to Microsoft Graph v1.0 REST API
   azure:
-    tenant-id: "contoso-enterprise-tenant"
+    tenant-id: "tenant-mid-2500"
     client-id: "oxguard-365-enterprise-app"
     client-secret: "secret-token-xyz"
     graph-base-url: "http://localhost:8081/v1.0" # Mock M365 Server (or https://graph.microsoft.com/v1.0 in cloud)
@@ -39,7 +39,7 @@ oxguard:
     enabled: true
     port: 8081
     storage-dir: "./data/m365-storage"
-    total-files: 1000
+    total-files: 5000
     simulate-429-burst: false
   webhook:
     client-state: "oxguard-secret-state-token"
@@ -52,4 +52,11 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true

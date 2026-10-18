@@ -9,4 +9,7 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public interface SpringDataMonitoredDriveRepository extends JpaRepository<MonitoredDriveEntity, String> {
+    java.util.List<MonitoredDriveEntity> findByTenantId(String tenantId);
+    long countByTenantId(String tenantId);
 }
+

@@ -25,14 +25,27 @@ public interface GraphClient {
      */
     DeltaSyncResult fetchDeltaChanges(String driveId, String deltaToken);
 
+    default DeltaSyncResult fetchDeltaChanges(String tenantId, String driveId, String deltaToken) {
+        return fetchDeltaChanges(driveId, deltaToken);
+    }
+
     /**
      * Retrieves the Access Control List and resolves effective permissions for a drive item.
      */
     EffectiveExposure fetchPermissions(String driveId, String itemId);
+
+    default EffectiveExposure fetchPermissions(String tenantId, String driveId, String itemId) {
+        return fetchPermissions(driveId, itemId);
+    }
 
     /**
      * Opens a streaming connection to download file bytes.
      * Uses direct pre-authenticated SAS URL (direct Azure Blob download) to bypass Graph quotas.
      */
     InputStream streamFileContent(String driveId, String itemId, String directDownloadUrl);
+
+    default InputStream streamFileContent(String tenantId, String driveId, String itemId, String directDownloadUrl) {
+        return streamFileContent(driveId, itemId, directDownloadUrl);
+    }
 }
+

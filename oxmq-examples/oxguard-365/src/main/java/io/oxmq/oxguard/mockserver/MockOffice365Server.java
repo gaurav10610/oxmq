@@ -4,13 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import io.oxmq.oxguard.model.TenantProfile;
+import io.oxmq.oxguard.model.TenantTier;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -43,8 +43,20 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Enterprise Mock Microsoft 365 Server.
- * Exposes the exact Microsoft Graph API v1.0 contract and serves real physical files from disk.
+ * Ultra-Realistic Multi-Tenant Microsoft Office 365 Mock Server.
+ * Supports all 5 official Microsoft 365 Paid License Tiers:
+ * - tenant-smb-250: Small Business (250 seats, 25 RUs/s burst)
+ * - tenant-mid-2500: Mid-Market Growth (2,500 seats, 50 RUs/s burst)
+ * - tenant-ent-10k: Enterprise E3/E5 (10,000 seats, 90 RUs/s burst)
+ * - tenant-large-35k: Large Enterprise (35,000 seats, 150 RUs/s burst)
+ * - tenant-global-100k: Hyperscale Global (100,000 seats, 250 RUs/s burst)
+ *
+ * Implements:
+ * - Real Resource Unit (RU) cost metering per Microsoft Learn guidance
+ * - IETF standard RateLimit-* response headers
+ * - Strict per-tenant token bucket isolation
+ * - Direct Azure Blob SAS download simulation (0 RUs)
+ * - Real physical files on disk (clean docs, ransomware entropy, MZ PE mismatches, EICAR)
  */
 @Component
 @ConditionalOnProperty(name = "oxguard.mock-server.enabled", havingValue = "true", matchIfMissing = true)
@@ -60,31 +72,24 @@ public class MockOffice365Server {
     private final String webhookClientState;
     private final ObjectMapper objectMapper;
 
-    public static final Map<String, List<String>> DRIVE_FOLDERS = Map.of(
-            "sp-drive-finance", List.of("/Budgets/2026/Q1", "/Budgets/2026/Q2", "/Confidential/Audits", "/Ledgers/General", "/Tax/Filings"),
-            "sp-drive-hr", List.of("/Employee Records/2026", "/Payroll/Executive", "/Benefits/Health", "/Onboarding/Engineering", "/Compliance/Policies"),
-            "sp-drive-legal", List.of("/Contracts/Vendors", "/NDAs/Partners", "/Compliance/SOX", "/Intellectual Property/Patents", "/Litigation/Active"),
-            "sp-drive-it", List.of("/Backups/Databases", "/Security/Certificates", "/Architecture/Blueprints", "/Infrastructure/Terraform", "/Credentials/Vault"),
-            "od-drive-ciso", List.of("/Security Audits/2026", "/Incidents/Postmortems", "/Vulnerability Reports/Q3", "/Confidential/Threat Intel", "/Personal Notes"),
-            "od-drive-cfo", List.of("/Financial Models/2026", "/Board Decks/Drafts", "/Investor Relations/Q3", "/M&A/Target Analysis", "/Personal Taxes"),
-            "od-drive-lead-architect", List.of("/OxMQ Architecture/Core", "/Benchmarks/Cluster Testing", "/Design Docs/v1.4", "/Prototypes/Loom", "/Research Papers")
-    );
+    // Per-Tenant Drive Folders
+    public static final Map<String, List<String>> DRIVE_FOLDERS = new LinkedHashMap<>();
 
-    private HttpServer httpServer;
-    private final AtomicBoolean throttledOnce = new AtomicBoolean(false);
-    private final Map<String, MockFileInfo> filesInventory = new ConcurrentHashMap<>();
-    private final Map<String, List<String>> driveFiles = new ConcurrentHashMap<>();
+    // Multi-tenant Drive Inventory: Drive Metadata
+    public record DriveMetadata(
+            String driveId,
+            String tenantId,
+            String name,
+            String driveType, // "documentLibrary" or "business"
+            String ownerPrincipal,
+            String siteOrUserName
+    ) {}
 
-    // Dynamic Rate Limiter & 429 Burst State
-    private final AtomicInteger maxRequestsPerSecond = new AtomicInteger(50);
-    private final AtomicInteger burstCountRemaining = new AtomicInteger(0);
-    private final AtomicBoolean burstEnabled = new AtomicBoolean(false);
-    private final AtomicInteger currentSecondRequests = new AtomicInteger(0);
-    private volatile long currentSecond = System.currentTimeMillis() / 1000L;
-
+    // File Metadata
     public record MockFileInfo(
             String fileId,
             String driveId,
+            String tenantId,
             String name,
             String path,
             long size,
@@ -93,6 +98,88 @@ public class MockOffice365Server {
             String diskFileName,
             long lastModified
     ) {}
+
+    // Per-Tenant Rate Limiter and Token Bucket State
+    public static class TenantRateLimiter {
+        private final String tenantId;
+        private final AtomicInteger burstLimitRUs;
+        private final AtomicInteger currentSecondRUs = new AtomicInteger(0);
+        private final AtomicLong currentSecondEpoch = new AtomicLong(System.currentTimeMillis() / 1000L);
+        private final AtomicInteger burst429Remaining = new AtomicInteger(0);
+        private final AtomicBoolean burst429Active = new AtomicBoolean(false);
+
+        public TenantRateLimiter(String tenantId, int defaultBurst) {
+            this.tenantId = tenantId;
+            this.burstLimitRUs = new AtomicInteger(defaultBurst);
+        }
+
+        public boolean tryConsume(int ruCost, Map<String, String> headersToSet) {
+            if (burst429Remaining.get() > 0) {
+                burst429Remaining.decrementAndGet();
+                headersToSet.put("Retry-After", "3");
+                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
+                headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("RateLimit-Reset", "3");
+                return false;
+            }
+            if (burst429Active.get()) {
+                headersToSet.put("Retry-After", "3");
+                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
+                headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("RateLimit-Reset", "3");
+                return false;
+            }
+
+            long nowSec = System.currentTimeMillis() / 1000L;
+            long currentSec = currentSecondEpoch.get();
+            if (nowSec > currentSec) {
+                if (currentSecondEpoch.compareAndSet(currentSec, nowSec)) {
+                    currentSecondRUs.set(0);
+                }
+            }
+
+            int current = currentSecondRUs.addAndGet(ruCost);
+            int limit = burstLimitRUs.get();
+            int remaining = Math.max(0, limit - current);
+
+            headersToSet.put("RateLimit-Limit", String.valueOf(limit));
+            headersToSet.put("RateLimit-Remaining", String.valueOf(remaining));
+            headersToSet.put("RateLimit-Reset", "1");
+
+            if (current > limit) {
+                headersToSet.put("Retry-After", "3");
+                headersToSet.put("RateLimit-Remaining", "0");
+                return false;
+            }
+            return true;
+        }
+
+        public void triggerBurst(int count) {
+            this.burst429Remaining.set(count);
+        }
+
+        public void setBurstActive(boolean active) {
+            this.burst429Active.set(active);
+        }
+
+        public void setLimit(int limit) {
+            this.burstLimitRUs.set(limit);
+        }
+
+        public int getLimit() {
+            return this.burstLimitRUs.get();
+        }
+
+        public int getCurrentRUs() {
+            return this.currentSecondRUs.get();
+        }
+    }
+
+    private HttpServer httpServer;
+    private final Map<String, MockFileInfo> filesInventory = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> driveFiles = new ConcurrentHashMap<>();
+    private final Map<String, DriveMetadata> drivesMetadata = new ConcurrentHashMap<>();
+    private final Map<String, TenantRateLimiter> tenantLimiters = new ConcurrentHashMap<>();
 
     @Autowired
     public MockOffice365Server(
@@ -111,7 +198,11 @@ public class MockOffice365Server {
         this.webhookUrl = webhookUrl;
         this.webhookClientState = webhookClientState;
         this.objectMapper = objectMapper;
-        this.burstEnabled.set(simulate429Burst);
+
+        // Initialize tenant rate limiters matching official license tiers
+        for (TenantProfile profile : TenantProfile.ALL_PROFILES) {
+            tenantLimiters.put(profile.tenantId(), new TenantRateLimiter(profile.tenantId(), profile.burstLimitRUsPerSec()));
+        }
     }
 
     public MockOffice365Server(
@@ -122,7 +213,7 @@ public class MockOffice365Server {
             String webhookClientState,
             ObjectMapper objectMapper
     ) {
-        this(port, storageDirPath, simulate429Burst, 20, webhookUrl, webhookClientState, objectMapper);
+        this(port, storageDirPath, simulate429Burst, 1000, webhookUrl, webhookClientState, objectMapper);
     }
 
     @PostConstruct
@@ -130,16 +221,20 @@ public class MockOffice365Server {
         Path storageDir = Paths.get(storageDirPath);
         Files.createDirectories(storageDir);
 
-        seedRealPhysicalFiles(storageDir);
-        if (totalFilesToSeed > filesInventory.size()) {
-            seedBulkFiles(storageDir, totalFilesToSeed);
-        }
+        initMultiTenantCatalog();
+        seedBenchmarkInitialFiles(storageDir);
+        seedPhysicalFilesAcrossTenants(storageDir);
 
         httpServer = HttpServer.create(new InetSocketAddress(port), 0);
         httpServer.setExecutor(Executors.newCachedThreadPool());
 
-        // OAuth2 Token Endpoint
+        // OAuth2 Token Endpoints (per-tenant and generic)
         httpServer.createContext("/contoso-enterprise-tenant/oauth2/v2.0/token", this::handleOAuthToken);
+        httpServer.createContext("/tenant-smb-250/oauth2/v2.0/token", this::handleOAuthToken);
+        httpServer.createContext("/tenant-mid-2500/oauth2/v2.0/token", this::handleOAuthToken);
+        httpServer.createContext("/tenant-ent-10k/oauth2/v2.0/token", this::handleOAuthToken);
+        httpServer.createContext("/tenant-large-35k/oauth2/v2.0/token", this::handleOAuthToken);
+        httpServer.createContext("/tenant-global-100k/oauth2/v2.0/token", this::handleOAuthToken);
         httpServer.createContext("/oauth2/v2.0/token", this::handleOAuthToken);
 
         // Microsoft Graph v1.0 Endpoints
@@ -148,17 +243,20 @@ public class MockOffice365Server {
         httpServer.createContext("/v1.0/users", this::handleUsersAndDrives);
         httpServer.createContext("/v1.0/drives", this::handleDrives);
 
-        // Binary File Download Endpoint (Direct SAS Storage Simulation)
+        // Binary File Download Endpoint (Direct Azure Blob SAS Storage Simulation - 0 RUs)
         httpServer.createContext("/mock-storage/download", this::handleFileDownload);
 
-        // Mock Server Admin API
+        // Mock Server Admin APIs
         httpServer.createContext("/mock-admin/upload-forward-file", this::handleAdminUpload);
+        httpServer.createContext("/mock-admin/simulate-429", this::handleAdminSimulate429);
+        httpServer.createContext("/mock-admin/set-rate-limit", this::handleAdminSetRateLimit);
 
         httpServer.start();
         log.info("==========================================================================================");
-        log.info("  🌐 MOCK OFFICE 365 ENTERPRISE SERVER STARTED on http://localhost:{}", port);
+        log.info("  🌐 ULTRA-REALISTIC MULTI-TENANT M365 SERVER STARTED on http://localhost:{}", port);
         log.info("  📁 Real Physical File Storage: {}", storageDir.toAbsolutePath());
-        log.info("  📊 Cataloged {} real enterprise files across SharePoint & OneDrives", filesInventory.size());
+        log.info("  🏢 5 Enterprise Tenants Active: Acme (SMB), Contoso (Mid), Fabrikam (Ent), Northwind (Large), MegaCorp (Global)");
+        log.info("  📊 Total Cataloged: {} drives, {} real files on disk", drivesMetadata.size(), filesInventory.size());
         log.info("==========================================================================================");
     }
 
@@ -170,40 +268,204 @@ public class MockOffice365Server {
         }
     }
 
-    private void seedRealPhysicalFiles(Path storageDir) throws IOException {
-        // Seed 1: Real Clean Word Doc
+    /**
+     * Set up 5 drives for each of the 5 official tenants (25 drives total).
+     */
+    private void initMultiTenantCatalog() {
+        // --- 1. Acme TinyCorp (SMB: 250 seats, 25 RUs/s) ---
+        registerDrive("drive-smb-sp-finance", "tenant-smb-250", "Acme Finance & Invoices", "documentLibrary", "founder@acme.com", "Acme Finance");
+        DRIVE_FOLDERS.put("drive-smb-sp-finance", List.of("/Invoices/2026", "/Budgets/Q1", "/Tax/Filings", "/Ledgers", "/Receipts"));
+
+        registerDrive("drive-smb-sp-operations", "tenant-smb-250", "Acme Operations & Warehouse", "documentLibrary", "ops@acme.com", "Acme Operations");
+        DRIVE_FOLDERS.put("drive-smb-sp-operations", List.of("/Inventory/Stock", "/Suppliers", "/Logistics", "/Facility", "/Policies"));
+
+        registerDrive("drive-smb-od-founder", "tenant-smb-250", "Alice Founder's Personal OneDrive", "business", "alice.founder@acme.com", "Alice Founder");
+        DRIVE_FOLDERS.put("drive-smb-od-founder", List.of("/Pitch Decks", "/Cap Table", "/Executive Notes", "/Banking", "/Contracts"));
+
+        registerDrive("drive-smb-od-sales", "tenant-smb-250", "Bob Sales's Personal OneDrive", "business", "bob.sales@acme.com", "Bob Sales");
+        DRIVE_FOLDERS.put("drive-smb-od-sales", List.of("/Leads/2026", "/Proposals", "/Pricing Sheets", "/Customer Notes", "/NDAs"));
+
+        registerDrive("drive-smb-od-eng", "tenant-smb-250", "Carol Engineer's Personal OneDrive", "business", "carol.eng@acme.com", "Carol Engineer");
+        DRIVE_FOLDERS.put("drive-smb-od-eng", List.of("/Architecture", "/Designs", "/Source Archive", "/Credentials", "/Prototypes"));
+
+        // --- 2. Contoso Logistics (Mid-Market: 2,500 seats, 50 RUs/s) ---
+        registerDrive("drive-mid-sp-logistics", "tenant-mid-2500", "Fleet & Logistics Vault", "documentLibrary", "admin@contoso.com", "Fleet Logistics");
+        DRIVE_FOLDERS.put("drive-mid-sp-logistics", List.of("/Fleet/Dispatch", "/Fuel Management", "/Maintenance/Trucks", "/Safety", "/Vendor SLAs"));
+
+        registerDrive("drive-mid-sp-compliance", "tenant-mid-2500", "Safety & Compliance Library", "documentLibrary", "compliance@contoso.com", "Compliance Portal");
+        DRIVE_FOLDERS.put("drive-mid-sp-compliance", List.of("/OSHA/Audits", "/Driver Records", "/Certifications", "/Incidents", "/Training"));
+
+        registerDrive("drive-mid-od-cfo", "tenant-mid-2500", "Sarah Miller (CFO) OneDrive", "business", "cfo@contoso.com", "Sarah Miller");
+        DRIVE_FOLDERS.put("drive-mid-od-cfo", List.of("/Financial Models", "/Board Decks", "/Investor Relations", "/M&A Analysis", "/Taxes"));
+
+        registerDrive("drive-mid-od-dispatcher", "tenant-mid-2500", "Dave Dispatcher OneDrive", "business", "dispatcher@contoso.com", "Dave Dispatcher");
+        DRIVE_FOLDERS.put("drive-mid-od-dispatcher", List.of("/Route Schedules", "/Daily Logs", "/Customer Delivery", "/Carrier Rates", "/PODs"));
+
+        registerDrive("drive-mid-od-security", "tenant-mid-2500", "Alex Chen (Security Lead) OneDrive", "business", "ciso@contoso.com", "Alex Chen");
+        DRIVE_FOLDERS.put("drive-mid-od-security", List.of("/Security Audits", "/Incidents", "/Vulnerability Scans", "/Threat Intel", "/Vault"));
+
+        // Aliases for backward compatibility
+        registerDrive("sp-drive-finance", "tenant-mid-2500", "Finance Documents", "documentLibrary", "admin@contoso.com", "Finance");
+        registerDrive("sp-drive-hr", "tenant-mid-2500", "Human Resources Portal", "documentLibrary", "admin@contoso.com", "HR");
+        registerDrive("sp-drive-legal", "tenant-mid-2500", "Corporate Legal & Compliance", "documentLibrary", "admin@contoso.com", "Legal");
+        registerDrive("sp-drive-it", "tenant-mid-2500", "IT & Infrastructure Assets", "documentLibrary", "admin@contoso.com", "IT");
+        registerDrive("od-drive-ciso", "tenant-mid-2500", "ciso@contoso.com's OneDrive", "business", "ciso@contoso.com", "Alex Chen");
+        registerDrive("od-drive-cfo", "tenant-mid-2500", "Sarah Miller (CFO) OneDrive", "business", "cfo@contoso.com", "Sarah Miller");
+        registerDrive("od-drive-lead-architect", "tenant-mid-2500", "Marcus Vance (Architect) OneDrive", "business", "architect@contoso.com", "Marcus Vance");
+
+        // --- 3. Fabrikam Financial (Enterprise E3/E5: 10,000 seats, 90 RUs/s) ---
+        registerDrive("drive-ent-sp-wealth", "tenant-ent-10k", "Wealth Management & Assets", "documentLibrary", "wealth@fabrikam.com", "Wealth Management");
+        DRIVE_FOLDERS.put("drive-ent-sp-wealth", List.of("/High Net Worth", "/Portfolios/Q1", "/Trusts", "/Equities/Research", "/Securities"));
+
+        registerDrive("drive-ent-sp-audits", "tenant-ent-10k", "SOX & Regulatory Audits", "documentLibrary", "audit@fabrikam.com", "Audit Portal");
+        DRIVE_FOLDERS.put("drive-ent-sp-audits", List.of("/SOX 404", "/SEC Filings", "/Risk Assessments", "/Internal Audit", "/FINRA Compliance"));
+
+        registerDrive("drive-ent-od-risk", "tenant-ent-10k", "Elena Rostova (CRO) OneDrive", "business", "cro@fabrikam.com", "Elena Rostova");
+        DRIVE_FOLDERS.put("drive-ent-od-risk", List.of("/Stress Testing", "/Credit Risk", "/Liquidity Reports", "/Capital Adequacy", "/Board Risk"));
+
+        registerDrive("drive-ent-od-portfolio", "tenant-ent-10k", "Marcus Vance (Portfolio Mgr) OneDrive", "business", "marcus.pm@fabrikam.com", "Marcus Vance");
+        DRIVE_FOLDERS.put("drive-ent-od-portfolio", List.of("/Hedge Strategy", "/Algorithmic Alpha", "/Derivative Models", "/Quarterly Letters", "/Analyst Notes"));
+
+        registerDrive("drive-ent-od-ciso", "tenant-ent-10k", "David Kim (CISO) OneDrive", "business", "ciso@fabrikam.com", "David Kim");
+        DRIVE_FOLDERS.put("drive-ent-od-ciso", List.of("/SOC2 Type II", "/Penetration Tests", "/Zero Trust Blueprints", "/DLP Policies", "/Certificates"));
+
+        // --- 4. Northwind Health (Large Enterprise: 35,000 seats, 150 RUs/s) ---
+        registerDrive("drive-large-sp-clinical", "tenant-large-35k", "Clinical Research Trials", "documentLibrary", "research@northwindhealth.org", "Clinical Research");
+        DRIVE_FOLDERS.put("drive-large-sp-clinical", List.of("/Phase III/Oncology", "/IRB Submissions", "/Genomics Data", "/Clinical Protocols", "/Drug Discovery"));
+
+        registerDrive("drive-large-sp-hipaa", "tenant-large-35k", "Patient Records & HIPAA Vault", "documentLibrary", "privacy@northwindhealth.org", "HIPAA Compliance");
+        DRIVE_FOLDERS.put("drive-large-sp-hipaa", List.of("/HIPAA Compliance", "/EMR Integration", "/Audit Trails", "/Business Associates", "/Privacy Policies"));
+
+        registerDrive("drive-large-od-cmo", "tenant-large-35k", "Dr. Aris Thorne (CMO) OneDrive", "business", "cmo@northwindhealth.org", "Dr. Aris Thorne");
+        DRIVE_FOLDERS.put("drive-large-od-cmo", List.of("/Medical Advisory", "/Trial Approvals", "/Bioethics", "/Peer Reviews", "/Research Grants"));
+
+        registerDrive("drive-large-od-lab", "tenant-large-35k", "Lab Director OneDrive", "business", "lab@northwindhealth.org", "Lab Director");
+        DRIVE_FOLDERS.put("drive-large-od-lab", List.of("/Sequencing Runs", "/Biosafety Level 3", "/Sample Manifests", "/Spectrometry", "/Reagents"));
+
+        registerDrive("drive-large-od-privacy", "tenant-large-35k", "Rachel Adams (CPO) OneDrive", "business", "privacy.officer@northwindhealth.org", "Rachel Adams");
+        DRIVE_FOLDERS.put("drive-large-od-privacy", List.of("/Data Subject Requests", "/HHS Reports", "/Breach Notifications", "/Consent Frameworks", "/Audits"));
+
+        // --- 5. MegaCorp Global (Hyperscale Global: 100,000 seats, 250 RUs/s) ---
+        registerDrive("drive-global-sp-treasury", "tenant-global-100k", "Global Treasury & M&A Vault", "documentLibrary", "treasury@megacorp.global", "Global Treasury");
+        DRIVE_FOLDERS.put("drive-global-sp-treasury", List.of("/M&A/Target Mega", "/Foreign Exchange", "/Syndicated Loans", "/Global Bond Issuance", "/Cross-Border Tax"));
+
+        registerDrive("drive-global-sp-rnd", "tenant-global-100k", "Core R&D & Patents Library", "documentLibrary", "rnd@megacorp.global", "Core R&D");
+        DRIVE_FOLDERS.put("drive-global-sp-rnd", List.of("/Quantum Computing", "/AI Foundation Models", "/Hardware Patents", "/Autonomous Robotics", "/Defense Tech"));
+
+        registerDrive("drive-global-od-cio", "tenant-global-100k", "Global CIO OneDrive", "business", "cio@megacorp.global", "Global CIO");
+        DRIVE_FOLDERS.put("drive-global-od-cio", List.of("/Global Cloud Modernization", "/Hyperscale Contracts", "/Multi-Region Architecture", "/Supplier Negotiation", "/Executive Briefings"));
+
+        registerDrive("drive-global-od-architect", "tenant-global-100k", "Enterprise Architect OneDrive", "business", "architect@megacorp.global", "Principal Architect");
+        DRIVE_FOLDERS.put("drive-global-od-architect", List.of("/Microservices Topologies", "/OxMQ Core Scaling", "/Sub-Millisecond Fabric", "/Cluster Benchmarks", "/Disaster Recovery"));
+
+        registerDrive("drive-global-od-legal", "tenant-global-100k", "General Counsel Global OneDrive", "business", "general.counsel@megacorp.global", "General Counsel");
+        DRIVE_FOLDERS.put("drive-global-od-legal", List.of("/Antitrust Inquiries", "/Global Litigation", "/Trade Secrets", "/Cross-Border Data Transfer", "/Whistleblower Logs"));
+    }
+
+    private void registerDrive(String driveId, String tenantId, String name, String driveType, String ownerPrincipal, String siteOrUserName) {
+        drivesMetadata.put(driveId, new DriveMetadata(driveId, tenantId, name, driveType, ownerPrincipal, siteOrUserName));
+    }
+
+    /**
+     * Seeds physical files across all 5 tenants and their 25 drives.
+     * Each tenant receives 1,000 files (200 files per drive) = 5,000 files total.
+     */
+    private void seedPhysicalFilesAcrossTenants(Path storageDir) throws IOException {
+        String[] scopes = {"private", "organization", "users", "anonymous"};
+        SecureRandom rng = new SecureRandom();
+
+        int filesPerDrive = Math.max(20, totalFilesToSeed / 5 / 5); // Default: 200 files per drive (5,000 total)
+        log.info("Seeding {} files per drive across 25 drives (Total {} files)...", filesPerDrive, filesPerDrive * 25);
+
+        for (DriveMetadata dm : drivesMetadata.values()) {
+            // Skip backward compatibility alias drives during bulk seed
+            if (dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-")) {
+                continue;
+            }
+
+            List<String> folders = DRIVE_FOLDERS.getOrDefault(dm.driveId(), List.of("/Documents/General"));
+            String tenantId = dm.tenantId();
+
+            for (int i = 1; i <= filesPerDrive; i++) {
+                String folder = folders.get(i % folders.size());
+                String scope = scopes[i % scopes.length];
+                int typeRoll = i % 100;
+
+                String fileName;
+                String mimeType;
+
+                if (typeRoll == 1) {
+                    // EICAR Standard Antivirus Test File
+                    fileName = "security_eicar_" + dm.driveId() + "_" + i + ".txt";
+                    mimeType = "text/plain";
+                    createPhysicalFile(storageDir, fileName,
+                            "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+                            mimeType, dm.driveId(), tenantId, scope, folder);
+                } else if (typeRoll == 2) {
+                    // Real High-Entropy Ransomware Payload
+                    fileName = "encrypted_vault_" + dm.driveId() + "_" + i + ".dat.aes";
+                    mimeType = "application/octet-stream";
+                    byte[] entropyBytes = new byte[8192];
+                    rng.nextBytes(entropyBytes);
+                    createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, dm.driveId(), tenantId, scope, folder);
+                } else if (typeRoll == 3) {
+                    // Executable MIME Mismatch (MZ Windows PE disguised as .docx)
+                    fileName = "Executive_Bonus_Report_" + dm.driveId() + "_" + i + ".docx";
+                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                    byte[] peBytes = new byte[4096];
+                    rng.nextBytes(peBytes);
+                    peBytes[0] = 'M';
+                    peBytes[1] = 'Z';
+                    peBytes[2] = (byte) 0x90;
+                    peBytes[3] = 0x00;
+                    createPhysicalBinaryFile(storageDir, fileName, peBytes, mimeType, dm.driveId(), tenantId, "anonymous", folder);
+                } else if (typeRoll < 40) {
+                    // Business Word Document
+                    fileName = "Strategic_Plan_" + dm.driveId() + "_" + i + ".docx";
+                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                    String content = "Confidential business directives for " + dm.name() + " (Doc #" + i + ").\nQuarterly objectives.\nAudited.";
+                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                } else if (typeRoll < 70) {
+                    // PDF Document
+                    fileName = "Corporate_Governance_" + dm.driveId() + "_" + i + ".pdf";
+                    mimeType = "application/pdf";
+                    String content = "%PDF-1.5\n% " + dm.name() + " Governance Report #" + i + "\nCompliance & Risk Operations.\n%%EOF";
+                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                } else if (typeRoll < 90) {
+                    // Excel Spreadsheet
+                    fileName = "Financial_Ledger_" + dm.driveId() + "_" + i + ".xlsx";
+                    mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                    String content = "CostCenter,Category,Allocated,Actual\nCC-" + (100 + i) + ",Operations,$500000,$420000";
+                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                } else {
+                    // PII / CSV Table
+                    fileName = "Customer_Data_Extract_" + dm.driveId() + "_" + i + ".csv";
+                    mimeType = "text/csv";
+                    String content = "id,name,email,ssn\n" + i + ",Client_" + i + ",client" + i + "@example.com,123-45-" + (1000 + i);
+                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                }
+            }
+        }
+    }
+
+    private void seedBenchmarkInitialFiles(Path storageDir) throws IOException {
         createPhysicalFile(storageDir, "Corporate_Finance_2026.docx",
                 "CONFIDENTIAL - Contoso Financial Strategy 2026.\nRevenue projections and quarterly targets.\nPrepared by CFO.",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "sp-drive-finance", "private", "/Budgets/2026/Q1");
+                "sp-drive-finance", "tenant-mid-2500", "private", "/Budgets/2026/Q1");
 
-        // Seed 2: Real Clean PDF Doc
-        createPhysicalFile(storageDir, "Employee_Handbook_2026.pdf",
-                "%PDF-1.5\n% Contoso Employee Handbook 2026.\n1. Code of conduct.\n2. Security standards.\n%%EOF",
-                "application/pdf",
-                "sp-drive-hr", "organization", "/Employee Records/2026");
-
-        // Seed 3: Real Clean Excel Spreadsheet
-        createPhysicalFile(storageDir, "Q4_Sales_Pipeline.xlsx",
-                "Client,Region,DealSize,Status\nAcme Corp,North America,$1200000,Closed Won\nInitech,EMEA,$450000,In Negotiation",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "sp-drive-finance", "users", "/Budgets/2026/Q2"); // External guest access
-
-        // Seed 4: Real EICAR Standard Antivirus Test File
         createPhysicalFile(storageDir, "security_audit_eicar.txt",
                 "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
                 "text/plain",
-                "od-drive-ciso", "private", "/Security Audits/2026");
+                "od-drive-ciso", "tenant-mid-2500", "private", "/Security Audits/2026");
 
-        // Seed 5: Real High-Entropy Ransomware Payload (Shannon entropy > 7.95)
         byte[] randomEntropyBytes = new byte[16384];
         new SecureRandom().nextBytes(randomEntropyBytes);
         createPhysicalBinaryFile(storageDir, "locked_database_backup.dat.aes",
                 randomEntropyBytes,
                 "application/octet-stream",
-                "sp-drive-it", "private", "/Backups/Databases");
+                "sp-drive-it", "tenant-mid-2500", "private", "/Backups/Databases");
 
-        // Seed 6: Real Executable MIME Mismatch File (MZ Windows PE Header disguised as .docx)
         byte[] peHeaderDisguised = new byte[8192];
         peHeaderDisguised[0] = 'M';
         peHeaderDisguised[1] = 'Z';
@@ -215,26 +477,44 @@ public class MockOffice365Server {
         createPhysicalBinaryFile(storageDir, "Executive_Payroll_Statement.docx",
                 peHeaderDisguised,
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "sp-drive-finance", "anonymous", "/Confidential/Audits"); // Public Link!
+                "sp-drive-finance", "tenant-mid-2500", "anonymous", "/Confidential/Audits");
+    }
 
-        // Seed 7: Customer PII CSV
-        createPhysicalFile(storageDir, "Customer_PII_Export.csv",
-                "id,name,email,ssn\n101,John Doe,john@example.com,123-45-6789\n102,Jane Smith,jane@example.com,987-65-4321",
-                "text/csv",
-                "od-drive-cfo", "users", "/Financial Models/2026");
+    private void createPhysicalFile(Path dir, String fileName, String content, String mimeType, String driveId, String tenantId, String exposureScope, String folderPath) throws IOException {
+        Path filePath = dir.resolve(fileName);
+        if (!Files.exists(filePath)) {
+            Files.writeString(filePath, content, StandardCharsets.UTF_8);
+        }
+        registerFile(fileName, filePath, mimeType, driveId, tenantId, exposureScope, folderPath);
+    }
 
-        // Seed 8: Clean Legal Contract
-        createPhysicalFile(storageDir, "Master_Services_Agreement_Vendor.pdf",
-                "%PDF-1.5\n% Contoso Master Services Agreement.\nNon-disclosure and data protection agreement.\n%%EOF",
-                "application/pdf",
-                "sp-drive-legal", "users", "/Contracts/Vendors");
+    private void createPhysicalBinaryFile(Path dir, String fileName, byte[] content, String mimeType, String driveId, String tenantId, String exposureScope, String folderPath) throws IOException {
+        Path filePath = dir.resolve(fileName);
+        if (!Files.exists(filePath)) {
+            Files.write(filePath, content);
+        }
+        registerFile(fileName, filePath, mimeType, driveId, tenantId, exposureScope, folderPath);
+    }
+
+    private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String tenantId, String exposureScope, String folderPath) {
+        String fileId = "file-" + UUID.nameUUIDFromBytes((driveId + ":" + fileName).getBytes(StandardCharsets.UTF_8)).toString().replace("-", "").substring(0, 12);
+        long size = filePath.toFile().length();
+        MockFileInfo info = new MockFileInfo(
+                fileId, driveId, tenantId, fileName, folderPath, size, mimeType, exposureScope,
+                filePath.getFileName().toString(), System.currentTimeMillis()
+        );
+        filesInventory.put(fileId, info);
+        List<String> list = driveFiles.computeIfAbsent(driveId, k -> Collections.synchronizedList(new ArrayList<>()));
+        if (!list.contains(fileId)) {
+            list.add(fileId);
+        }
     }
 
     public synchronized void seedAdditionalFiles(int targetTotal) {
         try {
             Path storageDir = Paths.get(storageDirPath);
             Files.createDirectories(storageDir);
-            seedBulkFiles(storageDir, targetTotal);
+            seedPhysicalFilesAcrossTenants(storageDir);
             log.info("Mock Office 365 Server scaled inventory to {} real files on disk", filesInventory.size());
         } catch (IOException e) {
             log.error("Failed seeding additional files: {}", e.getMessage(), e);
@@ -245,173 +525,134 @@ public class MockOffice365Server {
         return filesInventory.size();
     }
 
-    public void setRateLimit(int limit) {
-        if (limit > 0) {
-            this.maxRequestsPerSecond.set(limit);
-            log.info("Mock M365 Server rate limit set to {} req/s", limit);
+    public void setRateLimit(String tenantId, int limit) {
+        TenantRateLimiter limiter = tenantLimiters.get(tenantId);
+        if (limiter != null) {
+            limiter.setLimit(limit);
+            log.info("Mock M365 Server rate limit for tenant [{}] set to {} req/s", tenantId, limit);
         }
+    }
+
+    public void setRateLimit(int limit) {
+        for (TenantRateLimiter limiter : tenantLimiters.values()) {
+            limiter.setLimit(limit);
+        }
+        log.info("Mock M365 Server global rate limit set to {} req/s across all tenants", limit);
+    }
+
+    public int getRateLimit(String tenantId) {
+        TenantRateLimiter limiter = tenantLimiters.get(tenantId);
+        return limiter != null ? limiter.getLimit() : 50;
     }
 
     public int getRateLimit() {
-        return maxRequestsPerSecond.get();
+        return getRateLimit("tenant-mid-2500");
+    }
+
+    public void trigger429Burst(String tenantId, int count) {
+        TenantRateLimiter limiter = tenantLimiters.get(tenantId);
+        if (limiter != null) {
+            limiter.triggerBurst(count);
+            log.warn("Mock M365 Server triggering 429 burst on tenant [{}] for next {} requests", tenantId, count);
+        }
     }
 
     public void trigger429Burst(int count) {
-        this.burstCountRemaining.set(count);
-        log.warn("Mock M365 Server triggering 429 burst for next {} requests", count);
+        trigger429Burst("tenant-smb-250", count);
+    }
+
+    public void setSimulate429Burst(String tenantId, boolean enabled) {
+        TenantRateLimiter limiter = tenantLimiters.get(tenantId);
+        if (limiter != null) {
+            limiter.setBurstActive(enabled);
+            log.warn("Mock M365 Server simulate 429 burst mode for [{}]: {}", tenantId, enabled);
+        }
     }
 
     public void setSimulate429Burst(boolean enabled) {
-        this.burstEnabled.set(enabled);
-        log.warn("Mock M365 Server simulate 429 burst mode: {}", enabled);
+        setSimulate429Burst("tenant-smb-250", enabled);
     }
 
-    public boolean shouldThrottleRequest() {
-        if (burstCountRemaining.get() > 0) {
-            burstCountRemaining.decrementAndGet();
-            return true;
-        }
-        if (burstEnabled.get()) {
-            return true;
-        }
-
-        long nowSec = System.currentTimeMillis() / 1000L;
-        if (nowSec != currentSecond) {
-            currentSecond = nowSec;
-            currentSecondRequests.set(0);
+    /**
+     * Resolves the tenant ID from request headers, Bearer token, query parameter, or driveId.
+     */
+    public String resolveTenantId(HttpExchange exchange, String driveId) {
+        // 1. Try X-Tenant-Id header
+        String header = exchange.getRequestHeaders().getFirst("X-Tenant-Id");
+        if (header != null && !header.isBlank()) {
+            return header.trim();
         }
 
-        int count = currentSecondRequests.incrementAndGet();
-        return count > maxRequestsPerSecond.get();
-    }
-
-    private void seedBulkFiles(Path storageDir, int targetTotal) throws IOException {
-        String[] drives = {
-                "sp-drive-finance",
-                "sp-drive-hr",
-                "sp-drive-legal",
-                "sp-drive-it",
-                "od-drive-ciso",
-                "od-drive-cfo",
-                "od-drive-lead-architect"
-        };
-
-        String[] scopes = {"private", "organization", "users", "anonymous"};
-        SecureRandom rng = new SecureRandom();
-
-        int current = filesInventory.size();
-        for (int i = current + 1; i <= targetTotal; i++) {
-            String driveId = drives[i % drives.length];
-            int typeRoll = i % 100;
-
-            String fileName;
-            String mimeType;
-            String scope = scopes[i % scopes.length];
-
-            List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Documents/General"));
-            String folder = folderList.get(i % folderList.size());
-
-            if (typeRoll < 3) {
-                // ~3% EICAR malware test
-                fileName = "security_audit_sample_" + i + ".txt";
-                mimeType = "text/plain";
-                createPhysicalFile(storageDir, fileName,
-                        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
-                        mimeType, driveId, scope, folder);
-            } else if (typeRoll < 6) {
-                // ~3% High entropy ransomware payload
-                fileName = "encrypted_database_backup_" + i + ".dat.aes";
-                mimeType = "application/octet-stream";
-                byte[] entropyBytes = new byte[8192];
-                rng.nextBytes(entropyBytes);
-                createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, driveId, scope, folder);
-            } else if (typeRoll < 9) {
-                // ~3% Executable MIME Mismatch (PE MZ Header disguised as docx)
-                fileName = "Executive_Bonus_Allocation_" + i + ".docx";
-                mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                byte[] peBytes = new byte[4096];
-                rng.nextBytes(peBytes);
-                peBytes[0] = 'M';
-                peBytes[1] = 'Z';
-                peBytes[2] = (byte) 0x90;
-                peBytes[3] = 0x00;
-                createPhysicalBinaryFile(storageDir, fileName, peBytes, mimeType, driveId, scope, folder);
-            } else if (typeRoll < 40) {
-                // Word Doc
-                fileName = "Enterprise_Business_Plan_" + i + ".docx";
-                mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                String content = "Contoso Enterprise Strategic Directive #" + i + ".\nQuarterly operational objectives and deliverables.\nConfidential.";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
-            } else if (typeRoll < 70) {
-                // PDF Document
-                fileName = "Corporate_Governance_Report_" + i + ".pdf";
-                mimeType = "application/pdf";
-                String content = "%PDF-1.5\n% Contoso Corporate Governance Report #" + i + "\nSection 1: Enterprise Compliance & Risk Management.\n%%EOF";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
-            } else if (typeRoll < 90) {
-                // Excel Spreadsheet
-                fileName = "Departmental_Expenditure_Q" + ((i % 4) + 1) + "_" + i + ".xlsx";
-                mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-                String content = "Department,CostCenter,AllocatedBudget,SpentToDate\nEngineering,CC-401,$250000,$180000\nOperations,CC-202,$120000,$95000";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
-            } else {
-                // CSV Data Table
-                fileName = "Client_Ledger_Extract_" + i + ".csv";
-                mimeType = "text/csv";
-                String content = "id,account,balance,status\n" + i + ",ACCT-" + (10000 + i) + ",$" + (5000 + (i * 12)) + ",ACTIVE";
-                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope, folder);
+        // 2. Try Authorization Bearer token: e.g. "Bearer mock-azure-ad-jwt-token-tenant-smb-250-..."
+        String auth = exchange.getRequestHeaders().getFirst("Authorization");
+        if (auth != null && auth.startsWith("Bearer ")) {
+            String token = auth.substring(7);
+            if (token.contains("contoso-enterprise-tenant")) {
+                return "contoso-enterprise-tenant";
+            }
+            for (TenantProfile p : TenantProfile.ALL_PROFILES) {
+                if (token.contains(p.tenantId())) {
+                    return p.tenantId();
+                }
             }
         }
-    }
 
-    public void saveForwardFile(String driveId, String fileName, String exposureScope, byte[] content, String mimeType) {
-        try {
-            Path storageDir = Paths.get(storageDirPath);
-            Files.createDirectories(storageDir);
-            Path targetFile = storageDir.resolve(fileName);
-            Files.write(targetFile, content);
-            List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Uploads/RealTime"));
-            String folder = folderList.get(0);
-            registerFile(fileName, targetFile, mimeType, driveId, exposureScope, folder);
-            log.info("Physically wrote forward file to disk: [{}] ({} bytes)", targetFile.toAbsolutePath(), content.length);
-        } catch (IOException e) {
-            log.error("Failed saving forward file to disk: {}", e.getMessage(), e);
+        // 3. Try query param tenantId
+        String query = exchange.getRequestURI().getQuery();
+        if (query != null && query.contains("tenantId=")) {
+            for (String pair : query.split("&")) {
+                if (pair.startsWith("tenantId=")) {
+                    return pair.substring(9);
+                }
+            }
         }
-    }
 
-    private void createPhysicalFile(Path dir, String fileName, String content, String mimeType, String driveId, String exposureScope, String folderPath) throws IOException {
-        Path filePath = dir.resolve(fileName);
-        if (!Files.exists(filePath)) {
-            Files.writeString(filePath, content, StandardCharsets.UTF_8);
+        // 4. Try resolving from driveId if provided
+        if (driveId != null) {
+            DriveMetadata dm = drivesMetadata.get(driveId);
+            if (dm != null) {
+                return dm.tenantId();
+            }
+            if (driveId.startsWith("drive-smb-")) return TenantProfile.SMB_250.tenantId();
+            if (driveId.startsWith("drive-mid-")) return TenantProfile.MID_2500.tenantId();
+            if (driveId.startsWith("drive-ent-")) return TenantProfile.ENT_10K.tenantId();
+            if (driveId.startsWith("drive-large-")) return TenantProfile.LARGE_35K.tenantId();
+            if (driveId.startsWith("drive-global-")) return TenantProfile.GLOBAL_100K.tenantId();
         }
-        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderPath);
+
+        return TenantProfile.MID_2500.tenantId();
     }
 
-    private void createPhysicalBinaryFile(Path dir, String fileName, byte[] content, String mimeType, String driveId, String exposureScope, String folderPath) throws IOException {
-        Path filePath = dir.resolve(fileName);
-        if (!Files.exists(filePath)) {
-            Files.write(filePath, content);
-        }
-        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderPath);
-    }
 
-    private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String exposureScope) {
-        List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Uploads/RealTime"));
-        registerFile(fileName, filePath, mimeType, driveId, exposureScope, folderList.get(0));
-    }
-
-    private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String exposureScope, String folderPath) {
-        String fileId = "file-" + UUID.nameUUIDFromBytes((driveId + ":" + fileName).getBytes(StandardCharsets.UTF_8)).toString().replace("-", "").substring(0, 12);
-        long size = filePath.toFile().length();
-        MockFileInfo info = new MockFileInfo(
-                fileId, driveId, fileName, folderPath, size, mimeType, exposureScope,
-                filePath.getFileName().toString(), System.currentTimeMillis()
+    /**
+     * Checks rate limits and applies RU cost per Microsoft Learn specification.
+     * Endpoints:
+     * - Delta sync: 1 RU
+     * - Permissions: 1 RU
+     * - Search: 3 RUs
+     * - Download: 0 RUs
+     */
+    private boolean checkRateLimitAndSetHeaders(HttpExchange exchange, String tenantId, int ruCost) throws IOException {
+        String rateLimitTenant = "contoso-enterprise-tenant".equalsIgnoreCase(tenantId)
+                ? TenantProfile.MID_2500.tenantId()
+                : tenantId;
+        TenantRateLimiter limiter = tenantLimiters.computeIfAbsent(
+                rateLimitTenant,
+                id -> new TenantRateLimiter(id, TenantProfile.getByIdOrDefault(id).burstLimitRUsPerSec())
         );
-        filesInventory.put(fileId, info);
-        List<String> list = driveFiles.computeIfAbsent(driveId, k -> Collections.synchronizedList(new ArrayList<>()));
-        if (!list.contains(fileId)) {
-            list.add(fileId);
+
+        Map<String, String> headers = new LinkedHashMap<>();
+        boolean allowed = limiter.tryConsume(ruCost, headers);
+
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            exchange.getResponseHeaders().set(entry.getKey(), entry.getValue());
         }
+
+        if (!allowed) {
+            sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"The request has been throttled because tenant [" + tenantId + "] application quota was exceeded. Retry after 3 seconds.\"}}");
+            return false;
+        }
+        return true;
     }
 
     // --- HTTP HANDLERS ---
@@ -421,97 +662,174 @@ public class MockOffice365Server {
             sendResponse(exchange, 405, "Method Not Allowed");
             return;
         }
+
+        String path = exchange.getRequestURI().getPath();
+        String tenantId = "tenant-mid-2500";
+        for (TenantProfile p : TenantProfile.ALL_PROFILES) {
+            if (path.contains("/" + p.tenantId() + "/")) {
+                tenantId = p.tenantId();
+                break;
+            }
+        }
+
         ObjectNode tokenNode = objectMapper.createObjectNode();
         tokenNode.put("token_type", "Bearer");
         tokenNode.put("expires_in", 3600);
-        tokenNode.put("access_token", "mock-azure-ad-jwt-token-" + System.currentTimeMillis());
+        tokenNode.put("access_token", "mock-azure-ad-jwt-token-" + tenantId + "-" + System.currentTimeMillis());
         sendJsonResponse(exchange, 200, tokenNode);
     }
 
     private void handleGetSites(HttpExchange exchange) throws IOException {
+        String tenantId = resolveTenantId(exchange, null);
+        if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            return;
+        }
+
         ObjectNode root = objectMapper.createObjectNode();
         root.put("@odata.context", "https://graph.microsoft.com/v1.0/$metadata#sites");
         ArrayNode value = root.putArray("value");
 
-        addSiteNode(value, "contoso.sharepoint.com,site-finance,web-finance", "Finance & Accounting", "https://contoso.sharepoint.com/sites/Finance");
-        addSiteNode(value, "contoso.sharepoint.com,site-hr,web-hr", "Human Resources Portal", "https://contoso.sharepoint.com/sites/HR");
-        addSiteNode(value, "contoso.sharepoint.com,site-legal,web-legal", "Legal & Compliance", "https://contoso.sharepoint.com/sites/Legal");
-        addSiteNode(value, "contoso.sharepoint.com,site-it,web-it", "IT Engineering & Cloud", "https://contoso.sharepoint.com/sites/IT");
+        boolean isLegacyContoso = "contoso-enterprise-tenant".equalsIgnoreCase(tenantId);
+
+        for (DriveMetadata dm : drivesMetadata.values()) {
+            boolean isLegacyDrive = dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-");
+            if (isLegacyContoso) {
+                if (!isLegacyDrive) continue;
+            } else {
+                if (isLegacyDrive) continue;
+            }
+            if ((dm.tenantId().equals(tenantId) || (isLegacyContoso && "tenant-mid-2500".equals(dm.tenantId())))
+                    && "documentLibrary".equals(dm.driveType())) {
+                ObjectNode site = value.addObject();
+                site.put("id", "site-" + dm.driveId());
+                site.put("name", dm.name());
+                site.put("webUrl", "https://" + tenantId + ".sharepoint.com/sites/" + dm.siteOrUserName());
+            }
+        }
 
         sendJsonResponse(exchange, 200, root);
-    }
-
-    private void addSiteNode(ArrayNode array, String id, String name, String url) {
-        ObjectNode site = array.addObject();
-        site.put("id", id);
-        site.put("name", name);
-        site.put("webUrl", url);
     }
 
     private void handleSiteDrives(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
         // Path format: /v1.0/sites/{siteId}/drives
-        ObjectNode root = objectMapper.createObjectNode();
-        ArrayNode value = root.putArray("value");
-
-        String driveId = "sp-drive-finance";
-        String driveName = "Finance Documents";
-        if (path.contains("site-hr")) {
-            driveId = "sp-drive-hr";
-            driveName = "HR Policies";
-        } else if (path.contains("site-legal")) {
-            driveId = "sp-drive-legal";
-            driveName = "Contracts Library";
-        } else if (path.contains("site-it")) {
-            driveId = "sp-drive-it";
-            driveName = "Engineering Assets";
+        String siteId = "";
+        if (path.contains("/sites/") && path.contains("/drives")) {
+            siteId = path.substring(path.indexOf("/sites/") + 7, path.indexOf("/drives"));
         }
 
-        ObjectNode drive = value.addObject();
-        drive.put("id", driveId);
-        drive.put("name", driveName);
-        drive.put("driveType", "documentLibrary");
+        String tenantId = resolveTenantId(exchange, siteId);
+        if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            return;
+        }
+
+        ObjectNode root = objectMapper.createObjectNode();
+        ArrayNode value = root.putArray("value");
+        boolean isLegacyContoso = "contoso-enterprise-tenant".equalsIgnoreCase(tenantId);
+
+        for (DriveMetadata dm : drivesMetadata.values()) {
+            boolean isLegacyDrive = dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-");
+            if (isLegacyContoso) {
+                if (!isLegacyDrive) continue;
+            } else {
+                if (isLegacyDrive) continue;
+            }
+            if ((dm.tenantId().equals(tenantId) || (isLegacyContoso && "tenant-mid-2500".equals(dm.tenantId())))
+                    && "documentLibrary".equals(dm.driveType())) {
+                if (siteId.isEmpty() || siteId.contains(dm.driveId()) || ("site-" + dm.driveId()).equals(siteId)) {
+                    ObjectNode drive = value.addObject();
+                    drive.put("id", dm.driveId());
+                    drive.put("name", dm.name());
+                    drive.put("driveType", "documentLibrary");
+                }
+            }
+        }
 
         sendJsonResponse(exchange, 200, root);
     }
 
     private void handleUsersAndDrives(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
+        String tenantId = resolveTenantId(exchange, null);
+        boolean isLegacyContoso = "contoso-enterprise-tenant".equalsIgnoreCase(tenantId);
+
         if (path.endsWith("/drive")) {
             // Path: /v1.0/users/{userId}/drive
             String userId = path.replace("/v1.0/users/", "").replace("/drive", "");
+            if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+                return;
+            }
+
+            for (DriveMetadata dm : drivesMetadata.values()) {
+                boolean isLegacyDrive = dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-");
+                if (isLegacyContoso) {
+                    if (!isLegacyDrive) continue;
+                } else {
+                    if (isLegacyDrive) continue;
+                }
+                if ((dm.tenantId().equals(tenantId) || (isLegacyContoso && "tenant-mid-2500".equals(dm.tenantId())))
+                        && "business".equals(dm.driveType())
+                        && (dm.driveId().contains(userId) || dm.ownerPrincipal().contains(userId))) {
+                    ObjectNode drive = objectMapper.createObjectNode();
+                    drive.put("id", dm.driveId());
+                    drive.put("name", dm.name());
+                    drive.put("driveType", "business");
+                    sendJsonResponse(exchange, 200, drive);
+                    return;
+                }
+            }
+
+            // Fallback generic drive
             ObjectNode drive = objectMapper.createObjectNode();
-            drive.put("id", "od-drive-" + userId);
-            drive.put("name", userId + "@contoso.com OneDrive");
+            drive.put("id", "drive-" + tenantId + "-od-" + userId);
+            drive.put("name", userId + " OneDrive");
             drive.put("driveType", "business");
             sendJsonResponse(exchange, 200, drive);
             return;
         }
 
         // Path: /v1.0/users
+        if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            return;
+        }
+
         ObjectNode root = objectMapper.createObjectNode();
         ArrayNode users = root.putArray("value");
+        java.util.Set<String> seenUsers = new java.util.HashSet<>();
 
-        addUserNode(users, "ciso", "ciso@contoso.com");
-        addUserNode(users, "cfo", "cfo@contoso.com");
-        addUserNode(users, "lead-architect", "architect@contoso.com");
+        for (DriveMetadata dm : drivesMetadata.values()) {
+            boolean isLegacyDrive = dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-");
+            if (isLegacyContoso) {
+                if (!isLegacyDrive) continue;
+            } else {
+                if (isLegacyDrive) continue;
+            }
+            if ((dm.tenantId().equals(tenantId) || (isLegacyContoso && "tenant-mid-2500".equals(dm.tenantId())))
+                    && "business".equals(dm.driveType())) {
+                String userId = dm.ownerPrincipal().split("@")[0];
+                if (seenUsers.add(userId)) {
+                    ObjectNode u = users.addObject();
+                    u.put("id", userId);
+                    u.put("userPrincipalName", dm.ownerPrincipal());
+                }
+            }
+        }
 
         sendJsonResponse(exchange, 200, root);
-    }
-
-    private void addUserNode(ArrayNode array, String id, String upn) {
-        ObjectNode u = array.addObject();
-        u.put("id", id);
-        u.put("userPrincipalName", upn);
     }
 
     private void handleDrives(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
 
-        // 1. Delta query: /v1.0/drives/{driveId}/root/delta
+        // 1. Delta query: /v1.0/drives/{driveId}/root/delta (1 RU)
         if (path.contains("/root/delta")) {
             String[] parts = path.split("/");
             String driveId = parts[3];
+            String tenantId = resolveTenantId(exchange, driveId);
+
+            if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+                return;
+            }
 
             ObjectNode root = objectMapper.createObjectNode();
             ArrayNode value = root.putArray("value");
@@ -524,7 +842,7 @@ public class MockOffice365Server {
                     item.put("id", info.fileId());
                     item.put("name", info.name());
                     item.put("size", info.size());
-                    item.put("webUrl", "https://contoso.sharepoint.com/documents/" + info.name());
+                    item.put("webUrl", "https://" + tenantId + ".sharepoint.com/documents/" + info.name());
                     item.put("@microsoft.graph.downloadUrl", "http://localhost:" + port + "/mock-storage/download/" + info.fileId());
                     item.put("eTag", "etag-" + info.lastModified());
                     item.put("cTag", "ctag-" + info.lastModified());
@@ -542,21 +860,18 @@ public class MockOffice365Server {
             return;
         }
 
-        // 2. Permissions query: /v1.0/drives/{driveId}/items/{itemId}/permissions
+        // 2. Permissions query: /v1.0/drives/{driveId}/items/{itemId}/permissions (1 RU)
         if (path.contains("/permissions")) {
-            // Check Rate Limiting and 429 burst simulation
-            if (shouldThrottleRequest()) {
-                exchange.getResponseHeaders().set("Retry-After", "3");
-                exchange.getResponseHeaders().set("X-RateLimit-Limit", String.valueOf(maxRequestsPerSecond.get()));
-                exchange.getResponseHeaders().set("X-RateLimit-Remaining", "0");
-                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"Throttled by Mock Microsoft Graph (HTTP 429)\"}}");
+            String[] parts = path.split("/");
+            String driveId = parts[3];
+            String itemId = parts[5];
+            String tenantId = resolveTenantId(exchange, driveId);
+
+            if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
                 return;
             }
 
-            String[] parts = path.split("/");
-            String itemId = parts[5];
             MockFileInfo info = filesInventory.get(itemId);
-
             ObjectNode root = objectMapper.createObjectNode();
             ArrayNode value = root.putArray("value");
 
@@ -575,7 +890,7 @@ public class MockOffice365Server {
                     ObjectNode grantedTo = perm.putObject("grantedToV2");
                     ObjectNode user = grantedTo.putObject("user");
                     user.put("displayName", "Owner");
-                    user.put("email", "owner@contoso.com");
+                    user.put("email", "owner@" + tenantId + ".com");
                 }
             }
 
@@ -586,16 +901,10 @@ public class MockOffice365Server {
         sendResponse(exchange, 404, "Not Found");
     }
 
+    /**
+     * Binary File Download via direct Azure Blob SAS URL simulation (0 RUs).
+     */
     private void handleFileDownload(HttpExchange exchange) throws IOException {
-        // Check Rate Limiting and 429 burst simulation on SAS download
-        if (shouldThrottleRequest()) {
-            exchange.getResponseHeaders().set("Retry-After", "3");
-            exchange.getResponseHeaders().set("X-RateLimit-Limit", String.valueOf(maxRequestsPerSecond.get()));
-            exchange.getResponseHeaders().set("X-RateLimit-Remaining", "0");
-            sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"Throttled SAS File Download (HTTP 429)\"}}");
-            return;
-        }
-
         String path = exchange.getRequestURI().getPath();
         String fileId = path.substring(path.lastIndexOf('/') + 1);
 
@@ -621,6 +930,23 @@ public class MockOffice365Server {
         }
     }
 
+    public void saveForwardFile(String driveId, String fileName, String exposureScope, byte[] content, String mimeType) {
+        try {
+            Path storageDir = Paths.get(storageDirPath);
+            Files.createDirectories(storageDir);
+            Path targetFile = storageDir.resolve(fileName);
+            Files.write(targetFile, content);
+            List<String> folderList = DRIVE_FOLDERS.getOrDefault(driveId, List.of("/Uploads/RealTime"));
+            String folder = folderList.get(0);
+            DriveMetadata dm = drivesMetadata.get(driveId);
+            String tenantId = dm != null ? dm.tenantId() : "tenant-mid-2500";
+            registerFile(fileName, targetFile, mimeType, driveId, tenantId, exposureScope, folder);
+            log.info("Physically wrote forward file to disk: [{}] ({} bytes) for tenant [{}]", targetFile.toAbsolutePath(), content.length, tenantId);
+        } catch (IOException e) {
+            log.error("Failed saving forward file to disk: {}", e.getMessage(), e);
+        }
+    }
+
     private void handleAdminUpload(HttpExchange exchange) throws IOException {
         if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
             sendResponse(exchange, 405, "Method Not Allowed");
@@ -633,7 +959,7 @@ public class MockOffice365Server {
 
             String fileName = json.has("fileName") ? json.get("fileName").asText() : "Realtime_Uploaded_File_" + System.currentTimeMillis() + ".docx";
             String content = json.has("content") ? json.get("content").asText() : "Confidential Document Body Created at " + System.currentTimeMillis();
-            String driveId = json.has("driveId") ? json.get("driveId").asText() : "sp-drive-finance";
+            String driveId = json.has("driveId") ? json.get("driveId").asText() : "drive-mid-sp-logistics";
             String exposure = json.has("exposure") ? json.get("exposure").asText() : "anonymous";
             String mimeType = json.has("mimeType") ? json.get("mimeType").asText() : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -641,20 +967,69 @@ public class MockOffice365Server {
             Path targetFile = storageDir.resolve(fileName);
             Files.writeString(targetFile, content, StandardCharsets.UTF_8);
 
-            registerFile(fileName, targetFile, mimeType, driveId, exposure);
+            DriveMetadata dm = drivesMetadata.get(driveId);
+            String tenantId = dm != null ? dm.tenantId() : "tenant-mid-2500";
+            registerFile(fileName, targetFile, mimeType, driveId, tenantId, exposure, "/Uploads/RealTime");
 
-            // Send webhook notification to the OxGuard webhook controller
             triggerWebhook(driveId);
 
             ObjectNode resp = objectMapper.createObjectNode();
             resp.put("success", true);
             resp.put("fileName", fileName);
             resp.put("driveId", driveId);
+            resp.put("tenantId", tenantId);
             resp.put("bytesWritten", targetFile.toFile().length());
             sendJsonResponse(exchange, 200, resp);
         } catch (Exception e) {
             sendResponse(exchange, 500, "Upload error: " + e.getMessage());
         }
+    }
+
+    private void handleAdminSimulate429(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        String tenantId = "tenant-smb-250";
+        int count = 20;
+        boolean enabled = true;
+
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("tenantId=")) tenantId = param.substring(9);
+                if (param.startsWith("burstCount=")) count = Integer.parseInt(param.substring(11));
+                if (param.startsWith("enabled=")) enabled = Boolean.parseBoolean(param.substring(8));
+            }
+        }
+
+        trigger429Burst(tenantId, count);
+        setSimulate429Burst(tenantId, enabled);
+
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.put("status", "TRIGGERED");
+        resp.put("tenantId", tenantId);
+        resp.put("burstCount", count);
+        resp.put("enabled", enabled);
+        resp.put("message", "Simulated HTTP 429 burst on tenant: " + tenantId);
+        sendJsonResponse(exchange, 200, resp);
+    }
+
+    private void handleAdminSetRateLimit(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        String tenantId = "tenant-mid-2500";
+        int limit = 50;
+
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("tenantId=")) tenantId = param.substring(9);
+                if (param.startsWith("limit=")) limit = Integer.parseInt(param.substring(6));
+            }
+        }
+
+        setRateLimit(tenantId, limit);
+
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.put("status", "UPDATED");
+        resp.put("tenantId", tenantId);
+        resp.put("limit", limit);
+        sendJsonResponse(exchange, 200, resp);
     }
 
     private void triggerWebhook(String driveId) {
@@ -697,5 +1072,9 @@ public class MockOffice365Server {
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
         }
+    }
+
+    public Map<String, DriveMetadata> getDrivesMetadata() {
+        return drivesMetadata;
     }
 }

@@ -169,7 +169,7 @@ public class MockGraphClient implements GraphClient {
             int count = requestCounter.incrementAndGet();
             if (count % 8 == 0) { // Every 8th request simulates an HTTP 429
                 log.warn("Mock Graph Client simulating HTTP 429 (Retry-After: 4s) to test Approach 5 dynamic deferral!");
-                throw new GraphThrottlingException(4, "Rate limit exceeded (Microsoft Graph simulated 429)");
+                throw new GraphThrottlingException(4, "tenant-mid-2500", "Rate limit exceeded (Microsoft Graph simulated 429)");
             }
         }
     }

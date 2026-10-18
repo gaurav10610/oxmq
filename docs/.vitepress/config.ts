@@ -20,9 +20,9 @@ export default withMermaid(
         { text: 'Bull-Board', link: '/interop/bull-board' },
         { text: 'Roadmap', link: '/ROADMAP' },
         {
-          text: 'v1.4.0',
+          text: 'v1.5.0',
           items: [
-            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.4.0' },
+            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0' },
             { text: 'GitHub Repository', link: 'https://github.com/gaurav10610/oxmq' }
           ]
         }
@@ -37,6 +37,7 @@ export default withMermaid(
             { text: 'Spring Boot 3+ Starter', link: '/guide/spring-boot' },
             { text: 'Context Isolation & Namespacing', link: '/guide/namespacing' },
             { text: 'Virtual Threads (Loom)', link: '/guide/virtual-threads' },
+            { text: 'Plugins & Interceptors', link: '/guide/plugins' },
             { text: 'Configuration Reference', link: '/guide/configuration' },
             { text: 'Full Manual (Getting Started)', link: '/GETTING_STARTED' }
           ]

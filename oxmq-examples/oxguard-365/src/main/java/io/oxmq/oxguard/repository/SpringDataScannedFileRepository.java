@@ -19,6 +19,8 @@ public interface SpringDataScannedFileRepository extends JpaRepository<ScannedFi
 
     List<ScannedFileEntity> findAllByOrderByScannedAtTimestampDesc();
 
+    List<ScannedFileEntity> findByTenantIdOrderByScannedAtTimestampDesc(String tenantId);
+
     long countByExposureLevel(ExposureLevel exposureLevel);
 
     long countByThreatVerdict(ThreatVerdict threatVerdict);
@@ -26,4 +28,15 @@ public interface SpringDataScannedFileRepository extends JpaRepository<ScannedFi
     long countByThreatVerdictNot(ThreatVerdict threatVerdict);
 
     long countByScanOrigin(ScanOrigin scanOrigin);
+
+    long countByTenantId(String tenantId);
+
+    long countByTenantIdAndExposureLevel(String tenantId, ExposureLevel exposureLevel);
+
+    long countByTenantIdAndThreatVerdict(String tenantId, ThreatVerdict threatVerdict);
+
+    long countByTenantIdAndThreatVerdictNot(String tenantId, ThreatVerdict threatVerdict);
+
+    long countByTenantIdAndScanOrigin(String tenantId, ScanOrigin scanOrigin);
 }
+
