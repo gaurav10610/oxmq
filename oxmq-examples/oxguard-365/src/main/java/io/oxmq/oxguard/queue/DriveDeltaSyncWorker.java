@@ -71,14 +71,15 @@ public class DriveDeltaSyncWorker {
         DeltaSyncResult deltaResult;
         try {
             cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-            deltaResult = graphClient.fetchDeltaChanges(payload.driveId(), null);
+            deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), null);
         } catch (GraphThrottlingException gte) {
-            cooldownService.record429Hit();
-            log.warn("Delta sync throttled (HTTP 429). Setting tenant cooldown for {}s and deferring job",
-                    gte.getRetryAfterSeconds());
+            cooldownService.record429Hit(payload.tenantId());
+            log.warn("Delta sync throttled (HTTP 429) for tenant [{}]. Setting cooldown for {}s and deferring job",
+                    payload.tenantId(), gte.getRetryAfterSeconds());
             cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());
             throw new DelayedException(Duration.ofMillis(gte.getRetryAfterMillis()));
         }
+
 
         List<DriveItem> updatedItems = deltaResult.updatedItems();
         log.info("Delta sync processed for drive [{}] (origin={}): found {} modified/new files to inspect",

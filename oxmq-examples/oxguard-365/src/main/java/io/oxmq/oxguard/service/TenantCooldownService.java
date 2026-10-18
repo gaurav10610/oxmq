@@ -26,9 +26,16 @@ public class TenantCooldownService {
 
     private final RedisConnectionManager connectionManager;
     private final double headroomYieldThreshold;
-    private final AtomicInteger maxRequestsPerSecond;
+    private final Map<String, AtomicInteger> tenantBurstLimits = new java.util.concurrent.ConcurrentHashMap<>();
 
-    // Real-time API Quota Telemetry Counters
+    // Real-time API Quota Telemetry Counters partitioned by Tenant
+    private final Map<String, LongAdder> forwardApiQuotaByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, LongAdder> backwardApiQuotaByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, LongAdder> backwardYieldByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, LongAdder> throttles429ByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, LongAdder> retriesRecoveredByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Global Aggregate Counters
     private final LongAdder forwardApiQuotaUsed = new LongAdder();
     private final LongAdder backwardApiQuotaUsed = new LongAdder();
     private final LongAdder backwardYieldCount = new LongAdder();
@@ -38,11 +45,14 @@ public class TenantCooldownService {
     public TenantCooldownService(
             RedisConnectionManager connectionManager,
             @Value("${oxguard.rate-limit.headroom-yield-threshold:0.25}") double headroomYieldThreshold,
-            @Value("${oxguard.rate-limit.max-requests-per-second:50}") int maxRequestsPerSecond
+            @Value("${oxguard.rate-limit.max-requests-per-second:50}") int defaultBurstLimit
     ) {
         this.connectionManager = connectionManager;
         this.headroomYieldThreshold = headroomYieldThreshold;
-        this.maxRequestsPerSecond = new AtomicInteger(maxRequestsPerSecond);
+        // Initialize default limits for all 5 official tenant profiles
+        for (io.oxmq.oxguard.model.TenantProfile profile : io.oxmq.oxguard.model.TenantProfile.ALL_PROFILES) {
+            this.tenantBurstLimits.put(profile.tenantId(), new AtomicInteger(profile.burstLimitRUsPerSec()));
+        }
     }
 
     /**
@@ -87,8 +97,10 @@ public class TenantCooldownService {
     public void recordTenantApiCall(String tenantId, ScanOrigin origin) {
         if (origin == ScanOrigin.FORWARD) {
             forwardApiQuotaUsed.increment();
+            forwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
         } else {
             backwardApiQuotaUsed.increment();
+            backwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
         }
 
         try {
@@ -107,16 +119,38 @@ public class TenantCooldownService {
         recordTenantApiCall(tenantId, ScanOrigin.BACKWARD);
     }
 
-    public void recordBackwardYield() {
+    public void recordBackwardYield(String tenantId) {
         backwardYieldCount.increment();
+        backwardYieldByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
+    }
+
+    public void recordBackwardYield() {
+        recordBackwardYield("tenant-mid-2500");
+    }
+
+    public void record429Hit(String tenantId) {
+        throttles429HitCount.increment();
+        throttles429ByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
     }
 
     public void record429Hit() {
-        throttles429HitCount.increment();
+        record429Hit("tenant-mid-2500");
+    }
+
+    public void recordRetryRecovered(String tenantId) {
+        retriesRecoveredCount.increment();
+        retriesRecoveredByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
     }
 
     public void recordRetryRecovered() {
-        retriesRecoveredCount.increment();
+        recordRetryRecovered("tenant-mid-2500");
+    }
+
+    public int getTenantBurstLimit(String tenantId) {
+        return tenantBurstLimits.computeIfAbsent(
+                tenantId,
+                id -> new AtomicInteger(io.oxmq.oxguard.model.TenantProfile.getByIdOrDefault(id).burstLimitRUsPerSec())
+        ).get();
     }
 
     /**
@@ -130,10 +164,10 @@ public class TenantCooldownService {
             String val = sync.get(key);
             if (val != null) {
                 int used = Integer.parseInt(val);
-                int limit = maxRequestsPerSecond.get();
+                int limit = getTenantBurstLimit(tenantId);
                 double remainingRatio = 1.0 - ((double) used / (double) limit);
                 if (remainingRatio < headroomYieldThreshold) {
-                    backwardYieldCount.increment();
+                    recordBackwardYield(tenantId);
                     log.info("Token bucket headroom low ({}% remaining for tenant [{}], used {}/{}). Yielding backward crawl!",
                             Math.round(remainingRatio * 100), tenantId, used, limit);
                     return true;
@@ -145,20 +179,29 @@ public class TenantCooldownService {
         return false;
     }
 
-    public void setMaxRequestsPerSecond(int limit) {
+    public void setMaxRequestsPerSecond(String tenantId, int limit) {
         if (limit > 0) {
-            this.maxRequestsPerSecond.set(limit);
-            log.info("Tenant rate limit updated to {} req/s", limit);
+            tenantBurstLimits.computeIfAbsent(
+                    tenantId,
+                    id -> new AtomicInteger(io.oxmq.oxguard.model.TenantProfile.getByIdOrDefault(id).burstLimitRUsPerSec())
+            ).set(limit);
+            log.info("Tenant [{}] rate limit updated to {} req/s", tenantId, limit);
+        }
+    }
+
+    public void setMaxRequestsPerSecond(int limit) {
+        for (AtomicInteger val : tenantBurstLimits.values()) {
+            val.set(limit);
         }
     }
 
     public int getMaxRequestsPerSecond() {
-        return maxRequestsPerSecond.get();
+        return getTenantBurstLimit("tenant-mid-2500");
     }
 
     public Map<String, Object> getQuotaTelemetry(String tenantId) {
         Map<String, Object> map = new LinkedHashMap<>();
-        int limit = maxRequestsPerSecond.get();
+        int limit = getTenantBurstLimit(tenantId);
         int usedInSecond = 0;
         try {
             RedisCommands<String, String> sync = connectionManager.sync();
@@ -173,19 +216,46 @@ public class TenantCooldownService {
         double remainingRatio = Math.max(0.0, 1.0 - ((double) usedInSecond / (double) limit));
         long cooldownRemaining = getRemainingCooldownMs(tenantId);
 
+        long fwdUsed = forwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
+        long bwdUsed = backwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
+        long yields = backwardYieldByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
+        long throttles = throttles429ByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
+        long retries = retriesRecoveredByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
+
+        io.oxmq.oxguard.model.TenantProfile profile = io.oxmq.oxguard.model.TenantProfile.getByIdOrDefault(tenantId);
+
+        map.put("tenantId", tenantId);
+        map.put("organizationName", profile.organizationName());
+        map.put("tier", profile.tier().name());
+        map.put("tierDisplayName", profile.tier().getDisplayName());
+        map.put("seatCount", profile.seatCount());
         map.put("maxRequestsPerSecond", limit);
         map.put("currentSecondUsage", usedInSecond);
         map.put("remainingTokens", remainingTokens);
         map.put("headroomYieldThreshold", headroomYieldThreshold);
         map.put("remainingHeadroomPercent", Math.round(remainingRatio * 1000.0) / 10.0);
         map.put("isYieldingActive", remainingRatio < headroomYieldThreshold);
-        map.put("forwardApiQuotaUsed", forwardApiQuotaUsed.sum());
-        map.put("backwardApiQuotaUsed", backwardApiQuotaUsed.sum());
-        map.put("backwardYieldCount", backwardYieldCount.sum());
-        map.put("throttles429HitCount", throttles429HitCount.sum());
-        map.put("retriesRecoveredCount", retriesRecoveredCount.sum());
+        map.put("forwardApiQuotaUsed", fwdUsed);
+        map.put("backwardApiQuotaUsed", bwdUsed);
+        map.put("backwardYieldCount", yields);
+        map.put("throttles429HitCount", throttles);
+        map.put("retriesRecoveredCount", retries);
         map.put("is429CooldownActive", cooldownRemaining > 0);
         map.put("cooldownRemainingMs", cooldownRemaining);
         return map;
     }
+
+    public Map<String, Object> getAllTenantsQuotaTelemetry() {
+        Map<String, Object> all = new LinkedHashMap<>();
+        for (io.oxmq.oxguard.model.TenantProfile p : io.oxmq.oxguard.model.TenantProfile.ALL_PROFILES) {
+            all.put(p.tenantId(), getQuotaTelemetry(p.tenantId()));
+        }
+        all.put("globalForwardUsed", forwardApiQuotaUsed.sum());
+        all.put("globalBackwardUsed", backwardApiQuotaUsed.sum());
+        all.put("globalYieldCount", backwardYieldCount.sum());
+        all.put("global429Hits", throttles429HitCount.sum());
+        all.put("globalRetriesRecovered", retriesRecoveredCount.sum());
+        return all;
+    }
 }
+

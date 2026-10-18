@@ -62,18 +62,19 @@ public class FilePermissionWorker {
 
         try {
             cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-            EffectiveExposure exposure = graphClient.fetchPermissions(payload.driveId(), payload.itemId());
+            EffectiveExposure exposure = graphClient.fetchPermissions(payload.tenantId(), payload.driveId(), payload.itemId());
             EffectiveExposure evaluated = exposureEngine.evaluate(exposure.permissions());
 
             log.debug("Evaluated permissions for [{}]: exposure={}", payload.itemName(), evaluated.level());
             return evaluated;
 
         } catch (GraphThrottlingException gte) {
-            cooldownService.record429Hit();
+            cooldownService.record429Hit(payload.tenantId());
             log.warn("Permission API throttled (HTTP 429) for tenant [{}]. Setting cooldown for {}s",
                     payload.tenantId(), gte.getRetryAfterSeconds());
             cooldownService.setCooldown(payload.tenantId(), gte.getRetryAfterMillis());
             throw new DelayedException(Duration.ofMillis(gte.getRetryAfterMillis()));
         }
+
     }
 }
