@@ -61,7 +61,8 @@ export default withMermaid(
             { text: 'Scheduling & Cron Jobs', link: '/patterns/scheduling-cron' },
             { text: 'Retries & Backoff Policies', link: '/patterns/retries-backoff' },
             { text: 'Debounce & Deduplication', link: '/patterns/debounce-deduplication' },
-            { text: 'Batch Ingestion Architecture', link: '/patterns/batch-dequeue' }
+            { text: 'Batch Ingestion Architecture', link: '/patterns/batch-dequeue' },
+            { text: 'OxGuard 365 (Enterprise DSPM)', link: '/guide/oxguard-365' }
           ]
         },
         {

@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: oxguard-365-test
+  datasource:
+    url: jdbc:h2:mem:oxguard_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+oxmq:
+  redis:
+    url: redis://localhost:6379
+  worker:
+    concurrency: 10
+    lock-duration: 30s
+    stalled-interval: 30s
+    virtual-threads: false
+
+oxguard:
+  client:
+    mode: MOCK
+  mock:
+    total-sites: 2
+    total-users: 3
+    files-per-drive: 10
+    simulate-429-burst: false
+    eicar-ratio: 0.1
+    suspicious-entropy-ratio: 0.1
+    mime-mismatch-ratio: 0.1
+  mock-server:
+    enabled: false
+  webhook:
+    client-state: "oxguard-secret-state-token"
+    notification-url: "http://localhost:8080/api/v1/webhooks/graph"
+  rate-limit:
+    max-requests-per-second: 50
+    headroom-yield-threshold: 0.25

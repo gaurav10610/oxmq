@@ -298,12 +298,12 @@ public class BullScripts {
             keys.getKey("stalled"),
             keys.getKey("wait"),
             keys.getKey("active"),
-            keys.getKey("failed"),
             keys.getKey("stalled-check"),
             keys.getKey("meta"),
             keys.getKey("paused"),
+            keys.getKey("marker"),
             keys.getKey("events"),
-            keys.getKey("marker")
+            keys.getKey("repeat")
         };
 
         long timestamp = System.currentTimeMillis();

@@ -1,0 +1,55 @@
+spring:
+  application:
+    name: oxguard-365
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oxguard
+    username: oxguard
+    password: oxguard
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+server:
+  port: 8080
+
+oxmq:
+  redis:
+    url: redis://localhost:6379
+  worker:
+    concurrency: 25
+    lock-duration: 45s
+    stalled-interval: 30s
+    virtual-threads: false # Java 17 LTS uses tuned platform thread pool
+
+oxguard:
+  client:
+    mode: LIVE # LiveGraphClient connects to Microsoft Graph v1.0 REST API
+  azure:
+    tenant-id: "contoso-enterprise-tenant"
+    client-id: "oxguard-365-enterprise-app"
+    client-secret: "secret-token-xyz"
+    graph-base-url: "http://localhost:8081/v1.0" # Mock M365 Server (or https://graph.microsoft.com/v1.0 in cloud)
+    login-base-url: "http://localhost:8081"       # Mock M365 Server (or https://login.microsoftonline.com in cloud)
+  mock-server:
+    enabled: true
+    port: 8081
+    storage-dir: "./data/m365-storage"
+    total-files: 1000
+    simulate-429-burst: false
+  webhook:
+    client-state: "oxguard-secret-state-token"
+    notification-url: "http://localhost:8080/api/v1/webhooks/graph"
+  rate-limit:
+    max-requests-per-second: 500
+    headroom-yield-threshold: 0.25 # 25% remaining token capacity yields backward crawl
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

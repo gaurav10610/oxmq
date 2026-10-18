@@ -1,0 +1,36 @@
+name: oxguard-365
+
+services:
+  oxguard-redis:
+    image: redis:7-alpine
+    container_name: oxguard-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+
+  oxguard-postgres:
+    image: postgres:16-alpine
+    container_name: oxguard-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: oxguard
+      POSTGRES_USER: oxguard
+      POSTGRES_PASSWORD: oxguard
+    volumes:
+      - oxguard_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  oxguard-bullboard:
+    image: ghcr.io/felixmosh/bull-board:latest
+    container_name: oxguard-bullboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    command: ["--redis", "redis://oxguard-redis:6379", "--prefix", "oxguard-365", "--queues", "tenant-discovery-queue,drive-delta-sync-queue,file-permission-queue,file-malware-queue,file-aggregate-queue"]
+    depends_on:
+      - oxguard-redis
+
+volumes:
+  oxguard_pgdata:

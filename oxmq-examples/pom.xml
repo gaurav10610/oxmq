@@ -24,5 +24,6 @@
     <modules>
         <module>cloudbridge</module>
         <module>oxmq-spring-boot-java17-example</module>
+        <module>oxguard-365</module>
     </modules>
 </project>

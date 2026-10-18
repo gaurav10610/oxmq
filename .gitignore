@@ -36,9 +36,17 @@ out/
 .DS_Store
 *.log
 *.tmp
+*.pid
 scratch/
 ### Node / VitePress ###
 node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+### Runtime Data & Downloads ###
+data/
+**/data/
+downloads/
+**/downloads/
+*.download
 

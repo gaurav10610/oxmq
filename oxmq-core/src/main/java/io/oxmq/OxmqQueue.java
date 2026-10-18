@@ -61,9 +61,10 @@ public class OxmqQueue<T> implements Queue<T> {
         this.backend = backend != null ? backend : new io.oxmq.backend.RedisQueueBackend(this.queueKeys, this.connectionManager, this.scriptManager, this.bullScripts);
         this.defaultJobOptions = defaultJobOptions;
 
-        if (maxLenEvents > 0 && this.connectionManager != null) {
+        if (this.connectionManager != null) {
             try {
-                this.connectionManager.getCommandConnection().sync().hset(queueKeys.toKey("meta"), "opts.maxLenEvents", String.valueOf(maxLenEvents));
+                long maxEvents = maxLenEvents > 0 ? maxLenEvents : 10000;
+                this.connectionManager.getCommandConnection().sync().hset(queueKeys.toKey("meta"), "opts.maxLenEvents", String.valueOf(maxEvents));
             } catch (Exception e) {
                 log.debug("Failed to set opts.maxLenEvents on queue meta: {}", e.getMessage());
             }
