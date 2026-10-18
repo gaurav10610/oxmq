@@ -43,6 +43,10 @@ node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
-### Runtime Data ###
+### Runtime Data & Downloads ###
 data/
+**/data/
+downloads/
+**/downloads/
+*.download
 
