@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import io.oxmq.oxguard.model.TenantProfile;
-import io.oxmq.oxguard.model.TenantTier;
+import io.oxmq.oxguard.mockserver.model.TenantProfile;
+import io.oxmq.oxguard.mockserver.model.TenantTier;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.io.File;
@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -186,7 +187,7 @@ public class MockOffice365Server {
             @Value("${oxguard.mock-server.port:8081}") int port,
             @Value("${oxguard.mock-server.storage-dir:./data/m365-storage}") String storageDirPath,
             @Value("${oxguard.mock-server.simulate-429-burst:false}") boolean simulate429Burst,
-            @Value("${oxguard.mock-server.total-files:1000}") int totalFilesToSeed,
+            @Value("${oxguard.mock-server.total-files:5000}") int totalFilesToSeed,
             @Value("${oxguard.webhook.notification-url:http://localhost:8080/api/v1/webhooks/graph}") String webhookUrl,
             @Value("${oxguard.webhook.client-state:oxguard-secret-state-token}") String webhookClientState,
             ObjectMapper objectMapper
@@ -250,6 +251,8 @@ public class MockOffice365Server {
         httpServer.createContext("/mock-admin/upload-forward-file", this::handleAdminUpload);
         httpServer.createContext("/mock-admin/simulate-429", this::handleAdminSimulate429);
         httpServer.createContext("/mock-admin/set-rate-limit", this::handleAdminSetRateLimit);
+        httpServer.createContext("/mock-admin/seed", this::handleAdminSeed);
+        httpServer.createContext("/mock-admin/stats", this::handleAdminStats);
 
         httpServer.start();
         log.info("==========================================================================================");
@@ -965,7 +968,12 @@ public class MockOffice365Server {
 
             Path storageDir = Paths.get(storageDirPath);
             Path targetFile = storageDir.resolve(fileName);
-            Files.writeString(targetFile, content, StandardCharsets.UTF_8);
+            if (json.has("contentBase64")) {
+                byte[] raw = Base64.getDecoder().decode(json.get("contentBase64").asText());
+                Files.write(targetFile, raw);
+            } else {
+                Files.writeString(targetFile, content, StandardCharsets.UTF_8);
+            }
 
             DriveMetadata dm = drivesMetadata.get(driveId);
             String tenantId = dm != null ? dm.tenantId() : "tenant-mid-2500";
@@ -1023,12 +1031,47 @@ public class MockOffice365Server {
             }
         }
 
-        setRateLimit(tenantId, limit);
+        if ("all".equalsIgnoreCase(tenantId)) {
+            setRateLimit(limit);
+        } else {
+            setRateLimit(tenantId, limit);
+        }
 
         ObjectNode resp = objectMapper.createObjectNode();
         resp.put("status", "UPDATED");
         resp.put("tenantId", tenantId);
         resp.put("limit", limit);
+        sendJsonResponse(exchange, 200, resp);
+    }
+
+    private void handleAdminSeed(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        int count = 5000;
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("count=")) count = Integer.parseInt(param.substring(6));
+            }
+        }
+        seedAdditionalFiles(count);
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.put("status", "SEEDED");
+        resp.put("totalFiles", getTotalFiles());
+        resp.put("message", "Successfully seeded files up to " + count);
+        sendJsonResponse(exchange, 200, resp);
+    }
+
+    private void handleAdminStats(HttpExchange exchange) throws IOException {
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.put("status", "UP");
+        resp.put("totalDrives", drivesMetadata.size());
+        resp.put("totalFiles", filesInventory.size());
+        ObjectNode tenants = resp.putObject("tenants");
+        for (TenantProfile profile : TenantProfile.ALL_PROFILES) {
+            ObjectNode t = tenants.putObject(profile.tenantId());
+            t.put("name", profile.organizationName());
+            t.put("tier", profile.tier().name());
+            t.put("limit", getRateLimit(profile.tenantId()));
+        }
         sendJsonResponse(exchange, 200, resp);
     }
 

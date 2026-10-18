@@ -9,6 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PID_FILE="${SCRIPT_DIR}/.oxguard.pid"
+MOCK_PID_FILE="${SCRIPT_DIR}/.mockserver.pid"
 
 # ANSI Colors
 GREEN='\033[0;32m'
@@ -32,34 +33,36 @@ echo -e "${BOLD}${BLUE}=========================================================
 echo -e "${BOLD}${YELLOW}  🛑  OXGUARD 365 :: STOPPING LOCAL DEVELOPMENT STACK${NC}"
 echo -e "${BOLD}${BLUE}==============================================================================${NC}"
 
-# 1. Stop OxGuard Java Application Process
+# 1. Stop Java Application Processes (OxGuard 365 & Mock Office 365 Server)
 STOPPED_APP=false
 
-# Check PID file first
-if [ -f "${PID_FILE}" ]; then
-    PID=$(cat "${PID_FILE}")
-    if ps -p "${PID}" >/dev/null 2>&1; then
-        echo -n -e "${BLUE}▶ Gracefully stopping OxGuard 365 process (PID: ${PID})...${NC}"
-        kill -15 "${PID}" 2>/dev/null || true
-        
-        # Wait up to 10 seconds for graceful termination
-        WAIT_SECONDS=0
-        while ps -p "${PID}" >/dev/null 2>&1 && [ ${WAIT_SECONDS} -lt 10 ]; do
-            echo -n "."
-            sleep 1
-            WAIT_SECONDS=$((WAIT_SECONDS + 1))
-        done
-        
+for pid_info in "OxGuard 365:${PID_FILE}" "Mock Office 365 Server:${MOCK_PID_FILE}"; do
+    NAME="${pid_info%%:*}"
+    PFILE="${pid_info#*:}"
+    if [ -f "${PFILE}" ]; then
+        PID=$(cat "${PFILE}")
         if ps -p "${PID}" >/dev/null 2>&1; then
-            echo -e " ${YELLOW}[FORCE KILL]${NC}"
-            kill -9 "${PID}" 2>/dev/null || true
-        else
-            echo -e " ${GREEN}[STOPPED]${NC}"
+            echo -n -e "${BLUE}▶ Gracefully stopping ${NAME} (PID: ${PID})...${NC}"
+            kill -15 "${PID}" 2>/dev/null || true
+            
+            WAIT_SECONDS=0
+            while ps -p "${PID}" >/dev/null 2>&1 && [ ${WAIT_SECONDS} -lt 10 ]; do
+                echo -n "."
+                sleep 1
+                WAIT_SECONDS=$((WAIT_SECONDS + 1))
+            done
+            
+            if ps -p "${PID}" >/dev/null 2>&1; then
+                echo -e " ${YELLOW}[FORCE KILL]${NC}"
+                kill -9 "${PID}" 2>/dev/null || true
+            else
+                echo -e " ${GREEN}[STOPPED]${NC}"
+            fi
+            STOPPED_APP=true
         fi
-        STOPPED_APP=true
+        rm -f "${PFILE}"
     fi
-    rm -f "${PID_FILE}"
-fi
+done
 
 # Fallback: check ports 8080 and 8081 for any stray instances
 for port in 8080 8081; do

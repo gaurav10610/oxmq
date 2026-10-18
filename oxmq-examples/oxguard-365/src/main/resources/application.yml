@@ -35,12 +35,8 @@ oxguard:
     client-secret: "secret-token-xyz"
     graph-base-url: "http://localhost:8081/v1.0" # Mock M365 Server (or https://graph.microsoft.com/v1.0 in cloud)
     login-base-url: "http://localhost:8081"       # Mock M365 Server (or https://login.microsoftonline.com in cloud)
-  mock-server:
-    enabled: true
-    port: 8081
-    storage-dir: "./data/m365-storage"
-    total-files: 5000
-    simulate-429-burst: false
+  mock-admin:
+    base-url: "http://localhost:8081/mock-admin"
   webhook:
     client-state: "oxguard-secret-state-token"
     notification-url: "http://localhost:8080/api/v1/webhooks/graph"

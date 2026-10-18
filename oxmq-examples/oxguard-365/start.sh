@@ -11,6 +11,9 @@ COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PID_FILE="${SCRIPT_DIR}/.oxguard.pid"
 LOG_FILE="${SCRIPT_DIR}/oxguard.log"
 JAR_FILE="${SCRIPT_DIR}/target/oxguard-365-1.5.0.jar"
+MOCK_PID_FILE="${SCRIPT_DIR}/.mockserver.pid"
+MOCK_LOG_FILE="${SCRIPT_DIR}/mockserver.log"
+MOCK_JAR_FILE="${REPO_ROOT}/oxmq-examples/mock-office365-server/target/mock-office365-server-1.5.0-exec.jar"
 
 # ANSI Colors
 GREEN='\033[0;32m'
@@ -145,19 +148,49 @@ else
     echo -e " ${GREEN}[READY]${NC}"
 fi
 
-# 4. Ensure Application Jar is Built
-echo -e "${BLUE}▶ Packaging OxGuard 365 fat JAR via Maven Wrapper...${NC}"
-(cd "${REPO_ROOT}" && ./mvnw package -pl oxmq-examples/oxguard-365 -DskipTests -q)
-echo -e "${GREEN}  JAR successfully created: ${JAR_FILE}${NC}"
+# 4. Ensure Application Jars are Built
+echo -e "${BLUE}▶ Packaging Mock Office 365 Server and OxGuard 365 via Maven Wrapper...${NC}"
+(cd "${REPO_ROOT}" && ./mvnw package -pl oxmq-examples/mock-office365-server,oxmq-examples/oxguard-365 -am -DskipTests -q)
+echo -e "${GREEN}  Mock Server JAR: ${MOCK_JAR_FILE}${NC}"
+echo -e "${GREEN}  OxGuard 365 JAR: ${JAR_FILE}${NC}"
 
-# 5. Start OxGuard 365 Spring Boot Application
-echo -e "${BLUE}▶ Launching OxGuard 365 (Spring Boot + Mock Office 365 Server)...${NC}"
+# 5. Start Standalone Mock Office 365 Server (Port 8081)
+echo -e "${BLUE}▶ Launching Mock Office 365 Server (Standalone Spring Boot Service)...${NC}"
+nohup java -jar "${MOCK_JAR_FILE}" > "${MOCK_LOG_FILE}" 2>&1 &
+MOCK_PID=$!
+echo "${MOCK_PID}" > "${MOCK_PID_FILE}"
+echo -e "${GREEN}  Mock Server started with PID: ${MOCK_PID} (Logs: ${MOCK_LOG_FILE})${NC}"
+
+echo -n "  Waiting for Mock Office 365 Server (8081) to become healthy..."
+MAX_MOCK_RETRIES=40
+MOCK_RETRY=0
+until curl -s http://localhost:8081/mock-admin/stats >/dev/null 2>&1 || [ ${MOCK_RETRY} -eq ${MAX_MOCK_RETRIES} ]; do
+    if ! ps -p "${MOCK_PID}" >/dev/null 2>&1; then
+        echo -e " ${RED}[CRASHED]${NC}"
+        echo -e "${RED}Mock Server process terminated unexpectedly. Check ${MOCK_LOG_FILE}:${NC}"
+        tail -n 25 "${MOCK_LOG_FILE}"
+        rm -f "${MOCK_PID_FILE}"
+        exit 1
+    fi
+    echo -n "."
+    sleep 1
+    MOCK_RETRY=$((MOCK_RETRY + 1))
+done
+if [ ${MOCK_RETRY} -eq ${MAX_MOCK_RETRIES} ]; then
+    echo -e " ${RED}[TIMEOUT]${NC}"
+    echo -e "${RED}Mock Server took too long to respond. Inspect logs: tail -f ${MOCK_LOG_FILE}${NC}"
+    exit 1
+fi
+echo -e " ${GREEN}[READY]${NC}"
+
+# 6. Start OxGuard 365 Spring Boot Application (Port 8080)
+echo -e "${BLUE}▶ Launching OxGuard 365 (Lean DSPM Spring Boot Engine)...${NC}"
 nohup java -jar "${JAR_FILE}" > "${LOG_FILE}" 2>&1 &
 APP_PID=$!
 echo "${APP_PID}" > "${PID_FILE}"
-echo -e "${GREEN}  Process started with PID: ${APP_PID} (Logs: ${LOG_FILE})${NC}"
+echo -e "${GREEN}  OxGuard 365 started with PID: ${APP_PID} (Logs: ${LOG_FILE})${NC}"
 
-# 6. Wait for HTTP readiness
+# 7. Wait for HTTP readiness
 echo -n "  Waiting for OxGuard Dashboard (8080) to become healthy..."
 MAX_APP_RETRIES=40
 APP_RETRY=0
@@ -165,7 +198,7 @@ until curl -s http://localhost:8080/api/v1/dashboard/metrics >/dev/null 2>&1 || 
     # Check if process died prematurely
     if ! ps -p "${APP_PID}" >/dev/null 2>&1; then
         echo -e " ${RED}[CRASHED]${NC}"
-        echo -e "${RED}Application process terminated unexpectedly. Check ${LOG_FILE}:${NC}"
+        echo -e "${RED}OxGuard 365 process terminated unexpectedly. Check ${LOG_FILE}:${NC}"
         tail -n 25 "${LOG_FILE}"
         rm -f "${PID_FILE}"
         exit 1
@@ -182,7 +215,7 @@ if [ ${APP_RETRY} -eq ${MAX_APP_RETRIES} ]; then
 fi
 echo -e " ${GREEN}[READY]${NC}"
 
-# 7. Print Success Banner & URLs
+# 8. Print Success Banner & URLs
 echo -e "\n${BOLD}${GREEN}==============================================================================${NC}"
 echo -e "${BOLD}${GREEN}  🚀 OXGUARD 365 STACK IS LIVE AND OPERATIONAL!${NC}"
 echo -e "${BOLD}${GREEN}==============================================================================${NC}"
