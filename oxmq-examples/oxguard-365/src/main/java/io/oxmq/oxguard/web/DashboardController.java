@@ -99,6 +99,31 @@ public class DashboardController {
         return metricsService.subscribe();
     }
 
+    @PostMapping("/seed")
+    public ResponseEntity<Map<String, Object>> seedAdditionalFiles(
+            @RequestParam(value = "count", defaultValue = "1000") int count
+    ) {
+        if (mockOffice365Server != null) {
+            mockOffice365Server.seedAdditionalFiles(count);
+            return ResponseEntity.ok(Map.of(
+                    "status", "SEEDED",
+                    "totalFiles", mockOffice365Server.getTotalFiles(),
+                    "message", "Successfully seeded files up to " + count
+            ));
+        }
+        return ResponseEntity.badRequest().body(Map.of("error", "MockOffice365Server is not active"));
+    }
+
+    @PostMapping("/trigger/reset")
+    public ResponseEntity<Map<String, Object>> resetDatabase() {
+        log.info("Resetting scanned files database and metrics");
+        repository.clear();
+        return ResponseEntity.ok(Map.of(
+                "status", "RESET",
+                "message", "PostgreSQL database inventory reset successfully"
+        ));
+    }
+
     /**
      * Triggers a historical backward baseline crawl across all tenant document libraries.
      */

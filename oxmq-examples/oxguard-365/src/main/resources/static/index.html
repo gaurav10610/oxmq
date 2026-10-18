@@ -47,6 +47,10 @@
                     <span>🔄</span>
                     <span>Trigger Baseline Crawl (P10)</span>
                 </button>
+                <button onclick="seedAndCrawl(1000)" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-indigo-900/40 flex items-center space-x-1.5">
+                    <span>🚀</span>
+                    <span>Scan 1,000+ Files</span>
+                </button>
                 <button onclick="triggerUploadModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-emerald-900/40 flex items-center space-x-1.5">
                     <span>⚡</span>
                     <span>Simulate Real-Time Upload (P1)</span>
@@ -248,6 +252,15 @@
                 .catch(err => alert('Failed triggering crawl: ' + err));
         }
 
+        function seedAndCrawl(count) {
+            fetch('/api/v1/dashboard/seed?count=' + count, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    triggerCrawl();
+                })
+                .catch(err => alert('Failed seeding: ' + err));
+        }
+
         function triggerUploadModal() {
             document.getElementById('uploadModal').classList.remove('hidden');
         }
@@ -306,7 +319,8 @@
                         return;
                     }
 
-                    tbody.innerHTML = files.map(f => {
+                    const displayFiles = files.slice(0, 100);
+                    tbody.innerHTML = displayFiles.map(f => {
                         let expBadge = '';
                         if (f.exposureLevel === 'PUBLIC_ANONYMOUS') {
                             expBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] bg-red-950 text-red-400 border border-red-800">🔴 Public (Link)</span>`;

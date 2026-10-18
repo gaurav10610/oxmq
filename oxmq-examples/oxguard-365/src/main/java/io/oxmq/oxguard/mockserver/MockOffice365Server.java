@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
@@ -53,6 +54,7 @@ public class MockOffice365Server {
     private final int port;
     private final String storageDirPath;
     private final boolean simulate429Burst;
+    private final int totalFilesToSeed;
     private final String webhookUrl;
     private final String webhookClientState;
     private final ObjectMapper objectMapper;
@@ -74,10 +76,12 @@ public class MockOffice365Server {
             long lastModified
     ) {}
 
+    @Autowired
     public MockOffice365Server(
             @Value("${oxguard.mock-server.port:8081}") int port,
             @Value("${oxguard.mock-server.storage-dir:./data/m365-storage}") String storageDirPath,
-            @Value("${oxguard.mock-server.simulate-429-burst:true}") boolean simulate429Burst,
+            @Value("${oxguard.mock-server.simulate-429-burst:false}") boolean simulate429Burst,
+            @Value("${oxguard.mock-server.total-files:1000}") int totalFilesToSeed,
             @Value("${oxguard.webhook.notification-url:http://localhost:8080/api/v1/webhooks/graph}") String webhookUrl,
             @Value("${oxguard.webhook.client-state:oxguard-secret-state-token}") String webhookClientState,
             ObjectMapper objectMapper
@@ -85,9 +89,21 @@ public class MockOffice365Server {
         this.port = port;
         this.storageDirPath = storageDirPath;
         this.simulate429Burst = simulate429Burst;
+        this.totalFilesToSeed = totalFilesToSeed;
         this.webhookUrl = webhookUrl;
         this.webhookClientState = webhookClientState;
         this.objectMapper = objectMapper;
+    }
+
+    public MockOffice365Server(
+            int port,
+            String storageDirPath,
+            boolean simulate429Burst,
+            String webhookUrl,
+            String webhookClientState,
+            ObjectMapper objectMapper
+    ) {
+        this(port, storageDirPath, simulate429Burst, 20, webhookUrl, webhookClientState, objectMapper);
     }
 
     @PostConstruct
@@ -96,6 +112,9 @@ public class MockOffice365Server {
         Files.createDirectories(storageDir);
 
         seedRealPhysicalFiles(storageDir);
+        if (totalFilesToSeed > filesInventory.size()) {
+            seedBulkFiles(storageDir, totalFilesToSeed);
+        }
 
         httpServer = HttpServer.create(new InetSocketAddress(port), 0);
         httpServer.setExecutor(Executors.newCachedThreadPool());
@@ -192,6 +211,97 @@ public class MockOffice365Server {
                 "sp-drive-legal", "users");
     }
 
+    public synchronized void seedAdditionalFiles(int targetTotal) {
+        try {
+            Path storageDir = Paths.get(storageDirPath);
+            Files.createDirectories(storageDir);
+            seedBulkFiles(storageDir, targetTotal);
+            log.info("Mock Office 365 Server scaled inventory to {} real files on disk", filesInventory.size());
+        } catch (IOException e) {
+            log.error("Failed seeding additional files: {}", e.getMessage(), e);
+        }
+    }
+
+    public int getTotalFiles() {
+        return filesInventory.size();
+    }
+
+    private void seedBulkFiles(Path storageDir, int targetTotal) throws IOException {
+        String[] drives = {
+                "sp-drive-finance",
+                "sp-drive-hr",
+                "sp-drive-legal",
+                "sp-drive-it",
+                "od-drive-ciso",
+                "od-drive-cfo",
+                "od-drive-lead-architect"
+        };
+
+        String[] scopes = {"private", "organization", "users", "anonymous"};
+        SecureRandom rng = new SecureRandom();
+
+        int current = filesInventory.size();
+        for (int i = current + 1; i <= targetTotal; i++) {
+            String driveId = drives[i % drives.length];
+            int typeRoll = i % 100;
+
+            String fileName;
+            String mimeType;
+            String scope = scopes[i % scopes.length];
+
+            if (typeRoll < 3) {
+                // ~3% EICAR malware test
+                fileName = "security_audit_sample_" + i + ".txt";
+                mimeType = "text/plain";
+                createPhysicalFile(storageDir, fileName,
+                        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+                        mimeType, driveId, scope);
+            } else if (typeRoll < 6) {
+                // ~3% High entropy ransomware payload
+                fileName = "encrypted_database_backup_" + i + ".dat.aes";
+                mimeType = "application/octet-stream";
+                byte[] entropyBytes = new byte[8192];
+                rng.nextBytes(entropyBytes);
+                createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, driveId, scope);
+            } else if (typeRoll < 9) {
+                // ~3% Executable MIME Mismatch (PE MZ Header disguised as docx)
+                fileName = "Executive_Bonus_Allocation_" + i + ".docx";
+                mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                byte[] peBytes = new byte[4096];
+                rng.nextBytes(peBytes);
+                peBytes[0] = 'M';
+                peBytes[1] = 'Z';
+                peBytes[2] = (byte) 0x90;
+                peBytes[3] = 0x00;
+                createPhysicalBinaryFile(storageDir, fileName, peBytes, mimeType, driveId, scope);
+            } else if (typeRoll < 40) {
+                // Word Doc
+                fileName = "Enterprise_Business_Plan_" + i + ".docx";
+                mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                String content = "Contoso Enterprise Strategic Directive #" + i + ".\nQuarterly operational objectives and deliverables.\nConfidential.";
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+            } else if (typeRoll < 70) {
+                // PDF Document
+                fileName = "Corporate_Governance_Report_" + i + ".pdf";
+                mimeType = "application/pdf";
+                String content = "%PDF-1.5\n% Contoso Corporate Governance Report #" + i + "\nSection 1: Enterprise Compliance & Risk Management.\n%%EOF";
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+            } else if (typeRoll < 90) {
+                // Excel Spreadsheet
+                fileName = "Departmental_Expenditure_Q" + ((i % 4) + 1) + "_" + i + ".xlsx";
+                mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                String content = "Department,CostCenter,AllocatedBudget,SpentToDate\nEngineering,CC-401,$250000,$180000\nOperations,CC-202,$120000,$95000";
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+            } else {
+                // CSV Data Table
+                fileName = "Client_Ledger_Extract_" + i + ".csv";
+                mimeType = "text/csv";
+                String content = "id,account,balance,status\n" + i + ",ACCT-" + (10000 + i) + ",$" + (5000 + (i * 12)) + ",ACTIVE";
+                createPhysicalFile(storageDir, fileName, content, mimeType, driveId, scope);
+            }
+        }
+    }
+
     public void saveForwardFile(String driveId, String fileName, String exposureScope, byte[] content, String mimeType) {
         try {
             Path storageDir = Paths.get(storageDirPath);
@@ -207,25 +317,32 @@ public class MockOffice365Server {
 
     private void createPhysicalFile(Path dir, String fileName, String content, String mimeType, String driveId, String exposureScope) throws IOException {
         Path filePath = dir.resolve(fileName);
-        Files.writeString(filePath, content, StandardCharsets.UTF_8);
+        if (!Files.exists(filePath)) {
+            Files.writeString(filePath, content, StandardCharsets.UTF_8);
+        }
         registerFile(fileName, filePath, mimeType, driveId, exposureScope);
     }
 
     private void createPhysicalBinaryFile(Path dir, String fileName, byte[] content, String mimeType, String driveId, String exposureScope) throws IOException {
         Path filePath = dir.resolve(fileName);
-        Files.write(filePath, content);
+        if (!Files.exists(filePath)) {
+            Files.write(filePath, content);
+        }
         registerFile(fileName, filePath, mimeType, driveId, exposureScope);
     }
 
     private void registerFile(String fileName, Path filePath, String mimeType, String driveId, String exposureScope) {
-        String fileId = "file-" + UUID.nameUUIDFromBytes(fileName.getBytes(StandardCharsets.UTF_8)).toString().substring(0, 8);
+        String fileId = "file-" + UUID.nameUUIDFromBytes((driveId + ":" + fileName).getBytes(StandardCharsets.UTF_8)).toString().replace("-", "").substring(0, 12);
         long size = filePath.toFile().length();
         MockFileInfo info = new MockFileInfo(
                 fileId, driveId, fileName, "/Documents/" + fileName, size, mimeType, exposureScope,
                 filePath.getFileName().toString(), System.currentTimeMillis()
         );
         filesInventory.put(fileId, info);
-        driveFiles.computeIfAbsent(driveId, k -> Collections.synchronizedList(new ArrayList<>())).add(fileId);
+        List<String> list = driveFiles.computeIfAbsent(driveId, k -> Collections.synchronizedList(new ArrayList<>()));
+        if (!list.contains(fileId)) {
+            list.add(fileId);
+        }
     }
 
     // --- HTTP HANDLERS ---
