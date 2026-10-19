@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>io.oxmq</groupId>
+        <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-examples</artifactId>
         <version>1.6.0</version>
         <relativePath>../pom.xml</relativePath>
@@ -25,7 +25,7 @@
     <dependencies>
         <!-- OxMQ Spring Boot Starter -->
         <dependency>
-            <groupId>io.oxmq</groupId>
+            <groupId>io.github.gaurav10610</groupId>
             <artifactId>oxmq-spring-boot-starter</artifactId>
         </dependency>
 
@@ -68,7 +68,7 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>io.oxmq</groupId>
+            <groupId>io.github.gaurav10610</groupId>
             <artifactId>mock-office365-server</artifactId>
             <version>${project.version}</version>
             <scope>test</scope>

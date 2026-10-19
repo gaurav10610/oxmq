@@ -20,7 +20,23 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
 
 ::: code-group
 
-```xml [Maven (JitPack - Zero Auth)]
+```xml [Maven Central (Recommended)]
+<dependencies>
+    <dependency>
+        <groupId>io.github.gaurav10610</groupId>
+        <artifactId>oxmq-core</artifactId>
+        <version>1.6.0</version>
+    </dependency>
+</dependencies>
+```
+
+```kotlin [Gradle (Maven Central)]
+dependencies {
+    implementation("io.github.gaurav10610:oxmq-core:1.6.0")
+}
+```
+
+```xml [Maven (JitPack)]
 <repositories>
     <repository>
         <id>jitpack.io</id>
@@ -32,19 +48,19 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
 </dependencies>
 ```
 
-```kotlin [Gradle (JitPack - Zero Auth)]
+```kotlin [Gradle (JitPack)]
 repositories {
     mavenCentral()
     maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.5.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.6.0")
 }
 ```
 

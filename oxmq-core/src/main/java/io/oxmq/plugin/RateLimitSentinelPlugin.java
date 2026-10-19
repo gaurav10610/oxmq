@@ -23,7 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Adaptive Circuit Breaker & Cooldown Sentinel for external upstream APIs (e.g. HTTP 429 / 503).
+ * Adaptive Circuit Breaker &amp; Cooldown Sentinel for external upstream APIs (e.g. HTTP 429 / 503).
  * <p>
  * When an external service signals rate-limiting with a {@code Retry-After} backoff (e.g. by throwing
  * {@link RateLimitCooldownException}), this plugin sets an atomic distributed cooldown in Redis.

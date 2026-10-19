@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.6.0-C71A36.svg" alt="Maven Central v1.6.0"></a>
   <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Release-v1.6.0-blue.svg" alt="Release v1.6.0"></a>
   <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.6.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
@@ -209,9 +210,41 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0).
+Add OxMQ to your project directly from **Maven Central** (globally available out-of-the-box with zero configuration), **JitPack**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0).
 
-### Option 1: JitPack (Recommended — Zero-Auth)
+### Option 1: Maven Central (Global Standard — Zero Configuration)
+
+Because OxMQ is published to Maven Central under `io.github.gaurav10610`, **no custom repository blocks are needed**. Simply add the dependencies directly:
+
+#### Maven (`pom.xml`)
+```xml
+<dependencies>
+    <!-- Core Pure Java Engine (Virtual Threads + Redis transport) -->
+    <dependency>
+        <groupId>io.github.gaurav10610</groupId>
+        <artifactId>oxmq-core</artifactId>
+        <version>1.6.0</version>
+    </dependency>
+
+    <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
+    <dependency>
+        <groupId>io.github.gaurav10610</groupId>
+        <artifactId>oxmq-spring-boot-starter</artifactId>
+        <version>1.6.0</version>
+    </dependency>
+</dependencies>
+```
+
+#### Gradle (`build.gradle.kts`)
+```kotlin
+dependencies {
+    implementation("io.github.gaurav10610:oxmq-core:1.6.0")
+    // or for Spring Boot 3 microservices:
+    // implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.6.0")
+}
+```
+
+### Option 2: JitPack (Zero-Auth GitHub Mirror)
 
 No GitHub token or authentication required. Simply add the JitPack repository:
 

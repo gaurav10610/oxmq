@@ -8,7 +8,23 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, native c
 
 ::: code-group
 
-```xml [Maven (JitPack - Zero Auth)]
+```xml [Maven Central (Recommended)]
+<dependencies>
+    <dependency>
+        <groupId>io.github.gaurav10610</groupId>
+        <artifactId>oxmq-spring-boot-starter</artifactId>
+        <version>1.6.0</version>
+    </dependency>
+</dependencies>
+```
+
+```kotlin [Gradle (Maven Central)]
+dependencies {
+    implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.6.0")
+}
+```
+
+```xml [Maven (JitPack)]
 <repositories>
     <repository>
         <id>jitpack.io</id>
@@ -20,19 +36,19 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, native c
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
 </dependencies>
 ```
 
-```kotlin [Gradle (JitPack - Zero Auth)]
+```kotlin [Gradle (JitPack)]
 repositories {
     mavenCentral()
     maven { url = uri("https://jitpack.io") }
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.6.0")
 }
 ```
 
