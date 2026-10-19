@@ -108,6 +108,7 @@ public class GroupRateLimiterAndSentinelPluginsIntegrationTest {
         AtomicInteger attemptsTenantA = new AtomicInteger(0);
         CountDownLatch latchB = new CountDownLatch(1);
         CountDownLatch latchA = new CountDownLatch(1);
+        CountDownLatch failAttempt1Started = new CountDownLatch(1);
 
         worker = OxmqWorker.<String>builder()
                 .queueName(queueName)
@@ -118,8 +119,9 @@ public class GroupRateLimiterAndSentinelPluginsIntegrationTest {
                     if ("tenant-fail".equals(tenant)) {
                         int att = attemptsTenantA.incrementAndGet();
                         if (att == 1) {
-                            // First time: simulate HTTP 429 with 500ms cooldown
-                            throw new RateLimitCooldownException(Duration.ofMillis(500), "tenant-fail", "HTTP 429 Retry-After: 0.5s");
+                            // First time: simulate HTTP 429 with 1500ms cooldown
+                            failAttempt1Started.countDown();
+                            throw new RateLimitCooldownException(Duration.ofMillis(1500), "tenant-fail", "HTTP 429 Retry-After: 1.5s");
                         }
                         latchA.countDown();
                         return "tenant-fail-recovered";
@@ -142,8 +144,20 @@ public class GroupRateLimiterAndSentinelPluginsIntegrationTest {
         assertTrue(latchB.await(2, TimeUnit.SECONDS), "Tenant OK should succeed immediately without being throttled");
         assertFalse(sentinel.isCooldownActive("tenant-ok"), "Tenant OK should NOT be in cooldown");
 
-        // Meanwhile, tenant-fail is in cooldown
-        assertTrue(sentinel.isCooldownActive("tenant-fail"), "Tenant fail should be in active cooldown");
+        // Wait until tenant-fail has hit attempt 1 and entered cooldown
+        assertTrue(failAttempt1Started.await(2, TimeUnit.SECONDS), "Tenant fail attempt 1 should have been executed");
+
+        // Poll briefly to ensure cooldown key is active in Redis
+        boolean inCooldown = false;
+        long deadline = System.currentTimeMillis() + 2000;
+        while (System.currentTimeMillis() < deadline) {
+            if (sentinel.isCooldownActive("tenant-fail")) {
+                inCooldown = true;
+                break;
+            }
+            Thread.sleep(20);
+        }
+        assertTrue(inCooldown, "Tenant fail should be in active cooldown");
         assertTrue(latchA.await(5, TimeUnit.SECONDS), "Tenant fail should recover and succeed after cooldown expires");
         assertEquals(1, sentinel.getThrottleCount("tenant-fail"), "Tenant fail should record 1 throttle");
     }
