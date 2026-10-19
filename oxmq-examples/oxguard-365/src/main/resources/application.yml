@@ -1,6 +1,8 @@
 spring:
   application:
     name: oxguard-365
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   datasource:
     url: jdbc:postgresql://localhost:5432/oxguard
     username: oxguard
@@ -16,6 +18,7 @@ spring:
 
 server:
   port: 8080
+  shutdown: graceful
 
 oxmq:
   redis:
@@ -24,6 +27,7 @@ oxmq:
     concurrency: 25
     lock-duration: 45s
     stalled-interval: 30s
+    drain-timeout: 30s
     virtual-threads: false # Java 17 LTS uses tuned platform thread pool
 
 oxguard:

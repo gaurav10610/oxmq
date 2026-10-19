@@ -1,5 +1,6 @@
 package io.oxmq.oxguard.web;
 
+import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.JobOptions;
 import io.oxmq.oxguard.connector.MockGraphClient;
@@ -263,6 +264,7 @@ public class DashboardController {
         JobOptions options = JobOptions.builder()
                 .priority(5)
                 .attempts(3)
+                .backoff(new BackoffStrategy.Exponential(1000L))
                 .build();
 
         oxmqTemplate.send(
@@ -291,6 +293,7 @@ public class DashboardController {
             JobOptions options = JobOptions.builder()
                     .priority(5)
                     .attempts(3)
+                    .backoff(new BackoffStrategy.Exponential(1000L))
                     .build();
 
             oxmqTemplate.send(

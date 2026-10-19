@@ -48,6 +48,20 @@ public class FileInventoryRepository {
                 .collect(Collectors.toList());
     }
 
+    public Optional<MonitoredDrive> getDrive(String driveId) {
+        if (driveId == null) return Optional.empty();
+        return driveRepo.findById(driveId).map(MonitoredDriveEntity::toModel);
+    }
+
+    @Transactional
+    public void updateDriveDeltaToken(String driveId, String newDeltaToken) {
+        if (driveId == null || newDeltaToken == null) return;
+        driveRepo.findById(driveId).ifPresent(entity -> {
+            entity.setDeltaToken(newDeltaToken);
+            driveRepo.save(entity);
+        });
+    }
+
     @Transactional
     public void saveFile(ScannedFileRecord record) {
         Optional<ScannedFileEntity> existing = fileRepo.findByFileId(record.fileId());

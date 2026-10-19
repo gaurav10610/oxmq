@@ -1,6 +1,7 @@
 package io.oxmq.oxguard.queue;
 
 import io.oxmq.FlowProducer;
+import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.FlowJob;
 import io.oxmq.model.JobOptions;
@@ -10,19 +11,23 @@ import io.oxmq.oxguard.model.DriveDeltaSyncPayload;
 import io.oxmq.oxguard.model.DriveItem;
 import io.oxmq.oxguard.model.FileAggregatePayload;
 import io.oxmq.oxguard.model.FileScanPayload;
+import io.oxmq.oxguard.model.MonitoredDrive;
 import io.oxmq.oxguard.model.ScanOrigin;
+import io.oxmq.oxguard.service.FileInventoryRepository;
 import io.oxmq.oxguard.service.TenantCooldownService;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
  * Executes incremental delta synchronization on drives.
  * Enforces Forward (Priority 1) vs Backward (Priority 10) priority arbitration,
  * yields capacity when tenant token headroom < 25%, and dispatches OxMQ FlowProducer DAGs.
+ * Checkpoints delta tokens in PostgreSQL for seamless crash recovery and resumes.
  */
 @Component
 public class DriveDeltaSyncWorker {
@@ -32,15 +37,27 @@ public class DriveDeltaSyncWorker {
     private final GraphClient graphClient;
     private final TenantCooldownService cooldownService;
     private final FlowProducer flowProducer;
+    private final FileInventoryRepository fileInventoryRepository;
+
+    @Autowired
+    public DriveDeltaSyncWorker(
+            GraphClient graphClient,
+            TenantCooldownService cooldownService,
+            FlowProducer flowProducer,
+            FileInventoryRepository fileInventoryRepository
+    ) {
+        this.graphClient = graphClient;
+        this.cooldownService = cooldownService;
+        this.flowProducer = flowProducer;
+        this.fileInventoryRepository = fileInventoryRepository;
+    }
 
     public DriveDeltaSyncWorker(
             GraphClient graphClient,
             TenantCooldownService cooldownService,
             FlowProducer flowProducer
     ) {
-        this.graphClient = graphClient;
-        this.cooldownService = cooldownService;
-        this.flowProducer = flowProducer;
+        this(graphClient, cooldownService, flowProducer, null);
     }
 
     @OxmqListener(queue = OxGuardQueueConstants.QUEUE_DRIVE_DELTA, concurrency = 20)
@@ -49,8 +66,20 @@ public class DriveDeltaSyncWorker {
             @Header("jobId") String jobId
     ) {
         cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-        DeltaSyncResult deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), null);
 
+        // Checkpoint Recovery: load existing delta token if available to resume from crash
+        String savedDeltaToken = (fileInventoryRepository != null)
+                ? fileInventoryRepository.getDrive(payload.driveId())
+                        .map(MonitoredDrive::deltaToken)
+                        .orElse(null)
+                : null;
+
+        DeltaSyncResult deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), savedDeltaToken);
+
+        // Checkpoint update: store new delta token for future incremental synchronization
+        if (fileInventoryRepository != null && deltaResult.newDeltaToken() != null) {
+            fileInventoryRepository.updateDriveDeltaToken(payload.driveId(), deltaResult.newDeltaToken());
+        }
 
         List<DriveItem> updatedItems = deltaResult.updatedItems();
         log.info("Delta sync processed for drive [{}] (origin={}): found {} modified/new files to inspect",
@@ -70,10 +99,11 @@ public class DriveDeltaSyncWorker {
                     item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin()
             );
 
-            // Create Parent Flow Job (Aggregator node in waiting-children state)
+            // Parent Flow Job (Aggregator node in waiting-children state with bounded exponential backoff)
             JobOptions parentOptions = JobOptions.builder()
                     .priority(priority)
                     .attempts(3)
+                    .backoff(new BackoffStrategy.Exponential(1000L))
                     .build();
 
             FlowJob<FileAggregatePayload> parentFlow = FlowJob.of(
@@ -83,7 +113,7 @@ public class DriveDeltaSyncWorker {
                     parentOptions
             );
 
-            // Child 1: Permission Inspection (Pillar 1)
+            // Child 1: Permission Inspection (Pillar 1) with self-healing retries
             FileScanPayload scanPayload = new FileScanPayload(
                     payload.tenantId(), payload.driveId(), item.id(), item.name(),
                     item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin()
@@ -95,22 +125,27 @@ public class DriveDeltaSyncWorker {
                     scanPayload,
                     JobOptions.builder()
                             .priority(priority)
+                            .attempts(3)
+                            .backoff(new BackoffStrategy.Exponential(1000L))
                             .failParentOnFailure(false)
                             .build()
             );
 
-            // Child 2: Malware Streaming Inspection (Pillar 2)
+            // Child 2: Malware Streaming Inspection (Pillar 2) with self-healing retries
             FlowJob<FileScanPayload> childMalware = FlowJob.of(
                     OxGuardQueueConstants.QUEUE_FILE_MALWARE,
                     "malware-" + item.name(),
                     scanPayload,
                     JobOptions.builder()
                             .priority(priority)
+                            .attempts(3)
+                            .backoff(new BackoffStrategy.Exponential(1000L))
                             .failParentOnFailure(false)
                             .build()
             );
 
             parentFlow.addChildren(List.of(childPerm, childMalware));
+
 
             try {
                 flowProducer.add(parentFlow);
