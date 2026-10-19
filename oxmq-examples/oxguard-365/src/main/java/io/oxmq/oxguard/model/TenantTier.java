@@ -57,6 +57,17 @@ public enum TenantTier {
     }
 
     /**
+     * Resolves the official Microsoft 365 capacity tier dynamically from burst limit RUs.
+     */
+    public static TenantTier fromBurstLimit(int limit) {
+        if (limit <= 25) return SMB;
+        if (limit <= 50) return MID_MARKET;
+        if (limit <= 90) return ENTERPRISE;
+        if (limit <= 150) return LARGE_ENTERPRISE;
+        return HYPERSCALE;
+    }
+
+    /**
      * Returns the next tier level above this tier, bounded at HYPERSCALE.
      */
     public TenantTier nextTier() {

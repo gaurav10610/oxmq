@@ -100,7 +100,15 @@ public class MockOffice365Server {
             long lastModified
     ) {}
 
-    // Per-Tenant Rate Limiter and Token Bucket State
+    public enum ChaosDecision {
+        PROCEED,
+        THROTTLE_429,
+        SERVICE_UNAVAILABLE_503,
+        GATEWAY_TIMEOUT_504,
+        INTERNAL_ERROR_500
+    }
+
+    // Per-Tenant Rate Limiter and Token Bucket State with Cloud Chaos Engine
     public static class TenantRateLimiter {
         private final String tenantId;
         private final AtomicInteger burstLimitRUs;
@@ -108,29 +116,73 @@ public class MockOffice365Server {
         private final AtomicLong currentSecondEpoch = new AtomicLong(System.currentTimeMillis() / 1000L);
         private final AtomicInteger burst429Remaining = new AtomicInteger(0);
         private final AtomicBoolean burst429Active = new AtomicBoolean(false);
+        private final AtomicInteger transient503Remaining = new AtomicInteger(0);
+        private final AtomicInteger transient504Remaining = new AtomicInteger(0);
+        private final AtomicInteger transient500Remaining = new AtomicInteger(0);
+        private final AtomicInteger customRetryAfterSeconds = new AtomicInteger(3);
+        private volatile double randomChaosProbability = 0.0;
 
         public TenantRateLimiter(String tenantId, int defaultBurst) {
             this.tenantId = tenantId;
             this.burstLimitRUs = new AtomicInteger(defaultBurst);
         }
 
-        public boolean tryConsume(int ruCost, Map<String, String> headersToSet) {
-            if (burst429Remaining.get() > 0) {
-                burst429Remaining.decrementAndGet();
-                headersToSet.put("Retry-After", "3");
-                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
-                headersToSet.put("RateLimit-Remaining", "0");
-                headersToSet.put("RateLimit-Reset", "3");
-                return false;
-            }
-            if (burst429Active.get()) {
-                headersToSet.put("Retry-After", "3");
-                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
-                headersToSet.put("RateLimit-Remaining", "0");
-                headersToSet.put("RateLimit-Reset", "3");
-                return false;
+        public ChaosDecision evaluate(int ruCost, Map<String, String> headersToSet) {
+            int retrySec = customRetryAfterSeconds.get();
+
+            // 1. Injected 503 Service Unavailable
+            if (transient503Remaining.get() > 0) {
+                transient503Remaining.decrementAndGet();
+                headersToSet.put("Retry-After", String.valueOf(Math.max(2, retrySec)));
+                return ChaosDecision.SERVICE_UNAVAILABLE_503;
             }
 
+            // 2. Injected 504 Gateway Timeout
+            if (transient504Remaining.get() > 0) {
+                transient504Remaining.decrementAndGet();
+                return ChaosDecision.GATEWAY_TIMEOUT_504;
+            }
+
+            // 3. Injected 500 Internal Server Error
+            if (transient500Remaining.get() > 0) {
+                transient500Remaining.decrementAndGet();
+                return ChaosDecision.INTERNAL_ERROR_500;
+            }
+
+            // 4. Random Transient Chaos (if configured)
+            if (randomChaosProbability > 0 && java.util.concurrent.ThreadLocalRandom.current().nextDouble() < randomChaosProbability) {
+                double roll = java.util.concurrent.ThreadLocalRandom.current().nextDouble();
+                if (roll < 0.4) {
+                    headersToSet.put("Retry-After", String.valueOf(retrySec));
+                    return ChaosDecision.THROTTLE_429;
+                } else if (roll < 0.7) {
+                    headersToSet.put("Retry-After", String.valueOf(retrySec + 2));
+                    return ChaosDecision.SERVICE_UNAVAILABLE_503;
+                } else if (roll < 0.9) {
+                    return ChaosDecision.GATEWAY_TIMEOUT_504;
+                } else {
+                    return ChaosDecision.INTERNAL_ERROR_500;
+                }
+            }
+
+            // 5. Injected 429 Throttle Burst
+            if (burst429Remaining.get() > 0) {
+                burst429Remaining.decrementAndGet();
+                headersToSet.put("Retry-After", String.valueOf(retrySec));
+                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
+                headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("RateLimit-Reset", String.valueOf(retrySec));
+                return ChaosDecision.THROTTLE_429;
+            }
+            if (burst429Active.get()) {
+                headersToSet.put("Retry-After", String.valueOf(retrySec));
+                headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
+                headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("RateLimit-Reset", String.valueOf(retrySec));
+                return ChaosDecision.THROTTLE_429;
+            }
+
+            // 6. Token Bucket Rate Limiting
             long nowSec = System.currentTimeMillis() / 1000L;
             long currentSec = currentSecondEpoch.get();
             if (nowSec > currentSec) {
@@ -148,15 +200,36 @@ public class MockOffice365Server {
             headersToSet.put("RateLimit-Reset", "1");
 
             if (current > limit) {
-                headersToSet.put("Retry-After", "3");
+                headersToSet.put("Retry-After", String.valueOf(retrySec));
                 headersToSet.put("RateLimit-Remaining", "0");
-                return false;
+                return ChaosDecision.THROTTLE_429;
             }
-            return true;
+
+            return ChaosDecision.PROCEED;
         }
 
         public void triggerBurst(int count) {
             this.burst429Remaining.set(count);
+        }
+
+        public void trigger503(int count) {
+            this.transient503Remaining.set(count);
+        }
+
+        public void trigger504(int count) {
+            this.transient504Remaining.set(count);
+        }
+
+        public void trigger500(int count) {
+            this.transient500Remaining.set(count);
+        }
+
+        public void setCustomRetryAfter(int seconds) {
+            this.customRetryAfterSeconds.set(Math.max(1, seconds));
+        }
+
+        public void setRandomChaosProbability(double probability) {
+            this.randomChaosProbability = Math.max(0.0, Math.min(1.0, probability));
         }
 
         public void setBurstActive(boolean active) {
@@ -255,6 +328,7 @@ public class MockOffice365Server {
         httpServer.createContext("/mock-admin/set-rate-limit", this::handleAdminSetRateLimit);
         httpServer.createContext("/mock-admin/seed", this::handleAdminSeed);
         httpServer.createContext("/mock-admin/stats", this::handleAdminStats);
+        httpServer.createContext("/mock-admin/chaos", this::handleAdminChaos);
 
         httpServer.start();
         log.info("==========================================================================================");
@@ -647,15 +721,34 @@ public class MockOffice365Server {
         );
 
         Map<String, String> headers = new LinkedHashMap<>();
-        boolean allowed = limiter.tryConsume(ruCost, headers);
+        ChaosDecision decision = limiter.evaluate(ruCost, headers);
 
         for (Map.Entry<String, String> entry : headers.entrySet()) {
             exchange.getResponseHeaders().set(entry.getKey(), entry.getValue());
         }
 
-        if (!allowed) {
-            sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"The request has been throttled because tenant [" + tenantId + "] application quota was exceeded. Retry after 3 seconds.\"}}");
-            return false;
+        switch (decision) {
+            case THROTTLE_429 -> {
+                String retry = headers.getOrDefault("Retry-After", "3");
+                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"The request has been throttled because tenant [" + tenantId + "] application quota was exceeded. Retry after " + retry + " seconds.\"}}");
+                return false;
+            }
+            case SERVICE_UNAVAILABLE_503 -> {
+                String retry = headers.getOrDefault("Retry-After", "5");
+                sendResponse(exchange, 503, "{\"error\": {\"code\": \"serviceUnavailable\", \"message\": \"The Microsoft 365 SharePoint Online service is temporarily unavailable for tenant [" + tenantId + "]. Retry after " + retry + " seconds.\"}}");
+                return false;
+            }
+            case GATEWAY_TIMEOUT_504 -> {
+                sendResponse(exchange, 504, "{\"error\": {\"code\": \"gatewayTimeout\", \"message\": \"Microsoft Graph gateway timed out waiting for backend storage for tenant [" + tenantId + "].\"}}");
+                return false;
+            }
+            case INTERNAL_ERROR_500 -> {
+                sendResponse(exchange, 500, "{\"error\": {\"code\": \"generalException\", \"message\": \"An unexpected internal server error occurred while servicing tenant [" + tenantId + "].\"}}");
+                return false;
+            }
+            case PROCEED -> {
+                return true;
+            }
         }
         return true;
     }
@@ -1132,6 +1225,54 @@ public class MockOffice365Server {
             t.put("tier", profile.tier().name());
             t.put("limit", getRateLimit(profile.tenantId()));
         }
+        sendJsonResponse(exchange, 200, resp);
+    }
+
+    private void handleAdminChaos(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getQuery();
+        String tenantId = "all";
+        int statusCode = 503;
+        int count = 5;
+        int retryAfter = 3;
+        double randomRate = 0.0;
+
+        if (query != null) {
+            for (String param : query.split("&")) {
+                if (param.startsWith("tenantId=")) tenantId = param.substring(9);
+                if (param.startsWith("status=")) statusCode = Integer.parseInt(param.substring(7));
+                if (param.startsWith("count=")) count = Integer.parseInt(param.substring(6));
+                if (param.startsWith("retryAfter=")) retryAfter = Integer.parseInt(param.substring(11));
+                if (param.startsWith("randomRate=")) randomRate = Double.parseDouble(param.substring(11));
+            }
+        }
+
+        List<TenantRateLimiter> targetLimiters = "all".equalsIgnoreCase(tenantId)
+                ? new ArrayList<>(tenantLimiters.values())
+                : List.of(tenantLimiters.computeIfAbsent(tenantId, id -> new TenantRateLimiter(id, 50)));
+
+        for (TenantRateLimiter l : targetLimiters) {
+            l.setCustomRetryAfter(retryAfter);
+            if (randomRate > 0) {
+                l.setRandomChaosProbability(randomRate);
+            }
+            if (count > 0) {
+                switch (statusCode) {
+                    case 429 -> l.triggerBurst(count);
+                    case 503 -> l.trigger503(count);
+                    case 504 -> l.trigger504(count);
+                    case 500 -> l.trigger500(count);
+                }
+            }
+        }
+
+        ObjectNode resp = objectMapper.createObjectNode();
+        resp.put("status", "CHAOS_INJECTED");
+        resp.put("tenantId", tenantId);
+        resp.put("injectedStatusCode", statusCode);
+        resp.put("injectedCount", count);
+        resp.put("retryAfter", retryAfter);
+        resp.put("randomRate", randomRate);
+        resp.put("message", "Injected " + count + " errors of HTTP " + statusCode + " on tenant: " + tenantId);
         sendJsonResponse(exchange, 200, resp);
     }
 

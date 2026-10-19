@@ -5,7 +5,9 @@ import io.oxmq.oxguard.connector.GraphClient;
 import io.oxmq.oxguard.model.TenantProfile;
 import io.oxmq.oxguard.model.TenantTier;
 import io.oxmq.oxguard.model.TierSource;
+import io.oxmq.plugin.AdaptiveRateLimiterPlugin;
 import jakarta.annotation.PostConstruct;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -20,15 +22,16 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Dynamic Multi-Tenant Subscription and Adaptive Capacity Service.
- * Implements a 4-level fallback waterfall and Conservative AIMD Adaptive Capacity Tuning:
+ * Dynamic Multi-Tenant Subscription and Capacity Orchestration Service.
+ * <p>
+ * Leverages native OxMQ plugins ({@link AdaptiveRateLimiterPlugin}) for AIMD capacity tuning,
+ * oscillation damping locks, and distributed multi-worker state synchronization.
+ * <p>
+ * Implements a 4-level fallback waterfall:
  * 1. Static Configuration / Admin API Override
  * 2. Microsoft Graph GET /v1.0/subscribedSkus (Seat Count & SKU)
  * 3. Heuristic User Count Fallback via GET /v1.0/users?$count=true (User.Read.All)
  * 4. Safe Baseline Fallback (Tier 1: SMB - 250 seats, 25 RUs/s)
- *
- * Automatically escalates (upgrades) or de-escalates (downgrades) tenant rate limits over time
- * while enforcing oscillation damping to prevent yo-yo throttling storms.
  */
 @Service
 public class TenantSubscriptionService {
@@ -38,29 +41,25 @@ public class TenantSubscriptionService {
     private final GraphClient graphClient;
     private final List<String> onboardedTenantIds;
     private final Map<String, TenantProfile> tenantRegistry = new ConcurrentHashMap<>();
-
-    // Static Overrides (pinned by config or admin API)
     private final Map<String, TenantTier> staticOverrides = new ConcurrentHashMap<>();
 
-    // Adaptive Capacity Controller State partitioned by Tenant
-    private final Map<String, Long> lastDowngradeTimestamp = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> consecutiveCleanWindows = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> recent429Count = new ConcurrentHashMap<>();
     private final Map<String, LongAdder> workProcessedInWindow = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> upgradeCounts = new ConcurrentHashMap<>();
-    private final Map<String, AtomicInteger> downgradeCounts = new ConcurrentHashMap<>();
+    private final Map<String, AtomicInteger> recent429Count = new ConcurrentHashMap<>();
 
     @Value("${oxguard.adaptive-tuning.enabled:true}")
     private boolean adaptiveTuningEnabled = true;
 
     @Value("${oxguard.adaptive-tuning.damping-window-ms:60000}")
-    private long dampingWindowMs = 60000; // Freeze upgrades for damping duration after downgrade
+    private long dampingWindowMs = 60000;
 
     @Value("${oxguard.adaptive-tuning.clean-windows-for-upgrade:2}")
-    private int cleanWindowsForUpgrade = 2; // Required consecutive clean evaluation windows to step up
+    private int cleanWindowsForUpgrade = 2;
 
     @Autowired(required = false)
     private RedisConnectionManager redisConnectionManager;
+
+    @Autowired(required = false)
+    private AdaptiveRateLimiterPlugin adaptiveRateLimiterPlugin;
 
     public TenantSubscriptionService(
             GraphClient graphClient,
@@ -83,7 +82,7 @@ public class TenantSubscriptionService {
 
     @PostConstruct
     public void init() {
-        log.info("Initializing Microsoft 365 Dynamic Tenant Subscription Registry with Adaptive Tuning (enabled: {})...", adaptiveTuningEnabled);
+        log.info("Initializing Microsoft 365 Dynamic Tenant Subscription Registry with Native OxMQ Adaptive Tuning (enabled: {})...", adaptiveTuningEnabled);
         for (String tenantId : onboardedTenantIds) {
             try {
                 discoverAndRegister(tenantId);
@@ -93,12 +92,26 @@ public class TenantSubscriptionService {
         }
     }
 
+    private AdaptiveRateLimiterPlugin getAdaptivePlugin() {
+        if (adaptiveRateLimiterPlugin == null) {
+            adaptiveRateLimiterPlugin = AdaptiveRateLimiterPlugin.builder()
+                    .connectionManager(redisConnectionManager)
+                    .keyPrefix("oxguard:adaptive")
+                    .groupKeyResolver(job -> "tenant-mid-2500")
+                    .initialLimit(50)
+                    .minLimit(25)
+                    .maxLimit(250)
+                    .increaseStep(25)
+                    .backoffFactor(0.5)
+                    .dampingDuration(Duration.ofMillis(dampingWindowMs))
+                    .cleanThreshold(cleanWindowsForUpgrade)
+                    .build();
+        }
+        return adaptiveRateLimiterPlugin;
+    }
+
     /**
-     * Resolves tenant licensing and capacity limits using the 4-level waterfall hierarchy:
-     * Level 1: Static Override
-     * Level 2: Microsoft Graph /subscribedSkus
-     * Level 3: Microsoft Graph /users count heuristic
-     * Level 4: Safe baseline (Tier 1: SMB)
+     * Resolves tenant licensing and capacity limits using the 4-level waterfall hierarchy.
      */
     public TenantProfile discoverAndRegister(String tenantId) {
         if (tenantId == null || tenantId.isBlank()) {
@@ -108,6 +121,8 @@ public class TenantSubscriptionService {
         // Level 1: Check Static / Admin Override
         if (staticOverrides.containsKey(tenantId)) {
             TenantTier overrideTier = staticOverrides.get(tenantId);
+            getAdaptivePlugin().setStaticOverride(tenantId, overrideTier.getDefaultBurstLimitRUs());
+
             TenantProfile profile = new TenantProfile(
                     tenantId,
                     "Pinned Tenant (" + tenantId + ")",
@@ -118,11 +133,10 @@ public class TenantSubscriptionService {
                     "STATIC_OVERRIDE",
                     TierSource.STATIC_OVERRIDE,
                     true,
-                    upgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get(),
-                    downgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get()
+                    getUpgradeCount(tenantId),
+                    getDowngradeCount(tenantId)
             );
             tenantRegistry.put(tenantId, profile);
-            syncToRedis(profile);
             log.info("Assigned Level 1 Static Override for [{}] -> Tier: {} (Burst Limit: {} RUs/s, PINNED)",
                     tenantId, overrideTier.name(), overrideTier.getDefaultBurstLimitRUs());
             return profile;
@@ -132,12 +146,9 @@ public class TenantSubscriptionService {
         try {
             TenantProfile profile = graphClient.discoverTenantProfile(tenantId);
             if (profile != null) {
-                // Preserve transition counts if previously tracked
-                int ups = upgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
-                int downs = downgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
-                TenantProfile finalProfile = profile.withTier(profile.tier(), profile.tierSource(), false, ups, downs);
+                TenantProfile finalProfile = profile.withTier(profile.tier(), profile.tierSource(), false,
+                        getUpgradeCount(tenantId), getDowngradeCount(tenantId));
                 tenantRegistry.put(tenantId, finalProfile);
-                syncToRedis(finalProfile);
                 log.info("Registered dynamic tenant subscription for [{}] -> Source: {}, Tier: {}, Seats: {}, Burst Limit: {} RUs/s",
                         tenantId, finalProfile.tierSource().name(), finalProfile.tier().name(), finalProfile.seatCount(), finalProfile.burstLimitRUsPerSec());
                 return finalProfile;
@@ -162,14 +173,10 @@ public class TenantSubscriptionService {
                 0
         );
         tenantRegistry.put(tenantId, fallback);
-        syncToRedis(fallback);
         log.warn("Applied Level 4 Safe Baseline Fallback for [{}] -> Tier: SMB (Burst Limit: 25 RUs/s)", tenantId);
         return fallback;
     }
 
-    /**
-     * Resolves the current tenant profile.
-     */
     public TenantProfile getTenantProfile(String tenantId) {
         if (tenantId == null || tenantId.isBlank()) {
             tenantId = "tenant-mid-2500";
@@ -181,17 +188,10 @@ public class TenantSubscriptionService {
         return profile;
     }
 
-    /**
-     * Resolves the dynamic token bucket burst limit (RUs/s) for a given tenant.
-     * Evaluated on every job execution by OxMQ GroupRateLimiterPlugin.
-     */
     public int getTenantBurstLimit(String tenantId) {
         return getTenantProfile(tenantId).burstLimitRUsPerSec();
     }
 
-    /**
-     * Returns all dynamically registered tenant profiles.
-     */
     public List<TenantProfile> getAllTenants() {
         for (String id : onboardedTenantIds) {
             if (!tenantRegistry.containsKey(id)) {
@@ -201,9 +201,6 @@ public class TenantSubscriptionService {
         return new ArrayList<>(tenantRegistry.values());
     }
 
-    /**
-     * Returns all onboarded tenant identifiers.
-     */
     public List<String> getAllTenantIds() {
         return new ArrayList<>(onboardedTenantIds);
     }
@@ -212,22 +209,17 @@ public class TenantSubscriptionService {
     // Static Override Administration
     // =========================================================================
 
-    /**
-     * Pins a static tier for an onboarded tenant account, bypassing dynamic discovery and adaptive tuning.
-     */
     public TenantProfile setStaticOverride(String tenantId, TenantTier tier) {
         log.info("ADMIN OVERRIDE: Pinned static tier [{}] for tenant [{}]", tier.name(), tenantId);
         staticOverrides.put(tenantId, tier);
+        getAdaptivePlugin().setStaticOverride(tenantId, tier.getDefaultBurstLimitRUs());
         return discoverAndRegister(tenantId);
     }
 
-    /**
-     * Removes a static override for an onboarded tenant account, re-enabling dynamic discovery and adaptive tuning.
-     */
     public TenantProfile clearStaticOverride(String tenantId) {
         log.info("ADMIN OVERRIDE CLEARED: Re-enabling dynamic discovery and adaptive tuning for tenant [{}]", tenantId);
         staticOverrides.remove(tenantId);
-        removeRedisOverride(tenantId);
+        getAdaptivePlugin().clearStaticOverride(tenantId);
         return discoverAndRegister(tenantId);
     }
 
@@ -236,15 +228,12 @@ public class TenantSubscriptionService {
     }
 
     // =========================================================================
-    // Adaptive Capacity Controller (Conservative AIMD)
+    // Adaptive Capacity Controller (Powered by OxMQ AdaptiveRateLimiterPlugin)
     // =========================================================================
 
-    /**
-     * Records an HTTP 429 throttle event encountered on a tenant.
-     * Immediately triggers an auto-downgrade and activates oscillation damping to freeze upgrades.
-     */
     public synchronized void record429ThrottleEvent(String tenantId) {
         recent429Count.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).incrementAndGet();
+        getAdaptivePlugin().recordThrottle(tenantId);
 
         if (staticOverrides.containsKey(tenantId)) {
             log.debug("Tenant [{}] is pinned with a static override; skipping adaptive downgrade.", tenantId);
@@ -254,18 +243,12 @@ public class TenantSubscriptionService {
         TenantProfile current = getTenantProfile(tenantId);
         TenantTier prevTier = current.tier().previousTier();
 
-        // Activate oscillation damping lock
-        long dampingUntil = System.currentTimeMillis() + dampingWindowMs;
-        lastDowngradeTimestamp.put(tenantId, dampingUntil);
-        consecutiveCleanWindows.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).set(0);
-
         if (prevTier != current.tier()) {
-            int newDowns = downgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).incrementAndGet();
-            int ups = upgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
+            int newDowns = (int) getAdaptivePlugin().getDowngradeCount(tenantId);
+            int ups = (int) getAdaptivePlugin().getUpgradeCount(tenantId);
 
             TenantProfile downgraded = current.withTier(prevTier, TierSource.ADAPTIVE_TUNING, false, ups, newDowns);
             tenantRegistry.put(tenantId, downgraded);
-            syncToRedis(downgraded);
 
             log.warn("🛑 ADAPTIVE AUTO-DOWNGRADE: Tenant [{}] throttled (HTTP 429). Downgraded from {} to {} (Burst limit: {} -> {} RUs/s). Upgrades frozen for {}s.",
                     tenantId, current.tier().name(), prevTier.name(), current.burstLimitRUsPerSec(), prevTier.getDefaultBurstLimitRUs(), dampingWindowMs / 1000);
@@ -275,22 +258,12 @@ public class TenantSubscriptionService {
         }
     }
 
-    /**
-     * Records active job processing activity for tenant work tracking.
-     */
     public void recordWorkProcessed(String tenantId) {
         workProcessedInWindow.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
     }
 
-    /**
-     * Evaluates a tenant's processing performance and adaptively steps up the tier if conditions are met.
-     */
     public synchronized TenantProfile evaluateTenantTier(String tenantId) {
-        if (!adaptiveTuningEnabled) {
-            return getTenantProfile(tenantId);
-        }
-
-        if (staticOverrides.containsKey(tenantId)) {
+        if (!adaptiveTuningEnabled || staticOverrides.containsKey(tenantId)) {
             return getTenantProfile(tenantId);
         }
 
@@ -298,43 +271,32 @@ public class TenantSubscriptionService {
         int throttles = recent429Count.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).getAndSet(0);
         long work = workProcessedInWindow.computeIfAbsent(tenantId, k -> new LongAdder()).sumThenReset();
 
-        // 1. If throttles occurred during this evaluation window, reset clean counter and do not upgrade
         if (throttles > 0) {
-            consecutiveCleanWindows.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).set(0);
             return current;
         }
 
-        // 2. Check if oscillation damping is active
-        long dampingUntil = lastDowngradeTimestamp.getOrDefault(tenantId, 0L);
-        long now = System.currentTimeMillis();
-        if (now < dampingUntil) {
-            long remainingSec = (dampingUntil - now) / 1000;
+        if (getAdaptivePlugin().isDampingActive(tenantId)) {
+            long remainingSec = getAdaptivePlugin().getDampingRemainingMs(tenantId) / 1000;
             log.debug("Adaptive Tuning: Tenant [{}] in damping freeze ({}s remaining); skipping upgrade evaluation.", tenantId, remainingSec);
             return current;
         }
 
-        // 3. Check for clean execution and backlog
         if (current.tier() == TenantTier.HYPERSCALE) {
-            // Already at highest tier
             return current;
         }
 
-        AtomicInteger cleanCounter = consecutiveCleanWindows.computeIfAbsent(tenantId, k -> new AtomicInteger(0));
         if (work > 0) {
-            int clean = cleanCounter.incrementAndGet();
-            log.debug("Adaptive Tuning: Tenant [{}] clean window {}/{} ({} jobs processed, 0 throttles)",
-                    tenantId, clean, cleanWindowsForUpgrade, work);
+            getAdaptivePlugin().recordCleanExecution(tenantId);
+            int clean = getAdaptivePlugin().getConsecutiveCleanSuccesses(tenantId);
 
-            if (clean >= cleanWindowsForUpgrade) {
-                // Conditions met: upgrade one tier above!
+            if (clean == 0) {
+                // Plugin triggered an upgrade!
                 TenantTier nextTier = current.tier().nextTier();
-                int newUps = upgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).incrementAndGet();
-                int downs = downgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
+                int newUps = (int) getAdaptivePlugin().getUpgradeCount(tenantId);
+                int downs = (int) getAdaptivePlugin().getDowngradeCount(tenantId);
 
                 TenantProfile upgraded = current.withTier(nextTier, TierSource.ADAPTIVE_TUNING, false, newUps, downs);
                 tenantRegistry.put(tenantId, upgraded);
-                cleanCounter.set(0);
-                syncToRedis(upgraded);
 
                 log.info("🚀 ADAPTIVE AUTO-UPGRADE: Tenant [{}] sustained clean processing. Upgraded from {} to {} (Burst limit: {} -> {} RUs/s)!",
                         tenantId, current.tier().name(), nextTier.name(), current.burstLimitRUsPerSec(), nextTier.getDefaultBurstLimitRUs());
@@ -345,9 +307,6 @@ public class TenantSubscriptionService {
         return current;
     }
 
-    /**
-     * Periodic background evaluation task running every configured interval.
-     */
     @Scheduled(fixedDelayString = "${oxguard.adaptive-tuning.evaluation-interval-ms:30000}")
     public void evaluateAdaptiveTuning() {
         if (!adaptiveTuningEnabled) {
@@ -363,15 +322,15 @@ public class TenantSubscriptionService {
     }
 
     public int getConsecutiveCleanWindows(String tenantId) {
-        return consecutiveCleanWindows.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
+        return getAdaptivePlugin().getConsecutiveCleanSuccesses(tenantId);
     }
 
     public int getUpgradeCount(String tenantId) {
-        return upgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
+        return (int) getAdaptivePlugin().getUpgradeCount(tenantId);
     }
 
     public int getDowngradeCount(String tenantId) {
-        return downgradeCounts.computeIfAbsent(tenantId, k -> new AtomicInteger(0)).get();
+        return (int) getAdaptivePlugin().getDowngradeCount(tenantId);
     }
 
     public void setAdaptiveTuningEnabled(boolean adaptiveTuningEnabled) {
@@ -380,41 +339,15 @@ public class TenantSubscriptionService {
 
     public void setDampingWindowMs(long dampingWindowMs) {
         this.dampingWindowMs = dampingWindowMs;
+        this.adaptiveRateLimiterPlugin = null; // Recreate with updated damping
     }
 
     public void setCleanWindowsForUpgrade(int cleanWindowsForUpgrade) {
         this.cleanWindowsForUpgrade = cleanWindowsForUpgrade;
+        this.adaptiveRateLimiterPlugin = null; // Recreate with updated threshold
     }
 
     public void resetDampingLock(String tenantId) {
-        lastDowngradeTimestamp.remove(tenantId);
-    }
-
-    // =========================================================================
-    // Redis Multi-Pod Synchronization (Graceful Degradation)
-    // =========================================================================
-
-    private void syncToRedis(TenantProfile profile) {
-        if (redisConnectionManager == null) return;
-        try {
-            var conn = redisConnectionManager.getCommandConnection();
-            String key = "oxguard:tenant:tier:" + profile.tenantId();
-            conn.sync().hset(key, Map.of(
-                    "tier", profile.tier().name(),
-                    "source", profile.tierSource().name(),
-                    "limit", String.valueOf(profile.burstLimitRUsPerSec()),
-                    "pinned", String.valueOf(profile.isOverridePinned())
-            ));
-        } catch (Exception e) {
-            log.debug("Redis state sync deferred: {}", e.getMessage());
-        }
-    }
-
-    private void removeRedisOverride(String tenantId) {
-        if (redisConnectionManager == null) return;
-        try {
-            var conn = redisConnectionManager.getCommandConnection();
-            conn.sync().hdel("oxguard:tenant:tier:" + tenantId, "pinned");
-        } catch (Exception ignored) {}
+        getAdaptivePlugin().resetDampingLock(tenantId);
     }
 }
