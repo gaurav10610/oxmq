@@ -1,6 +1,7 @@
 # 🐂 OxMQ Core Engine (`oxmq-core`)
 
 <p align="center">
+  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.6.0-C71A36.svg" alt="Maven Central v1.6.0"></a>
   <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Release-v1.6.0-blue.svg" alt="Release v1.6.0"></a>
   <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.6.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
@@ -13,10 +14,10 @@
 
 ## 📦 Maven / Gradle Dependency
 
-### JitPack (Recommended — Zero-Auth)
+### Maven Central (Global Standard — Zero Config)
 ```xml
 <dependency>
-    <groupId>com.github.gaurav10610.oxmq</groupId>
+    <groupId>io.github.gaurav10610</groupId>
     <artifactId>oxmq-core</artifactId>
     <version>1.6.0</version>
 </dependency>
@@ -24,7 +25,7 @@
 
 ### Gradle
 ```kotlin
-implementation("com.github.gaurav10610.oxmq:oxmq-core:1.6.0")
+implementation("io.github.gaurav10610:oxmq-core:1.6.0")
 ```
 
 ---
