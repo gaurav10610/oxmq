@@ -55,4 +55,28 @@ public enum TenantTier {
     public int getDefaultBurstLimitRUs() {
         return defaultBurstLimitRUs;
     }
+
+    /**
+     * Returns the next tier level above this tier, bounded at HYPERSCALE.
+     */
+    public TenantTier nextTier() {
+        return switch (this) {
+            case SMB -> MID_MARKET;
+            case MID_MARKET -> ENTERPRISE;
+            case ENTERPRISE -> LARGE_ENTERPRISE;
+            case LARGE_ENTERPRISE, HYPERSCALE -> HYPERSCALE;
+        };
+    }
+
+    /**
+     * Returns the previous tier level below this tier, bounded at SMB.
+     */
+    public TenantTier previousTier() {
+        return switch (this) {
+            case HYPERSCALE -> LARGE_ENTERPRISE;
+            case LARGE_ENTERPRISE -> ENTERPRISE;
+            case ENTERPRISE -> MID_MARKET;
+            case MID_MARKET, SMB -> SMB;
+        };
+    }
 }

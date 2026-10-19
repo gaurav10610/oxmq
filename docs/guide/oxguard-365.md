@@ -452,4 +452,24 @@ All rate limiting, circuit breaking, and quota yielding are powered natively by 
 3. **`PriorityQuotaGovernorPlugin`:** Headroom-based yielding protecting VIP Priority 1 scans from background Priority 10 crawls.
 4. **Grafana Dashboards:** Pre-provisioned at `http://localhost:3001/d/oxmq-overview` to monitor queue depths, execution throughput, and per-tenant rate yield counters.
 
+### 9.6 Enterprise Fallback Hierarchy & Adaptive Self-Tuning Rate Limiting
+
+To handle real-world permission constraints (e.g. missing `Organization.Read.All` scope on customer Entra ID tenants) and dynamic load, OxGuard 365 incorporates a **4-Level Discovery Waterfall** paired with an **Adaptive Self-Tuning Capacity Controller**:
+
+#### 1. 4-Level License Discovery Waterfall
+* **Level 1 (Static Override):** Pinned via YAML configuration (`oxguard.tenants.overrides.<tenantId>=<TIER>`) or REST Admin API. Bypasses discovery and adaptive tuning.
+* **Level 2 (Graph API SKUs):** Calls `GET /v1.0/subscribedSkus` and `GET /v1.0/organization` to inspect exact paid seat counts and active SKUs (`O365_BUSINESS_PREMIUM`, `SPE_E3`, `SPE_E5`).
+* **Level 3 (User Count Heuristic):** If `subscribedSkus` fails with 403 or is unassigned, queries `GET /v1.0/users?$count=true` using standard `User.Read.All` scope to estimate tenant size.
+* **Level 4 (Safe Baseline Fallback):** Defaults unresolvable tenants to Tier 1 (`SMB`: 250 seats, 25 RUs/s) as a conservative baseline.
+
+#### 2. Conservative AIMD Adaptive Capacity Controller
+* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s $\to$ `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
+* **Oscillation Damping Lock:** Prevents flapping ("yo-yo" throttling) by freezing upgrades for a damping window (`damping-window-ms`, default 60s) after any downgrade.
+* **Auto-Upgrade on Sustained Clean Work:** If a tenant sustains clean processing without throttles across consecutive evaluation windows (`clean-windows-for-upgrade = 2`), the controller steps up the tier by one level, adjusting OxMQ token bucket burst limits in real time without downtime or restart.
+
+#### 3. Administrative REST Endpoints
+* `POST /api/v1/dashboard/tenants/{tenantId}/override-tier?tier={TIER}`: Pin a tenant to an explicit tier (`SMB`, `MID_MARKET`, `ENTERPRISE`, `LARGE_ENTERPRISE`, `HYPERSCALE`).
+* `DELETE /api/v1/dashboard/tenants/{tenantId}/override-tier`: Clear static override and restore dynamic adaptive tuning.
+* `POST /api/v1/dashboard/tenants/{tenantId}/evaluate-tier`: Trigger immediate on-demand adaptive tier evaluation.
+
 

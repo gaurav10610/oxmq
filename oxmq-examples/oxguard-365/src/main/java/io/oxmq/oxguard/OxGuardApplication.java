@@ -6,12 +6,14 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * OxGuard 365: Enterprise SaaS DSPM & Threat Analysis Showcase Application.
  * Powered by Java 17 LTS and OxMQ.
  */
 @SpringBootApplication
+@EnableScheduling
 public class OxGuardApplication {
 
     private static final Logger log = LoggerFactory.getLogger(OxGuardApplication.class);

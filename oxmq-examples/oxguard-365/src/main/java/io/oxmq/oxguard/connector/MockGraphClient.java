@@ -339,7 +339,22 @@ public class MockGraphClient implements GraphClient {
                 seats,
                 tier.getDailyRuBudget(),
                 tier.getDefaultBurstLimitRUs(),
-                sku
+                sku,
+                io.oxmq.oxguard.model.TierSource.GRAPH_SKU_DISCOVERY,
+                false,
+                0,
+                0
         );
+    }
+
+    @Override
+    public int discoverActiveUserCount(String tenantId) {
+        String tId = (tenantId == null || tenantId.isBlank()) ? "tenant-mid-2500" : tenantId;
+        if (tId.contains("smb") || tId.contains("250")) return 250;
+        if (tId.contains("mid") || tId.contains("2500")) return 2500;
+        if (tId.contains("ent") || tId.contains("10k")) return 10000;
+        if (tId.contains("large") || tId.contains("35k")) return 35000;
+        if (tId.contains("global") || tId.contains("100k")) return 100000;
+        return 2500;
     }
 }

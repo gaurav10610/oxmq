@@ -50,6 +50,12 @@ oxguard:
   rate-limit:
     max-requests-per-second: 500
     headroom-yield-threshold: 0.25 # 25% remaining token capacity yields backward crawl
+  adaptive-tuning:
+    enabled: true
+    evaluation-interval-ms: 15000 # 15s background evaluation cycle
+    damping-window-ms: 30000     # 30s damping freeze after downgrade
+    clean-windows-for-upgrade: 2  # 2 clean intervals required to step up tier
+  overrides: {}                  # Optional static overrides: e.g. { "tenant-custom": "ENTERPRISE" }
 
 management:
   endpoints:

@@ -223,13 +223,32 @@ public class LiveGraphClient implements GraphClient {
             log.warn("Could not retrieve subscribedSkus for [{}]: {}", tId, e.getMessage());
         }
 
-        if (totalSeats <= 0) {
-            totalSeats = 2500;
+        io.oxmq.oxguard.model.TierSource tierSource = io.oxmq.oxguard.model.TierSource.GRAPH_SKU_DISCOVERY;
+        boolean skuDiscovered = (totalSeats > 0);
+
+        if (!skuDiscovered) {
+            // Level 2 Fallback: User Count Heuristic via User.Read.All
+            int userCount = discoverActiveUserCount(tId);
+            if (userCount > 0) {
+                log.info("Applying Level 2 User Count Heuristic for [{}]: {} users found", tId, userCount);
+                totalSeats = userCount;
+                detectedSku = "PROXY_USER_COUNT";
+                tierSource = io.oxmq.oxguard.model.TierSource.USER_COUNT_HEURISTIC;
+            } else {
+                // Level 3 Fallback: Safe Baseline (Tier 1: SMB)
+                log.warn("All Graph license discovery failed for tenant [{}]. Assigning safe baseline Tier 1 (SMB: 250 seats, 25 RUs/s)", tId);
+                totalSeats = 250;
+                detectedSku = "SAFE_BASELINE_FALLBACK";
+                tierSource = io.oxmq.oxguard.model.TierSource.SAFE_BASELINE_FALLBACK;
+            }
         }
 
-        io.oxmq.oxguard.model.TenantTier tier = io.oxmq.oxguard.model.TenantTier.fromSku(detectedSku, totalSeats);
-        log.info("Successfully discovered Microsoft 365 licensing for [{}]: Organization='{}', SKU='{}', Total Seats={}, Resolved Tier={} (Burst Limit: {} RUs/s)",
-                tId, orgName, detectedSku, totalSeats, tier.name(), tier.getDefaultBurstLimitRUs());
+        io.oxmq.oxguard.model.TenantTier tier = (tierSource == io.oxmq.oxguard.model.TierSource.SAFE_BASELINE_FALLBACK)
+                ? io.oxmq.oxguard.model.TenantTier.SMB
+                : io.oxmq.oxguard.model.TenantTier.fromSku(detectedSku, totalSeats);
+
+        log.info("Resolved Microsoft 365 profile for [{}]: Source={}, Organization='{}', SKU='{}', Seats={}, Resolved Tier={} (Burst Limit: {} RUs/s)",
+                tId, tierSource.name(), orgName, detectedSku, totalSeats, tier.name(), tier.getDefaultBurstLimitRUs());
 
         return new TenantProfile(
                 tId,
@@ -238,8 +257,32 @@ public class LiveGraphClient implements GraphClient {
                 totalSeats,
                 tier.getDailyRuBudget(),
                 tier.getDefaultBurstLimitRUs(),
-                detectedSku
+                detectedSku,
+                tierSource,
+                false,
+                0,
+                0
         );
+    }
+
+    @Override
+    public int discoverActiveUserCount(String tenantId) {
+        String tId = (tenantId == null || tenantId.isBlank()) ? defaultTenantId : tenantId;
+        try {
+            String url = graphBaseUrl + "/users?$select=id&$top=999";
+            HttpResponse<String> response = executeGraphRequest(url, tId);
+            if (response.statusCode() == 200) {
+                JsonNode node = objectMapper.readTree(response.body());
+                if (node.has("value") && node.get("value").isArray()) {
+                    int count = node.get("value").size();
+                    log.info("Discovered {} active users for [{}] via User.Read.All fallback heuristic", count, tId);
+                    return count;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("User enumeration query failed for tenant [{}]: {}", tId, e.getMessage());
+        }
+        return 0;
     }
 
     @Override
