@@ -2,7 +2,6 @@ package io.oxmq.oxguard.queue;
 
 import io.oxmq.FlowProducer;
 import io.oxmq.model.BackoffStrategy;
-import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.FlowJob;
 import io.oxmq.model.JobOptions;
 import io.oxmq.oxguard.connector.DeltaSyncResult;
@@ -15,6 +14,7 @@ import io.oxmq.oxguard.model.MonitoredDrive;
 import io.oxmq.oxguard.model.ScanOrigin;
 import io.oxmq.oxguard.service.FileInventoryRepository;
 import io.oxmq.oxguard.service.TenantCooldownService;
+import io.oxmq.plugin.CheckpointStatePlugin;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
 import java.util.List;
@@ -27,7 +27,7 @@ import org.springframework.stereotype.Component;
  * Executes incremental delta synchronization on drives.
  * Enforces Forward (Priority 1) vs Backward (Priority 10) priority arbitration,
  * yields capacity when tenant token headroom < 25%, and dispatches OxMQ FlowProducer DAGs.
- * Checkpoints delta tokens in PostgreSQL for seamless crash recovery and resumes.
+ * Checkpoints delta tokens using native OxMQ CheckpointStatePlugin and PostgreSQL for seamless crash recovery.
  */
 @Component
 public class DriveDeltaSyncWorker {
@@ -38,18 +38,30 @@ public class DriveDeltaSyncWorker {
     private final TenantCooldownService cooldownService;
     private final FlowProducer flowProducer;
     private final FileInventoryRepository fileInventoryRepository;
+    private final CheckpointStatePlugin checkpointStatePlugin;
 
     @Autowired
     public DriveDeltaSyncWorker(
             GraphClient graphClient,
             TenantCooldownService cooldownService,
             FlowProducer flowProducer,
-            FileInventoryRepository fileInventoryRepository
+            FileInventoryRepository fileInventoryRepository,
+            @Autowired(required = false) CheckpointStatePlugin checkpointStatePlugin
     ) {
         this.graphClient = graphClient;
         this.cooldownService = cooldownService;
         this.flowProducer = flowProducer;
         this.fileInventoryRepository = fileInventoryRepository;
+        this.checkpointStatePlugin = checkpointStatePlugin;
+    }
+
+    public DriveDeltaSyncWorker(
+            GraphClient graphClient,
+            TenantCooldownService cooldownService,
+            FlowProducer flowProducer,
+            FileInventoryRepository fileInventoryRepository
+    ) {
+        this(graphClient, cooldownService, flowProducer, fileInventoryRepository, null);
     }
 
     public DriveDeltaSyncWorker(
@@ -57,7 +69,7 @@ public class DriveDeltaSyncWorker {
             TenantCooldownService cooldownService,
             FlowProducer flowProducer
     ) {
-        this(graphClient, cooldownService, flowProducer, null);
+        this(graphClient, cooldownService, flowProducer, null, null);
     }
 
     @OxmqListener(queue = OxGuardQueueConstants.QUEUE_DRIVE_DELTA, concurrency = 20)
@@ -67,18 +79,27 @@ public class DriveDeltaSyncWorker {
     ) {
         cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
 
-        // Checkpoint Recovery: load existing delta token if available to resume from crash
-        String savedDeltaToken = (fileInventoryRepository != null)
-                ? fileInventoryRepository.getDrive(payload.driveId())
-                        .map(MonitoredDrive::deltaToken)
-                        .orElse(null)
-                : null;
+        // Checkpoint Recovery: load existing delta token from CheckpointStatePlugin (or DB fallback)
+        String savedDeltaToken = null;
+        if (checkpointStatePlugin != null) {
+            savedDeltaToken = checkpointStatePlugin.getCheckpoint(payload.driveId()).orElse(null);
+        }
+        if (savedDeltaToken == null && fileInventoryRepository != null) {
+            savedDeltaToken = fileInventoryRepository.getDrive(payload.driveId())
+                    .map(MonitoredDrive::deltaToken)
+                    .orElse(null);
+        }
 
         DeltaSyncResult deltaResult = graphClient.fetchDeltaChanges(payload.tenantId(), payload.driveId(), savedDeltaToken);
 
-        // Checkpoint update: store new delta token for future incremental synchronization
-        if (fileInventoryRepository != null && deltaResult.newDeltaToken() != null) {
-            fileInventoryRepository.updateDriveDeltaToken(payload.driveId(), deltaResult.newDeltaToken());
+        // Checkpoint update: persist new delta token via CheckpointStatePlugin & PostgreSQL
+        if (deltaResult.newDeltaToken() != null) {
+            if (checkpointStatePlugin != null) {
+                checkpointStatePlugin.saveCheckpoint(payload.driveId(), deltaResult.newDeltaToken());
+            }
+            if (fileInventoryRepository != null) {
+                fileInventoryRepository.updateDriveDeltaToken(payload.driveId(), deltaResult.newDeltaToken());
+            }
         }
 
         List<DriveItem> updatedItems = deltaResult.updatedItems();
@@ -145,7 +166,6 @@ public class DriveDeltaSyncWorker {
             );
 
             parentFlow.addChildren(List.of(childPerm, childMalware));
-
 
             try {
                 flowProducer.add(parentFlow);

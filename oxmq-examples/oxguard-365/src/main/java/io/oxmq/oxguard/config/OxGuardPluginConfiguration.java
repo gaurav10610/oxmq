@@ -4,8 +4,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.exception.RateLimitCooldownException;
 import io.oxmq.model.Job;
-import io.oxmq.oxguard.service.TenantSubscriptionService;
+import io.oxmq.oxguard.model.DriveDeltaSyncPayload;
 import io.oxmq.oxguard.model.TenantScopedPayload;
+import io.oxmq.oxguard.service.TenantSubscriptionService;
+import io.oxmq.plugin.AdaptiveRateLimiterPlugin;
+import io.oxmq.plugin.CheckpointStatePlugin;
 import io.oxmq.plugin.GroupRateLimiterPlugin;
 import io.oxmq.plugin.PriorityQuotaGovernorPlugin;
 import io.oxmq.plugin.RateLimitSentinelPlugin;
@@ -38,6 +41,52 @@ public class OxGuardPluginConfiguration {
             if (tid != null) return tid.toString();
         }
         return "tenant-mid-2500";
+    }
+
+    @Bean
+    public AdaptiveRateLimiterPlugin adaptiveRateLimiterPlugin(
+            RedisConnectionManager connectionManager,
+            MeterRegistry meterRegistry,
+            @Value("${oxguard.adaptive-tuning.damping-window-ms:60000}") long dampingWindowMs,
+            @Value("${oxguard.adaptive-tuning.clean-windows-for-upgrade:2}") int cleanWindowsForUpgrade
+    ) {
+        log.info("Configuring native OxMQ AdaptiveRateLimiterPlugin (damping: {}ms, cleanThreshold: {})...",
+                dampingWindowMs, cleanWindowsForUpgrade);
+        return AdaptiveRateLimiterPlugin.builder()
+                .connectionManager(connectionManager)
+                .keyPrefix("oxguard:adaptive")
+                .groupKeyResolver(OxGuardPluginConfiguration::extractTenantId)
+                .initialLimit(50)
+                .minLimit(25)
+                .maxLimit(250)
+                .increaseStep(25)
+                .backoffFactor(0.5)
+                .dampingDuration(Duration.ofMillis(dampingWindowMs))
+                .cleanThreshold(cleanWindowsForUpgrade)
+                .meterRegistry(meterRegistry)
+                .build();
+    }
+
+    @Bean
+    public CheckpointStatePlugin checkpointStatePlugin(
+            RedisConnectionManager connectionManager,
+            MeterRegistry meterRegistry
+    ) {
+        log.info("Configuring native OxMQ CheckpointStatePlugin for distributed delta sync recovery...");
+        return CheckpointStatePlugin.builder()
+                .connectionManager(connectionManager)
+                .namespace("drives")
+                .keyPrefix("oxguard:checkpoint")
+                .groupKeyResolver(job -> {
+                    if (job == null) return null;
+                    Object data = job.getData();
+                    if (data instanceof DriveDeltaSyncPayload d) {
+                        return d.driveId();
+                    }
+                    return null;
+                })
+                .meterRegistry(meterRegistry)
+                .build();
     }
 
     @Bean

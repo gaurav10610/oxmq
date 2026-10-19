@@ -74,6 +74,36 @@ public class MockAdminClient {
         }
     }
 
+    public boolean injectChaos(String tenantId, int statusCode, int count, int retryAfter) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(mockAdminBaseUrl + "/chaos?tenantId=" + tenantId + "&status=" + statusCode + "&count=" + count + "&retryAfter=" + retryAfter))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(5))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            return resp.statusCode() == 200;
+        } catch (Exception e) {
+            log.warn("Failed injecting chaos (status: {}) for [{}]: {}", statusCode, tenantId, e.getMessage());
+            return false;
+        }
+    }
+
+    public boolean setRandomChaos(String tenantId, double randomRate) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(mockAdminBaseUrl + "/chaos?tenantId=" + tenantId + "&randomRate=" + randomRate))
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .timeout(Duration.ofSeconds(5))
+                    .build();
+            HttpResponse<String> resp = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            return resp.statusCode() == 200;
+        } catch (Exception e) {
+            log.warn("Failed setting random chaos for [{}]: {}", tenantId, e.getMessage());
+            return false;
+        }
+    }
+
     public boolean seedAdditionalFiles(int count) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
