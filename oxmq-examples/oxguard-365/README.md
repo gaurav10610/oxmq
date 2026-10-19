@@ -1,7 +1,7 @@
 # 🛡️ OxGuard 365: Enterprise SaaS DSPM & Threat Analysis Engine
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq"><img src="https://img.shields.io/badge/Powered%20By-OxMQ%20v1.5.0-blue.svg" alt="Powered By OxMQ"></a>
+  <a href="https://github.com/gaurav10610/oxmq"><img src="https://img.shields.io/badge/Powered%20By-OxMQ%20v1.6.0-blue.svg" alt="Powered By OxMQ"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20LTS-orange.svg" alt="Java 17 LTS"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.3.0-brightgreen.svg" alt="Spring Boot 3"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-7-red.svg" alt="Redis 7"></a>

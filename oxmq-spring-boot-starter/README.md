@@ -1,8 +1,8 @@
 # 🍃 OxMQ Spring Boot 3+ Starter (`oxmq-spring-boot-starter`)
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/Release-v1.5.0-blue.svg" alt="Release v1.5.0"></a>
-  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.5.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Release-v1.6.0-blue.svg" alt="Release v1.6.0"></a>
+  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.6.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
 </p>
@@ -18,13 +18,13 @@
 <dependency>
     <groupId>com.github.gaurav10610.oxmq</groupId>
     <artifactId>oxmq-spring-boot-starter</artifactId>
-    <version>1.5.0</version>
+    <version>1.6.0</version>
 </dependency>
 ```
 
 ### Gradle
 ```kotlin
-implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
+implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.6.0")
 ```
 
 ---

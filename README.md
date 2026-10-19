@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0"><img src="https://img.shields.io/badge/Release-v1.5.0-blue.svg" alt="Release v1.5.0"></a>
-  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.5.0-brightgreen.svg" alt="JitPack"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Release-v1.6.0-blue.svg" alt="Release v1.6.0"></a>
+  <a href="https://jitpack.io/#gaurav10610/oxmq"><img src="https://img.shields.io/badge/JitPack-v1.6.0-brightgreen.svg" alt="JitPack"></a>
   <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/"><img src="https://img.shields.io/badge/Author-Gaurav%20Kumar%20Yadav-0A66C2?logo=linkedin&logoColor=white" alt="Author LinkedIn"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
@@ -209,7 +209,7 @@ flowchart TD
 
 ## 📦 Installation
 
-Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0).
+Add OxMQ to your project using **JitPack** (recommended for instant, zero-auth setup), **GitHub Packages**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0).
 
 ### Option 1: JitPack (Recommended — Zero-Auth)
 
@@ -229,14 +229,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
 </dependencies>
 ```
@@ -249,9 +249,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.5.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.6.0")
     // or for Spring Boot 3 microservices:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.5.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.6.0")
 }
 ```
 
@@ -272,14 +272,14 @@ To consume official `io.oxmq` artifacts from GitHub Packages:
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
     <!-- or for Spring Boot 3: -->
     <!--
     <dependency>
         <groupId>io.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.5.0</version>
+        <version>1.6.0</version>
     </dependency>
     -->
 </dependencies>
