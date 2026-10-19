@@ -301,4 +301,45 @@ public class MockGraphClient implements GraphClient {
     public Map<String, MonitoredDrive> getDrives() {
         return drives;
     }
+
+    @Override
+    public io.oxmq.oxguard.model.TenantProfile discoverTenantProfile(String tenantId) {
+        String tId = (tenantId == null || tenantId.isBlank()) ? "tenant-mid-2500" : tenantId;
+        int seats = 2500;
+        String sku = "M365_BUSINESS_PREMIUM";
+        String orgName = "Contoso Logistics";
+
+        if (tId.contains("smb") || tId.contains("250")) {
+            seats = 250;
+            sku = "O365_BUSINESS_PREMIUM";
+            orgName = "Acme TinyCorp";
+        } else if (tId.contains("mid") || tId.contains("2500")) {
+            seats = 2500;
+            sku = "M365_BUSINESS_PREMIUM";
+            orgName = "Contoso Logistics";
+        } else if (tId.contains("ent") || tId.contains("10k")) {
+            seats = 10000;
+            sku = "SPE_E5";
+            orgName = "Fabrikam Financial";
+        } else if (tId.contains("large") || tId.contains("35k")) {
+            seats = 35000;
+            sku = "SPE_E3";
+            orgName = "Northwind Health";
+        } else if (tId.contains("global") || tId.contains("100k")) {
+            seats = 100000;
+            sku = "SPE_E5";
+            orgName = "MegaCorp Global";
+        }
+
+        io.oxmq.oxguard.model.TenantTier tier = io.oxmq.oxguard.model.TenantTier.fromSku(sku, seats);
+        return new io.oxmq.oxguard.model.TenantProfile(
+                tId,
+                orgName,
+                tier,
+                seats,
+                tier.getDailyRuBudget(),
+                tier.getDefaultBurstLimitRUs(),
+                sku
+        );
+    }
 }

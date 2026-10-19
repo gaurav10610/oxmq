@@ -28,11 +28,18 @@ public class TenantDiscoveryWorker {
     private final GraphClient graphClient;
     private final FileInventoryRepository repository;
     private final OxmqTemplate oxmqTemplate;
+    private final io.oxmq.oxguard.service.TenantSubscriptionService tenantSubscriptionService;
 
-    public TenantDiscoveryWorker(GraphClient graphClient, FileInventoryRepository repository, OxmqTemplate oxmqTemplate) {
+    public TenantDiscoveryWorker(
+            GraphClient graphClient,
+            FileInventoryRepository repository,
+            OxmqTemplate oxmqTemplate,
+            io.oxmq.oxguard.service.TenantSubscriptionService tenantSubscriptionService
+    ) {
         this.graphClient = graphClient;
         this.repository = repository;
         this.oxmqTemplate = oxmqTemplate;
+        this.tenantSubscriptionService = tenantSubscriptionService;
     }
 
     @OxmqListener(queue = OxGuardQueueConstants.QUEUE_TENANT_DISCOVERY, concurrency = 5)
@@ -41,6 +48,9 @@ public class TenantDiscoveryWorker {
             @Header("jobId") String jobId
     ) {
         log.info("Starting Tenant Discovery for tenant [{}] (jobId={})", payload.tenantId(), jobId);
+
+        // Dynamically discover and register tenant subscription & license profile from Microsoft Graph
+        tenantSubscriptionService.discoverAndRegister(payload.tenantId());
 
         List<MonitoredDrive> allDrives = new ArrayList<>();
         allDrives.addAll(graphClient.discoverSharePointDrives(payload.tenantId()));

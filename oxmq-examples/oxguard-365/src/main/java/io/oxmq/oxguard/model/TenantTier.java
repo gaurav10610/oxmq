@@ -20,6 +20,30 @@ public enum TenantTier {
         this.defaultBurstLimitRUs = defaultBurstLimitRUs;
     }
 
+    /**
+     * Resolves the official Microsoft 365 capacity tier dynamically from total licensed user seats.
+     */
+    public static TenantTier fromSeatCount(int seats) {
+        if (seats <= 1000) return SMB;
+        if (seats <= 5000) return MID_MARKET;
+        if (seats <= 15000) return ENTERPRISE;
+        if (seats <= 50000) return LARGE_ENTERPRISE;
+        return HYPERSCALE;
+    }
+
+    /**
+     * Resolves the tier dynamically from Microsoft Graph subscribedSkus skuPartNumber and seat count.
+     */
+    public static TenantTier fromSku(String skuPartNumber, int seats) {
+        if (skuPartNumber != null) {
+            String upper = skuPartNumber.toUpperCase();
+            if ((upper.contains("SMB") || upper.contains("BUSINESS")) && seats <= 1000) {
+                return SMB;
+            }
+        }
+        return fromSeatCount(seats);
+    }
+
     public String getDisplayName() {
         return displayName;
     }

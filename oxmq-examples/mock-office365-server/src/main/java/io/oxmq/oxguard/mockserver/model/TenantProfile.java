@@ -6,7 +6,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Model representing an onboarded Microsoft 365 Tenant account with its license tier and RU quotas.
+ * Model representing an onboarded Microsoft 365 Tenant account with its license tier, SKU, and RU quotas
+ * in the Mock Office 365 Cloud.
  */
 public record TenantProfile(
         String tenantId,
@@ -14,8 +15,21 @@ public record TenantProfile(
         TenantTier tier,
         int seatCount,
         long dailyRuBudget,
-        int burstLimitRUsPerSec
+        int burstLimitRUsPerSec,
+        String skuPartNumber,
+        String domainName
 ) {
+
+    public TenantProfile(
+            String tenantId,
+            String organizationName,
+            TenantTier tier,
+            int seatCount,
+            long dailyRuBudget,
+            int burstLimitRUsPerSec
+    ) {
+        this(tenantId, organizationName, tier, seatCount, dailyRuBudget, burstLimitRUsPerSec, "SPE_E5", tenantId + ".onmicrosoft.com");
+    }
 
     public static final TenantProfile SMB_250 = new TenantProfile(
             "tenant-smb-250",
@@ -23,7 +37,9 @@ public record TenantProfile(
             TenantTier.SMB,
             250,
             TenantTier.SMB.getDailyRuBudget(),
-            TenantTier.SMB.getDefaultBurstLimitRUs()
+            TenantTier.SMB.getDefaultBurstLimitRUs(),
+            "O365_BUSINESS_PREMIUM",
+            "acmetinycorp.onmicrosoft.com"
     );
 
     public static final TenantProfile MID_2500 = new TenantProfile(
@@ -32,7 +48,9 @@ public record TenantProfile(
             TenantTier.MID_MARKET,
             2500,
             TenantTier.MID_MARKET.getDailyRuBudget(),
-            TenantTier.MID_MARKET.getDefaultBurstLimitRUs()
+            TenantTier.MID_MARKET.getDefaultBurstLimitRUs(),
+            "M365_BUSINESS_PREMIUM",
+            "contosologistics.onmicrosoft.com"
     );
 
     public static final TenantProfile ENT_10K = new TenantProfile(
@@ -41,7 +59,9 @@ public record TenantProfile(
             TenantTier.ENTERPRISE,
             10000,
             TenantTier.ENTERPRISE.getDailyRuBudget(),
-            TenantTier.ENTERPRISE.getDefaultBurstLimitRUs()
+            TenantTier.ENTERPRISE.getDefaultBurstLimitRUs(),
+            "SPE_E5",
+            "fabrikamfinancial.onmicrosoft.com"
     );
 
     public static final TenantProfile LARGE_35K = new TenantProfile(
@@ -50,7 +70,9 @@ public record TenantProfile(
             TenantTier.LARGE_ENTERPRISE,
             35000,
             TenantTier.LARGE_ENTERPRISE.getDailyRuBudget(),
-            TenantTier.LARGE_ENTERPRISE.getDefaultBurstLimitRUs()
+            TenantTier.LARGE_ENTERPRISE.getDefaultBurstLimitRUs(),
+            "SPE_E3",
+            "northwindhealth.onmicrosoft.com"
     );
 
     public static final TenantProfile GLOBAL_100K = new TenantProfile(
@@ -59,7 +81,9 @@ public record TenantProfile(
             TenantTier.HYPERSCALE,
             100000,
             TenantTier.HYPERSCALE.getDailyRuBudget(),
-            TenantTier.HYPERSCALE.getDefaultBurstLimitRUs()
+            TenantTier.HYPERSCALE.getDefaultBurstLimitRUs(),
+            "SPE_E5",
+            "megacorpglobal.onmicrosoft.com"
     );
 
     public static final List<TenantProfile> ALL_PROFILES = List.of(
@@ -84,9 +108,11 @@ public record TenantProfile(
                 tenantId,
                 "Custom Tenant (" + tenantId + ")",
                 TenantTier.MID_MARKET,
-                1500,
+                2500,
                 TenantTier.MID_MARKET.getDailyRuBudget(),
-                TenantTier.MID_MARKET.getDefaultBurstLimitRUs()
+                TenantTier.MID_MARKET.getDefaultBurstLimitRUs(),
+                "SPE_E5",
+                tenantId + ".onmicrosoft.com"
         ));
     }
 }

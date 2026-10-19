@@ -63,54 +63,70 @@ public class MultiTenantIsolationAndRateLimitingIntegrationTest {
     }
 
     @Test
-    void testAll5OfficialTenantProfilesConfigured() {
-        assertEquals(5, TenantProfile.ALL_PROFILES.size());
-
-        TenantProfile smb = TenantProfile.SMB_250;
+    void testAll5OfficialTenantProfilesDiscoveredDynamicallyViaGraph() {
+        TenantProfile smb = liveClient.discoverTenantProfile("tenant-smb-250");
         assertEquals("tenant-smb-250", smb.tenantId());
         assertEquals(TenantTier.SMB, smb.tier());
         assertEquals(250, smb.seatCount());
         assertEquals(25, smb.burstLimitRUsPerSec());
+        assertEquals("Acme TinyCorp", smb.organizationName());
+        assertEquals("O365_BUSINESS_PREMIUM", smb.skuPartNumber());
 
-        TenantProfile mid = TenantProfile.MID_2500;
+        TenantProfile mid = liveClient.discoverTenantProfile("tenant-mid-2500");
         assertEquals("tenant-mid-2500", mid.tenantId());
         assertEquals(TenantTier.MID_MARKET, mid.tier());
         assertEquals(2500, mid.seatCount());
         assertEquals(50, mid.burstLimitRUsPerSec());
+        assertEquals("Contoso Logistics", mid.organizationName());
+        assertEquals("M365_BUSINESS_PREMIUM", mid.skuPartNumber());
 
-        TenantProfile ent = TenantProfile.ENT_10K;
+        TenantProfile ent = liveClient.discoverTenantProfile("tenant-ent-10k");
         assertEquals("tenant-ent-10k", ent.tenantId());
         assertEquals(TenantTier.ENTERPRISE, ent.tier());
         assertEquals(10000, ent.seatCount());
         assertEquals(90, ent.burstLimitRUsPerSec());
+        assertEquals("Fabrikam Financial", ent.organizationName());
+        assertEquals("SPE_E5", ent.skuPartNumber());
 
-        TenantProfile large = TenantProfile.LARGE_35K;
+        TenantProfile large = liveClient.discoverTenantProfile("tenant-large-35k");
         assertEquals("tenant-large-35k", large.tenantId());
         assertEquals(TenantTier.LARGE_ENTERPRISE, large.tier());
         assertEquals(35000, large.seatCount());
         assertEquals(150, large.burstLimitRUsPerSec());
+        assertEquals("Northwind Health", large.organizationName());
+        assertEquals("SPE_E3", large.skuPartNumber());
 
-        TenantProfile global = TenantProfile.GLOBAL_100K;
+        TenantProfile global = liveClient.discoverTenantProfile("tenant-global-100k");
         assertEquals("tenant-global-100k", global.tenantId());
         assertEquals(TenantTier.HYPERSCALE, global.tier());
         assertEquals(100000, global.seatCount());
         assertEquals(250, global.burstLimitRUsPerSec());
+        assertEquals("MegaCorp Global", global.organizationName());
+        assertEquals("SPE_E5", global.skuPartNumber());
     }
 
     @Test
     void testIndependentDriveDiscoveryAcrossAll5Tenants() {
-        for (TenantProfile profile : TenantProfile.ALL_PROFILES) {
-            List<MonitoredDrive> spDrives = liveClient.discoverSharePointDrives(profile.tenantId());
-            assertNotNull(spDrives, "SP drives should not be null for " + profile.tenantId());
-            assertFalse(spDrives.isEmpty(), "SP drives should not be empty for " + profile.tenantId());
+        List<String> tenantIds = List.of(
+                "tenant-smb-250",
+                "tenant-mid-2500",
+                "tenant-ent-10k",
+                "tenant-large-35k",
+                "tenant-global-100k"
+        );
 
-            List<MonitoredDrive> odDrives = liveClient.discoverUserOneDrives(profile.tenantId());
-            assertNotNull(odDrives, "OneDrive drives should not be null for " + profile.tenantId());
-            assertFalse(odDrives.isEmpty(), "OneDrive drives should not be empty for " + profile.tenantId());
+        for (String tenantId : tenantIds) {
+            List<MonitoredDrive> spDrives = liveClient.discoverSharePointDrives(tenantId);
+            assertNotNull(spDrives, "SP drives should not be null for " + tenantId);
+            assertFalse(spDrives.isEmpty(), "SP drives should not be empty for " + tenantId);
+
+            List<MonitoredDrive> odDrives = liveClient.discoverUserOneDrives(tenantId);
+            assertNotNull(odDrives, "OneDrive drives should not be null for " + tenantId);
+            assertFalse(odDrives.isEmpty(), "OneDrive drives should not be empty for " + tenantId);
 
             // Verify all returned drives belong to this specific tenant
-            assertTrue(spDrives.stream().allMatch(d -> profile.tenantId().equals(d.tenantId())));
-            assertTrue(odDrives.stream().allMatch(d -> profile.tenantId().equals(d.tenantId())));
+            assertTrue(spDrives.stream().allMatch(d -> tenantId.equals(d.tenantId())));
+            assertTrue(odDrives.stream().allMatch(d -> tenantId.equals(d.tenantId())));
         }
     }
 
