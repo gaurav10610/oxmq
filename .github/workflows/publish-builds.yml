@@ -125,10 +125,14 @@ jobs:
           LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName // empty')
           if [ -n "$LATEST_TAG" ]; then
             echo "Latest release identified as: $LATEST_TAG"
-            echo "Uploading essential release assets to $LATEST_TAG:"
-            ls -lh release-artifacts/
-            gh release upload "$LATEST_TAG" release-artifacts/*.jar --clobber
-            echo "Release $LATEST_TAG assets successfully updated."
+            if [ -d release-artifacts ] && compgen -G "release-artifacts/*.jar" > /dev/null; then
+              echo "Uploading essential release assets to $LATEST_TAG:"
+              ls -lh release-artifacts/
+              gh release upload "$LATEST_TAG" release-artifacts/*.jar --clobber
+              echo "Release $LATEST_TAG assets successfully updated."
+            else
+              echo "No release JAR artifacts found in release-artifacts/. Skipping release asset upload."
+            fi
           else
             echo "No existing release found. Skipping release asset upload."
           fi
