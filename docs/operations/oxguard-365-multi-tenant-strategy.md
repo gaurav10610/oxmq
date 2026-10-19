@@ -189,3 +189,28 @@ All tenant rate limiting, quota yielding, and circuit breaking are powered nativ
 - `GroupRateLimiterPlugin`: Dynamic token bucket isolation per tenant key (`tenantId`).
 - `RateLimitSentinelPlugin`: Distributed circuit-breaker locking upon receiving HTTP 429 `Retry-After`.
 - `PriorityQuotaGovernorPlugin`: Priority 1 vs Priority 10 headroom-based yielding.
+
+### 9.4 Enterprise Fallback Hierarchy & Adaptive Self-Tuning Rate Limiting
+* **Problem Addressed:** In real-world enterprise deployments, calling `GET /v1.0/subscribedSkus` may fail due to:
+  1. Customer Entra ID tenant administrators refusing to grant high-privilege `Organization.Read.All` scope.
+  2. Transient network/gateway timeouts, or delegated token scope limitations.
+  3. Static, unoptimized rate limits causing either throughput starvation or recurring 429 throttling storms.
+* **Resolution:** Implemented a **4-Level Discovery Waterfall** and a **Conservative AIMD (Additive Increase / Multiplicative Decrease) Adaptive Capacity Controller**:
+
+#### 4-Level Discovery Waterfall
+1. **Level 1: Static Configuration / Admin API Override (`STATIC_OVERRIDE`):**
+   - Configured via YAML (`oxguard.tenants.overrides.<tenantId>=<TIER>`) or REST Admin API (`POST /api/v1/dashboard/tenants/{tenantId}/override-tier?tier=<TIER>`).
+   - Pins the tenant to an explicit tier (e.g. `LARGE_ENTERPRISE`, 150 RUs/s) and protects it from adaptive downgrades.
+2. **Level 2: Microsoft Graph License Discovery (`GRAPH_SKU_DISCOVERY`):**
+   - Calls `GET /v1.0/subscribedSkus` + `GET /v1.0/organization` to inspect exact paid seat counts and SKU part numbers (`O365_BUSINESS_PREMIUM`, `SPE_E3`, `SPE_E5`).
+3. **Level 3: Heuristic Active User Count Fallback (`USER_COUNT_HEURISTIC`):**
+   - If `subscribedSkus` is denied or unavailable, queries `GET /v1.0/users?$count=true` using the standard `User.Read.All` scope (already granted for OneDrive discovery) to estimate tenant scale.
+4. **Level 4: Safe Baseline Fallback (`SAFE_BASELINE_FALLBACK`):**
+   - Defaults new or unresolvable tenants to Tier 1 (`SMB`: 250 seats, 25 RUs/s) as a conservative, safe baseline.
+
+#### Conservative AIMD Adaptive Capacity Controller
+* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s $\to$ `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
+* **Oscillation Damping Lock:** To avoid flapping ("yo-yo effect"), any downgrade triggers an oscillation damping lock (`dampingWindowMs`, default 60s) freezing upgrades during recovery.
+* **Auto-Upgrade on Sustained Clean Work:** If a tenant sustains clean processing without any 429s across consecutive evaluation windows (`cleanWindowsForUpgrade = 2`), the controller automatically escalates the tier by one level, increasing the OxMQ token bucket burst limit in real time without downtime or restart.
+* **Zero OxMQ Lua Modification:** Burst limits are fed into OxMQ's `GroupRateLimiterPlugin` dynamically via `.dynamicLimit(tenantSubscriptionService::getTenantBurstLimit)`, taking effect immediately on the very next token acquisition.
+

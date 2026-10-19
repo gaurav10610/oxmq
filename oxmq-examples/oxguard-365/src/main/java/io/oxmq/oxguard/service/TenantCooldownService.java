@@ -80,6 +80,7 @@ public class TenantCooldownService {
             backwardApiQuotaUsed.increment();
             backwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
         }
+        tenantSubscriptionService.recordWorkProcessed(tenantId);
     }
 
     public void recordTenantApiCall(String tenantId) {
@@ -96,6 +97,7 @@ public class TenantCooldownService {
 
     public void record429Hit(String tenantId) {
         // Sentinel handles counting throttles natively
+        tenantSubscriptionService.record429ThrottleEvent(tenantId);
     }
 
     public void record429Hit() {
@@ -169,6 +171,11 @@ public class TenantCooldownService {
         map.put("retriesRecoveredCount", retries);
         map.put("is429CooldownActive", cooldownRemaining > 0);
         map.put("cooldownRemainingMs", cooldownRemaining);
+        map.put("tierSource", profile.tierSource().name());
+        map.put("isOverridePinned", profile.isOverridePinned());
+        map.put("upgradeCount", profile.upgradeCount());
+        map.put("downgradeCount", profile.downgradeCount());
+        map.put("consecutiveCleanWindows", tenantSubscriptionService.getConsecutiveCleanWindows(tenantId));
         return map;
     }
 

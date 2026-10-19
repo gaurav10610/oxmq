@@ -25,6 +25,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import io.oxmq.oxguard.model.TenantTier;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -68,7 +71,7 @@ public class DashboardController {
     }
 
     /**
-     * Lists all 5 onboarded enterprise tenants and their license tiers.
+     * Lists all 5 onboarded enterprise tenants, license tiers, and adaptive tuning state.
      */
     @GetMapping("/tenants")
     public ResponseEntity<List<Map<String, Object>>> getTenants() {
@@ -82,6 +85,10 @@ public class DashboardController {
             t.put("seatCount", p.seatCount());
             t.put("dailyRuBudget", p.dailyRuBudget());
             t.put("burstLimitRUsPerSec", cooldownService.getTenantBurstLimit(p.tenantId()));
+            t.put("tierSource", p.tierSource().name());
+            t.put("isOverridePinned", p.isOverridePinned());
+            t.put("upgradeCount", p.upgradeCount());
+            t.put("downgradeCount", p.downgradeCount());
             t.put("connected", true);
             list.add(t);
         }
@@ -389,6 +396,64 @@ public class DashboardController {
                 "message", "Simulated forward file upload queued with Priority 1 and 15s debounce",
                 "fileName", fileName,
                 "exposure", exposureLevel.name()
+        ));
+    }
+
+    /**
+     * Pins a static tier override on a tenant account, bypassing dynamic discovery and adaptive tuning.
+     */
+    @PostMapping("/tenants/{tenantId}/override-tier")
+    public ResponseEntity<Map<String, Object>> setTenantOverride(
+            @PathVariable String tenantId,
+            @RequestParam String tier
+    ) {
+        log.info("API: Setting static tier override [{}] on tenant [{}]", tier, tenantId);
+        TenantTier targetTier = TenantTier.valueOf(tier.trim().toUpperCase());
+        TenantProfile updated = tenantSubscriptionService.setStaticOverride(tenantId, targetTier);
+        return ResponseEntity.ok(Map.of(
+                "status", "SUCCESS",
+                "tenantId", tenantId,
+                "tier", updated.tier().name(),
+                "burstLimitRUsPerSec", updated.burstLimitRUsPerSec(),
+                "isOverridePinned", updated.isOverridePinned(),
+                "tierSource", updated.tierSource().name()
+        ));
+    }
+
+    /**
+     * Clears a static tier override on a tenant account, re-enabling dynamic discovery and adaptive tuning.
+     */
+    @DeleteMapping("/tenants/{tenantId}/override-tier")
+    public ResponseEntity<Map<String, Object>> clearTenantOverride(@PathVariable String tenantId) {
+        log.info("API: Clearing static tier override on tenant [{}]", tenantId);
+        TenantProfile updated = tenantSubscriptionService.clearStaticOverride(tenantId);
+        return ResponseEntity.ok(Map.of(
+                "status", "SUCCESS",
+                "tenantId", tenantId,
+                "tier", updated.tier().name(),
+                "burstLimitRUsPerSec", updated.burstLimitRUsPerSec(),
+                "isOverridePinned", updated.isOverridePinned(),
+                "tierSource", updated.tierSource().name()
+        ));
+    }
+
+    /**
+     * Manually triggers an adaptive tier evaluation cycle for a tenant account.
+     */
+    @PostMapping("/tenants/{tenantId}/evaluate-tier")
+    public ResponseEntity<Map<String, Object>> evaluateTenantTier(@PathVariable String tenantId) {
+        log.info("API: Evaluating adaptive tier tuning for tenant [{}]", tenantId);
+        TenantProfile updated = tenantSubscriptionService.evaluateTenantTier(tenantId);
+        return ResponseEntity.ok(Map.of(
+                "status", "SUCCESS",
+                "tenantId", tenantId,
+                "tier", updated.tier().name(),
+                "burstLimitRUsPerSec", updated.burstLimitRUsPerSec(),
+                "tierSource", updated.tierSource().name(),
+                "isOverridePinned", updated.isOverridePinned(),
+                "upgradeCount", updated.upgradeCount(),
+                "downgradeCount", updated.downgradeCount(),
+                "consecutiveCleanWindows", tenantSubscriptionService.getConsecutiveCleanWindows(tenantId)
         ));
     }
 }

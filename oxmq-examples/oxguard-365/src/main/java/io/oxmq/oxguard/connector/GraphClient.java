@@ -18,6 +18,14 @@ public interface GraphClient {
     TenantProfile discoverTenantProfile(String tenantId);
 
     /**
+     * Discovers total enterprise user count as a heuristic fallback when /subscribedSkus is restricted.
+     * Uses User.Read.All to query active tenant accounts.
+     */
+    default int discoverActiveUserCount(String tenantId) {
+        return 0;
+    }
+
+    /**
      * Discovers all SharePoint Site Document Libraries for the tenant.
      */
     List<MonitoredDrive> discoverSharePointDrives(String tenantId);
