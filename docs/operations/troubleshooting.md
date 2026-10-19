@@ -79,3 +79,56 @@ maxmemory 4gb
 maxmemory-policy noeviction
 ```
 With `noeviction`, Redis will reject new writes with an error rather than silently deleting existing queue messages. Use OxMQ's `queue.clean(...)` or `removeOnComplete` options to prune completed jobs.
+
+---
+
+## 5. Sudden Redis Crash & Automatic Reconnection
+
+### Symptom:
+Redis server crashes abruptly due to hardware failure, kernel OOM termination, or cloud provider maintenance reboot. Workers throw connection dropped exceptions.
+
+### Root Cause:
+TCP connection terminated unexpectedly while workers were actively polling or executing jobs.
+
+### Resolution & Behavior:
+- **Lettuce Auto-Reconnect**: OxMQ utilizes Lettuce, which enters automatic reconnection mode upon socket failure. Command buffers hold pending non-blocking calls, and polling loops sleep and retry with exponential backoff rather than crashing the JVM.
+- **In-Flight Job Recovery**: When Redis returns, jobs whose distributed locks (`bull:<queue>:<jobId>:lock`) expired are recovered by `StalledJobSentinel` and moved back to `WAITING` without human intervention.
+- **Persistence Verification**: Ensure Redis AOF (`appendonly yes` with `appendfsync everysec`) is active so state survives node restarts.
+
+---
+
+## 6. Sudden Pod Kills & Kubernetes Preemption
+
+### Symptom:
+Kubernetes autoscaler or node draining terminates worker pods with SIGTERM or SIGKILL midway through heavy batch ingestion or directory crawls, resulting in duplicate processing or incomplete tasks.
+
+### Resolution:
+1. **Adopt `CheckpointStatePlugin`**: Persist delta tokens and pagination cursors in Redis (`oxmq:checkpoint:<namespace>`). When a pod is replaced, the new worker reads the committed checkpoint and resumes without re-processing already inspected items.
+2. **Configure Kubernetes Graceful Termination**:
+   - Set `terminationGracePeriodSeconds: 45` in the Deployment spec.
+   - Add a `preStop` hook: `preStop: exec: command: ["sh", "-c", "sleep 10"]` to deregister the pod from ingress routing before SIGTERM is delivered.
+   - Enable `server.shutdown=graceful` in `application.yml` with a 30s drain timeout.
+
+---
+
+## 7. Cloud Provider 429 & 503 Throttling Storms
+
+### Symptom:
+Workers calling third-party SaaS APIs (Microsoft Graph, Salesforce, Stripe, OpenAI) encounter HTTP 429 Too Many Requests or HTTP 503 Service Unavailable, leading to cascading job failures and API account bans.
+
+### Resolution:
+1. **Deploy `AdaptiveRateLimiterPlugin`**: Automatically halves request capacity upon encountering 429/503 errors and locks against oscillation for 30–60 seconds, allowing downstream cloud gateways to recover.
+2. **Deploy `RateLimitSentinelPlugin`**: Sets a cluster-wide Redis cooldown key matching the `Retry-After` header. All cluster pods immediately defer upcoming jobs for that tenant without executing outbound HTTP requests.
+3. **Deploy `PriorityQuotaGovernorPlugin`**: Forces low-priority background jobs to yield when tenant token headroom drops below 25%, strictly reserving quota for high-priority real-time events.
+
+---
+
+## 8. SRE Production Disaster Recovery Checklist
+
+- [x] Redis configured with `maxmemory-policy noeviction` and `appendonly yes`.
+- [x] Lettuce connection pooling with automatic reconnection enabled.
+- [x] Kubernetes deployments configured with `preStop: sleep 10` and `terminationGracePeriodSeconds: 45`.
+- [x] Liveness (`/actuator/health/liveness`) and readiness (`/actuator/health/readiness`) probes configured.
+- [x] `CheckpointStatePlugin` registered on all multi-page or multi-item crawling workers.
+- [x] `AdaptiveRateLimiterPlugin` and `RateLimitSentinelPlugin` active on all third-party API queues.
+- [x] Prometheus scraping active and Grafana dashboards (`oxmq-grafana-dashboard.json`, `oxmq-system-metrics.json`) imported.

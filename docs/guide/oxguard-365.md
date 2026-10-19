@@ -472,4 +472,16 @@ To handle real-world permission constraints (e.g. missing `Organization.Read.All
 * `DELETE /api/v1/dashboard/tenants/{tenantId}/override-tier`: Clear static override and restore dynamic adaptive tuning.
 * `POST /api/v1/dashboard/tenants/{tenantId}/evaluate-tier`: Trigger immediate on-demand adaptive tier evaluation.
 
+### 9.7 Native OxMQ Plugins Adoption
+OxGuard 365 delegates rate limiting and checkpointing natively to **`oxmq-core`**:
+1. **`AdaptiveRateLimiterPlugin`**: Houses the AIMD controller, damping lock, static overrides, and Redis synchronization, providing `.asLimitResolver()` to `GroupRateLimiterPlugin`.
+2. **`CheckpointStatePlugin`**: Persists delta query tokens in Redis hash `oxmq:checkpoint:m365-delta-sync`. Automatically injects the cursor via thread-local context and commits tokens on job completion via `CheckpointSupplier`.
+
+### 9.8 Kubernetes Production Deployment & Disaster Recovery
+- **Kubernetes Specs (`k8s/`)**: Production manifests in [`oxmq-examples/oxguard-365/k8s/`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxguard-365/k8s/) with HTTP health probes (`/actuator/health/liveness`, `/readiness`), `preStop` hook sleep 10s, and `terminationGracePeriodSeconds: 45`.
+- **System Metrics Dashboard (`oxmq-system-metrics.json`)**: Pre-provisioned Grafana dashboard tracking isolated JVM Heap memory pools (Eden, Survivor, Old Gen), Non-Heap/Metaspace, CPU, HikariCP pools, and adaptive capacity gauges.
+- **Disaster Recovery Benchmark (`run_multi_tenant_resilience_test.sh`)**: Executed from a 100% clean Docker wipe across all 5 tiers (5,000 files, 150 threats) with injected 429/503 storms, abrupt Redis crash/restart, and pod SIGTERM with checkpoint recovery:
+  - **Results**: 5,000 / 5,000 files processed, 150 threats quarantined, 0 duplicate scans, peak Heap: **106.4 MB**.
+
+
 

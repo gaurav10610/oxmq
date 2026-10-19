@@ -66,13 +66,15 @@ sequenceDiagram
 
 ## 🧩 Native Built-in Plugins
 
-OxMQ bundles three production-grade enterprise plugins out of the box in `io.oxmq.plugin`:
+OxMQ bundles five production-grade enterprise plugins out of the box in `io.oxmq.plugin`:
 
-| Plugin | Primary Enterprise Purpose | Key Metrics Emitted |
+| Plugin | Primary Enterprise Purpose | Key Metrics & State Emitted |
 | :--- | :--- | :--- |
 | **`GroupRateLimiterPlugin`** | Dynamic sliding-window token bucket partitioned by custom group key (tenant, customer, license tier). | `oxmq.plugin.ratelimiter.yields` |
 | **`RateLimitSentinelPlugin`** | Distributed circuit-breaker sentinel for external HTTP 429/503 `Retry-After` cooldowns across all cluster nodes. | `oxmq.plugin.sentinel.delays`<br/>`oxmq.plugin.sentinel.cooldowns` |
 | **`PriorityQuotaGovernorPlugin`** | Headroom-based yielding: lower-priority background sweeps automatically defer execution to reserve quota for real-time priority jobs. | `oxmq.plugin.governor.yields` |
+| **`AdaptiveRateLimiterPlugin`** | AIMD dynamic capacity controller: auto-downgrades on 429/503 errors, locks against oscillation, and upgrades on clean execution windows. | Synchronized in Redis hash `oxmq:adaptive:limits` |
+| **`CheckpointStatePlugin`** | Distributed cursor & delta token persistence in Redis (`oxmq:checkpoint:<namespace>`), thread-local context injection, and resume-on-restart. | Thread-local context + Redis checkpoint hash |
 
 ---
 
@@ -258,6 +260,178 @@ public PriorityQuotaGovernorPlugin priorityQuotaGovernor(
 
 ---
 
+## 4. `AdaptiveRateLimiterPlugin` (AIMD Dynamic Capacity Controller)
+
+When interacting with cloud APIs or downstream microservices with dynamic quotas, static rate limits either underutilize available bandwidth or trigger severe cascading HTTP 429/503 throttle storms.
+
+The **`AdaptiveRateLimiterPlugin`** brings TCP-style **AIMD (Additive Increase, Multiplicative Decrease)** capacity management natively into OxMQ:
+
+### Core Mechanics & Mathematical Model:
+1. **Multiplicative Decrease on Error / Throttling**:
+   When an external request fails due to rate limits or transient server faults (matching `errorMatcher`), the capacity limit is halved:
+   $$L_{t+1} = \max\left(L_{\min}, \lfloor L_t \times \beta \rfloor\right) \quad (\text{default } \beta = 0.5)$$
+2. **Oscillation Damping Lock (`dampingWindowMs`)**:
+   Downgrades immediately trigger a freeze window (e.g. 30–60 seconds). During this lock, all upward capacity adjustments are frozen, preventing rapid upgrade/downgrade flapping ("hunting" or "yo-yo" effect).
+3. **Additive Increase on Sustained Clean Execution**:
+   When a group key sustains execution without any throttling errors for a configurable window (`cleanWindowsForUpgrade`), capacity increases additively:
+   $$L_{t+1} = \min\left(L_{\max}, L_t + \alpha\right) \quad (\text{default } \alpha = +25 \text{ RUs})$$
+4. **Static Overrides Pinning**:
+   Operators can pin any tenant to a fixed limit (`setStaticLimit`), bypassing AIMD adjustments for guaranteed provisioning.
+5. **Distributed Redis State Synchronization**:
+   Synchronizes limits across all distributed cluster pods via Redis hash `oxmq:adaptive:limits`, with automatic local in-memory fallback.
+6. **Direct Limiter Integration (`asLimitResolver`)**:
+   Seamlessly exposes `.asLimitResolver()` to supply dynamic limits directly to `GroupRateLimiterPlugin`.
+
+### Spring Boot 3 Configuration
+
+```java
+@Configuration
+public class OxmqAdaptiveLimiterConfiguration {
+
+    @Bean
+    public AdaptiveRateLimiterPlugin adaptiveRateLimiter(RedisConnectionManager cm) {
+        return AdaptiveRateLimiterPlugin.builder()
+                .connectionManager(cm)
+                .redisStateKey("oxmq:adaptive:limits")
+                .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+                .defaultLimit(100)                     // Default baseline limit (RUs/s)
+                .minLimit(25)                          // Conservative capacity floor
+                .maxLimit(2000)                        // Enterprise ceiling limit
+                .multiplicativeDecreaseFactor(0.5)     // Halve capacity on 429/503
+                .additiveIncreaseStep(25)              // Step up by 25 RUs on clean windows
+                .cleanWindowsForUpgrade(2)             // Require 2 consecutive clean windows
+                .dampingWindowMs(30_000L)              // Freeze upgrades for 30s after cut
+                .errorMatcher(t -> t instanceof RateLimitCooldownException 
+                                || t.getMessage().contains("429")
+                                || t.getMessage().contains("503"))
+                .build();
+    }
+
+    @Bean
+    public GroupRateLimiterPlugin groupRateLimiter(
+            RedisConnectionManager cm,
+            AdaptiveRateLimiterPlugin adaptiveLimiter,
+            MeterRegistry registry
+    ) {
+        return GroupRateLimiterPlugin.builder()
+                .connectionManager(cm)
+                .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+                .dynamicLimit(adaptiveLimiter.asLimitResolver()) // Dynamically resolved!
+                .windowDuration(Duration.ofSeconds(1))
+                .retryDelayMs(100)
+                .meterRegistry(registry)
+                .build();
+    }
+}
+```
+
+### Runtime Inspection & Management APIs
+```java
+// Query current effective capacity for a tenant
+int currentLimit = adaptiveLimiter.getLimit("tenant-apex");
+
+// Query damping lock state
+boolean isDamped = adaptiveLimiter.isDamped("tenant-apex");
+
+// Pin tenant to a static override (e.g. VIP account)
+adaptiveLimiter.setStaticLimit("tenant-apex", 1500);
+
+// Restore dynamic AIMD adjustments
+adaptiveLimiter.clearStaticLimit("tenant-apex");
+```
+
+---
+
+## 5. `CheckpointStatePlugin` (Distributed Cursor & Delta Checkpointing)
+
+In multi-tenant ingestion pipelines (such as Microsoft Graph delta queries, database CDC replication, or S3 object bucket sweeps), worker pods may crash or be terminated by Kubernetes autoscalers mid-crawl.
+
+Without distributed checkpoints, restarting workers re-scans drives from scratch, resulting in **millions of duplicate items, wasted database writes, and quota exhaustion**.
+
+The **`CheckpointStatePlugin`** provides distributed, transactional checkpointing backed by Redis:
+
+### How It Works:
+1. **Distributed State in Redis**:
+   Stores committed cursors/delta tokens in Redis hash `oxmq:checkpoint:<namespace>` keyed by partition (e.g. `tenantId:driveId`).
+2. **Automatic Thread-Local Context Injection**:
+   In `beforeProcess()`, the plugin fetches the latest committed checkpoint from Redis and injects it into thread-local context:
+   ```java
+   String lastDeltaToken = CheckpointStatePlugin.getCurrentCheckpoint();
+   ```
+3. **Declarative Commit via `CheckpointSupplier`**:
+   If the job payload implements `CheckpointSupplier`, `afterProcess()` automatically commits the updated checkpoint to Redis:
+   ```java
+   public interface CheckpointSupplier {
+       String getCheckpointPartitionKey();
+       String getCheckpointValue();
+   }
+   ```
+4. **Crash Resumption Guarantee**:
+   If a worker pod terminates midway, the next worker claims the job, retrieves the exact last committed checkpoint, and resumes scanning without duplicating previously inspected files.
+
+### Standalone & Spring Boot Configuration
+
+```java
+@Bean
+public CheckpointStatePlugin checkpointStatePlugin(RedisConnectionManager cm) {
+    return CheckpointStatePlugin.builder()
+            .connectionManager(cm)
+            .namespace("m365-delta-sync")
+            .partitionKeyResolver(job -> {
+                if (job.getData() instanceof DriveSyncPayload dsp) {
+                    return dsp.tenantId() + ":" + dsp.driveId();
+                }
+                return job.getId();
+            })
+            .build();
+}
+```
+
+### Worker Usage Example
+```java
+@Component
+public class DriveDeltaSyncWorker {
+
+    @OxmqListener(queue = "drive-delta-sync-queue", concurrency = 20)
+    public DriveSyncPayload processDeltaSync(Job<DriveSyncPayload> job) {
+        // 1. Thread-local cursor automatically injected by CheckpointStatePlugin
+        String currentToken = CheckpointStatePlugin.getCurrentCheckpoint();
+        
+        // 2. Fetch changes from cloud API starting from cursor
+        DeltaResult page = cloudClient.getDeltaChanges(job.getData().driveId(), currentToken);
+        for (FileItem item : page.items()) {
+            enqueueFileInspection(item);
+        }
+
+        // 3. Return updated payload with new delta token -> automatically committed to Redis!
+        return new DriveSyncPayload(
+                job.getData().tenantId(),
+                job.getData().driveId(),
+                page.nextDeltaToken()
+        );
+    }
+}
+```
+
+---
+
+## 6. Chained Enterprise Resilience Composition
+
+All five OxMQ plugins can be chained seamlessly on the same worker pipeline, forming an enterprise-grade defense-in-depth architecture:
+
+```mermaid
+flowchart LR
+    A[Worker Fetch] --> B[1. CheckpointStatePlugin<br/>Inject Cursor]
+    B --> C[2. RateLimitSentinelPlugin<br/>Check 429 Cooldown]
+    C --> D[3. PriorityQuotaGovernorPlugin<br/>Yield if Low Headroom]
+    D --> E[4. GroupRateLimiterPlugin<br/>Acquire Token Bucket]
+    E --> F[Execute Business Task]
+    F --> G[5. AdaptiveRateLimiterPlugin<br/>AIMD Feedback]
+    F --> H[Checkpoint Commit]
+```
+
+---
+
 ## 🛠️ Building Custom Interceptors
 
 You can implement the [`JobInterceptor`](file:///Users/gaurav/git/oxmq/oxmq-core/src/main/java/io/oxmq/interceptor/JobInterceptor.java) interface to add cross-cutting concerns to your workers.
@@ -323,16 +497,24 @@ All plugins natively export high-precision telemetry to Micrometer.
 | `oxmq.plugin.sentinel.cooldowns` | Counter | `group` | Total 429 circuit-breaker trips activated across the cluster. |
 | `oxmq.plugin.governor.yields` | Counter | `group`, `queue` | Total low-priority jobs yielded to protect high-priority quota headroom. |
 
-### Bundled Enterprise Grafana Dashboard
+### Bundled Enterprise Grafana Dashboards
 
-A production-ready Grafana dashboard is packaged directly inside the starter:
-`oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`.
+OxMQ ships with two pre-configured, production-ready Grafana dashboards:
 
-#### Key Dashboard Panels:
-1. **Queue Backlog & States**: Real-time gauges for Waiting, Active, Delayed, and Failed jobs.
-2. **Cluster Throughput**: Ingestion rate vs completion rate ($jobs/sec$) across all queues.
-3. **Multi-Tenant Token Bucket Yields**: Stacked time-series breakdown of yields per tenant.
-4. **Sentinel Circuit-Breaker Cooldowns**: Heatmap and alert state for external API throttling.
-5. **Execution Latency Percentiles**: $p50$, $p95$, and $p99$ execution durations per queue.
+#### 1. Queue Telemetry & Operations Dashboard (`oxmq-grafana-dashboard.json`)
+Packaged inside `oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`:
+- **Queue Backlog & States**: Real-time gauges for Waiting, Active, Delayed, and Failed jobs.
+- **Cluster Throughput**: Ingestion rate vs completion rate ($jobs/sec$) across all queues.
+- **Multi-Tenant Token Bucket Yields**: Stacked time-series breakdown of yields per tenant.
+- **Sentinel Circuit-Breaker Cooldowns**: Heatmap and alert state for external API throttling.
+- **Execution Latency Percentiles**: $p50$, $p95$, and $p99$ execution durations per queue.
 
-Import this JSON into Grafana (`Dashboards -> New -> Import`) with a Prometheus datasource to monitor your production queues immediately.
+#### 2. System Metrics & Resource Isolation Dashboard (`oxmq-system-metrics.json`)
+Packaged inside `oxmq-examples/oxguard-365/docker/grafana/dashboards/oxmq-system-metrics.json`:
+- **Isolated JVM Heap Memory Pools**: Real-time memory consumption broken down by **Eden Space**, **Survivor Space**, and **Old Gen / Tenured Space** (verified peak usage: $< 110\text{ MB}$ under 5,000-job load).
+- **Non-Heap & Metaspace**: Classloader and Metaspace memory tracking to ensure zero memory leaks.
+- **Process CPU & Worker Concurrency**: Host and process CPU utilization paired with active worker thread counts.
+- **Database Connection Pools (HikariCP)**: Active, idle, and pending database connections.
+- **Dynamic Adaptive Capacity Gauges**: Real-time gauges tracking adaptive capacity limits per tenant/group key adjusted by `AdaptiveRateLimiterPlugin`.
+
+Import these JSON templates into Grafana (`Dashboards -> New -> Import`) with a Prometheus datasource to monitor your production queues and system resources immediately.

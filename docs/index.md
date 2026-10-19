@@ -27,12 +27,15 @@ features:
     title: The Java Alternative to BullMQ
     details: Direct execution of 49 official BullMQ Lua scripts for atomic Redis state transitions, rate limiting, and parent-child workflows with zero custom Lua and 100% wire parity.
   - icon: 🧩
-    title: Native Plugins & Interceptors SPI
-    details: Non-intrusive JobInterceptor pipeline (beforeProcess, afterProcess, onError). Built-in GroupRateLimiterPlugin, RateLimitSentinelPlugin (HTTP 429/503 circuit-breaker), and PriorityQuotaGovernorPlugin.
+    title: 5 Native Plugins & Interceptors
+    details: Non-intrusive JobInterceptor pipeline. Includes GroupRateLimiterPlugin, RateLimitSentinelPlugin (HTTP 429 cooldowns), PriorityQuotaGovernorPlugin, AdaptiveRateLimiterPlugin (AIMD dynamic capacity), and CheckpointStatePlugin.
+  - icon: 🛡️
+    title: Cloud Disaster Recovery & Checkpoints
+    details: Distributed cursor checkpoints in Redis, automatic Lettuce reconnect on Redis crash, and Kubernetes graceful termination hooks for zero duplicate scans and zero data loss.
   - icon: 🛑
     title: In-Flight Job Cancellation
     details: Cooperative cancellation conforming to BullMQ v6 AbortController. Trip CancellationToken, interrupt executing Virtual Threads, and cleanly transition without retries.
-  - icon: 🛡️
+  - icon: 🏢
     title: Native Context Isolation
     details: Run dozens of microservices on a single shared Redis cluster with zero key collisions or cross-talk using service-level namespace auto-inheritance.
   - icon: 📦
@@ -48,8 +51,8 @@ features:
     title: Spring Boot 3+ Enterprise Starter
     details: Declarative @OxmqListener and @OxmqBatchListener annotations, automatic JobInterceptor bean discovery, multi-event @OxmqHandler routing, and Actuator health checks.
   - icon: 📊
-    title: Prometheus & Grafana Dashboards
-    details: Pre-provisioned enterprise Grafana dashboard template with real-time queue depth gauges, throughput meters, latency percentiles, and multi-tenant quota yields.
+    title: Dual Grafana & Prometheus Dashboards
+    details: Pre-provisioned dashboards for queue operations (throughput, depths, p99 latencies) and system metrics (isolated JVM Heap pools, CPU, HikariCP, adaptive capacity gauges).
   - icon: 🎛️
     title: Instant Bull-Board Web UI
     details: Inspect queue depths, active jobs, worker locks, and execution logs using the standard open-source Bull-Board dashboard with zero Node.js code.
