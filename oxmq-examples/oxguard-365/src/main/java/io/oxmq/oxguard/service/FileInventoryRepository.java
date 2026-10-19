@@ -25,13 +25,16 @@ public class FileInventoryRepository {
 
     private final SpringDataScannedFileRepository fileRepo;
     private final SpringDataMonitoredDriveRepository driveRepo;
+    private final TenantSubscriptionService tenantSubscriptionService;
 
     public FileInventoryRepository(
             SpringDataScannedFileRepository fileRepo,
-            SpringDataMonitoredDriveRepository driveRepo
+            SpringDataMonitoredDriveRepository driveRepo,
+            TenantSubscriptionService tenantSubscriptionService
     ) {
         this.fileRepo = fileRepo;
         this.driveRepo = driveRepo;
+        this.tenantSubscriptionService = tenantSubscriptionService;
     }
 
     @Transactional
@@ -130,7 +133,7 @@ public class FileInventoryRepository {
         // Include per-tenant file count breakdown when returning all
         if (!filterTenant) {
             Map<String, Long> perTenantCounts = new LinkedHashMap<>();
-            for (io.oxmq.oxguard.model.TenantProfile profile : io.oxmq.oxguard.model.TenantProfile.ALL_PROFILES) {
+            for (io.oxmq.oxguard.model.TenantProfile profile : tenantSubscriptionService.getAllTenants()) {
                 perTenantCounts.put(profile.tenantId(), fileRepo.countByTenantId(profile.tenantId()));
             }
             map.put("perTenantCounts", perTenantCounts);
@@ -165,7 +168,7 @@ public class FileInventoryRepository {
         for (Map.Entry<String, List<MonitoredDrive>> tenantEntry : drivesByTenant.entrySet()) {
             String tId = tenantEntry.getKey();
             List<MonitoredDrive> tenantDrives = tenantEntry.getValue();
-            io.oxmq.oxguard.model.TenantProfile profile = io.oxmq.oxguard.model.TenantProfile.getByIdOrDefault(tId);
+            io.oxmq.oxguard.model.TenantProfile profile = tenantSubscriptionService.getTenantProfile(tId);
 
             List<Map<String, Object>> sharepointSites = new java.util.ArrayList<>();
             List<Map<String, Object>> oneDrives = new java.util.ArrayList<>();

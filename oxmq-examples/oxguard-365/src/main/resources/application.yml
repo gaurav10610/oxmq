@@ -29,6 +29,13 @@ oxmq:
 oxguard:
   client:
     mode: LIVE # LiveGraphClient connects to Microsoft Graph v1.0 REST API
+  tenants:
+    onboarded:
+      - tenant-smb-250
+      - tenant-mid-2500
+      - tenant-ent-10k
+      - tenant-large-35k
+      - tenant-global-100k
   azure:
     tenant-id: "tenant-mid-2500"
     client-id: "oxguard-365-enterprise-app"

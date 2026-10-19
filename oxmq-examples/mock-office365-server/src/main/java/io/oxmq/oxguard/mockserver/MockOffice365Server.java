@@ -239,6 +239,8 @@ public class MockOffice365Server {
         httpServer.createContext("/oauth2/v2.0/token", this::handleOAuthToken);
 
         // Microsoft Graph v1.0 Endpoints
+        httpServer.createContext("/v1.0/subscribedSkus", this::handleSubscribedSkus);
+        httpServer.createContext("/v1.0/organization", this::handleOrganization);
         httpServer.createContext("/v1.0/sites/getAllSites", this::handleGetSites);
         httpServer.createContext("/v1.0/sites", this::handleSiteDrives);
         httpServer.createContext("/v1.0/users", this::handleUsersAndDrives);
@@ -680,6 +682,64 @@ public class MockOffice365Server {
         tokenNode.put("expires_in", 3600);
         tokenNode.put("access_token", "mock-azure-ad-jwt-token-" + tenantId + "-" + System.currentTimeMillis());
         sendJsonResponse(exchange, 200, tokenNode);
+    }
+
+    private void handleSubscribedSkus(HttpExchange exchange) throws IOException {
+        String tenantId = resolveTenantId(exchange, null);
+        if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            return;
+        }
+
+        TenantProfile profile = TenantProfile.getByIdOrDefault(tenantId);
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("@odata.context", "https://graph.microsoft.com/v1.0/$metadata#subscribedSkus");
+        ArrayNode arr = root.putArray("value");
+        ObjectNode skuNode = arr.addObject();
+        skuNode.put("id", "sku-" + tenantId + "-primary");
+        skuNode.put("skuId", UUID.nameUUIDFromBytes(("sku:" + tenantId).getBytes(StandardCharsets.UTF_8)).toString());
+        skuNode.put("skuPartNumber", profile.skuPartNumber());
+        skuNode.put("capabilityStatus", "Enabled");
+        skuNode.put("consumedUnits", (int) (profile.seatCount() * 0.95));
+        ObjectNode prepaid = skuNode.putObject("prepaidUnits");
+        prepaid.put("enabled", profile.seatCount());
+        prepaid.put("suspended", 0);
+        prepaid.put("warning", 0);
+
+        ArrayNode plans = skuNode.putArray("servicePlans");
+        ObjectNode sp1 = plans.addObject();
+        sp1.put("servicePlanId", UUID.nameUUIDFromBytes(("sp:" + tenantId + ":sp").getBytes(StandardCharsets.UTF_8)).toString());
+        sp1.put("servicePlanName", "SHAREPOINTENTERPRISE");
+        sp1.put("provisioningStatus", "Success");
+        sp1.put("appliesTo", "User");
+
+        ObjectNode sp2 = plans.addObject();
+        sp2.put("servicePlanId", UUID.nameUUIDFromBytes(("sp:" + tenantId + ":ex").getBytes(StandardCharsets.UTF_8)).toString());
+        sp2.put("servicePlanName", "EXCHANGE_S_ENTERPRISE");
+        sp2.put("provisioningStatus", "Success");
+        sp2.put("appliesTo", "User");
+
+        sendJsonResponse(exchange, 200, root);
+    }
+
+    private void handleOrganization(HttpExchange exchange) throws IOException {
+        String tenantId = resolveTenantId(exchange, null);
+        if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            return;
+        }
+
+        TenantProfile profile = TenantProfile.getByIdOrDefault(tenantId);
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("@odata.context", "https://graph.microsoft.com/v1.0/$metadata#organization");
+        ArrayNode arr = root.putArray("value");
+        ObjectNode org = arr.addObject();
+        org.put("id", tenantId);
+        org.put("displayName", profile.organizationName());
+        ArrayNode domains = org.putArray("verifiedDomains");
+        ObjectNode dom = domains.addObject();
+        dom.put("name", profile.domainName());
+        dom.put("isDefault", true);
+
+        sendJsonResponse(exchange, 200, root);
     }
 
     private void handleGetSites(HttpExchange exchange) throws IOException {

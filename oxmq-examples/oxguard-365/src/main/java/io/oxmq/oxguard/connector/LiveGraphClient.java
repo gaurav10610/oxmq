@@ -165,12 +165,81 @@ public class LiveGraphClient implements GraphClient {
 
     private String resolveTenantFromDriveId(String driveId) {
         if (driveId == null) return defaultTenantId;
-        if (driveId.startsWith("drive-smb-")) return TenantProfile.SMB_250.tenantId();
-        if (driveId.startsWith("drive-mid-")) return TenantProfile.MID_2500.tenantId();
-        if (driveId.startsWith("drive-ent-")) return TenantProfile.ENT_10K.tenantId();
-        if (driveId.startsWith("drive-large-")) return TenantProfile.LARGE_35K.tenantId();
-        if (driveId.startsWith("drive-global-")) return TenantProfile.GLOBAL_100K.tenantId();
+        if (driveId.startsWith("drive-smb-")) return "tenant-smb-250";
+        if (driveId.startsWith("drive-mid-")) return "tenant-mid-2500";
+        if (driveId.startsWith("drive-ent-")) return "tenant-ent-10k";
+        if (driveId.startsWith("drive-large-")) return "tenant-large-35k";
+        if (driveId.startsWith("drive-global-")) return "tenant-global-100k";
         return defaultTenantId;
+    }
+
+    @Override
+    public TenantProfile discoverTenantProfile(String tenantId) {
+        String tId = (tenantId == null || tenantId.isBlank()) ? defaultTenantId : tenantId;
+        log.info("Querying Microsoft Graph v1.0 for tenant [{}] license subscriptions and organization profile...", tId);
+
+        String orgName = "Tenant (" + tId + ")";
+        try {
+            // 1. GET /v1.0/organization
+            String orgUrl = graphBaseUrl + "/organization?$select=id,displayName,verifiedDomains";
+            HttpResponse<String> orgResp = executeGraphRequest(orgUrl, tId);
+            if (orgResp.statusCode() == 200) {
+                JsonNode orgNode = objectMapper.readTree(orgResp.body());
+                if (orgNode.has("value") && orgNode.get("value").isArray() && !orgNode.get("value").isEmpty()) {
+                    JsonNode firstOrg = orgNode.get("value").get(0);
+                    if (firstOrg.has("displayName")) {
+                        orgName = firstOrg.get("displayName").asText();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not retrieve organization metadata for [{}]: {}", tId, e.getMessage());
+        }
+
+        int totalSeats = 0;
+        String detectedSku = "SPE_E5";
+        try {
+            // 2. GET /v1.0/subscribedSkus
+            String skuUrl = graphBaseUrl + "/subscribedSkus";
+            HttpResponse<String> skuResp = executeGraphRequest(skuUrl, tId);
+            if (skuResp.statusCode() == 200) {
+                JsonNode skuNode = objectMapper.readTree(skuResp.body());
+                if (skuNode.has("value") && skuNode.get("value").isArray()) {
+                    for (JsonNode skuItem : skuNode.get("value")) {
+                        String status = skuItem.has("capabilityStatus") ? skuItem.get("capabilityStatus").asText() : "";
+                        if ("Enabled".equalsIgnoreCase(status) || "Warning".equalsIgnoreCase(status)) {
+                            if (skuItem.has("prepaidUnits") && skuItem.get("prepaidUnits").has("enabled")) {
+                                int units = skuItem.get("prepaidUnits").get("enabled").asInt();
+                                totalSeats += units;
+                                if (skuItem.has("skuPartNumber")) {
+                                    detectedSku = skuItem.get("skuPartNumber").asText();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not retrieve subscribedSkus for [{}]: {}", tId, e.getMessage());
+        }
+
+        if (totalSeats <= 0) {
+            totalSeats = 2500;
+        }
+
+        io.oxmq.oxguard.model.TenantTier tier = io.oxmq.oxguard.model.TenantTier.fromSku(detectedSku, totalSeats);
+        log.info("Successfully discovered Microsoft 365 licensing for [{}]: Organization='{}', SKU='{}', Total Seats={}, Resolved Tier={} (Burst Limit: {} RUs/s)",
+                tId, orgName, detectedSku, totalSeats, tier.name(), tier.getDefaultBurstLimitRUs());
+
+        return new TenantProfile(
+                tId,
+                orgName,
+                tier,
+                totalSeats,
+                tier.getDailyRuBudget(),
+                tier.getDefaultBurstLimitRUs(),
+                detectedSku
+        );
     }
 
     @Override

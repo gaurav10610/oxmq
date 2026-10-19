@@ -26,6 +26,7 @@ public class TenantCooldownService {
     private final GroupRateLimiterPlugin rateLimiter;
     private final RateLimitSentinelPlugin sentinel;
     private final PriorityQuotaGovernorPlugin governor;
+    private final TenantSubscriptionService tenantSubscriptionService;
     private final double headroomYieldThreshold;
 
     // Real-time API Quota Telemetry Counters partitioned by Tenant
@@ -42,11 +43,13 @@ public class TenantCooldownService {
             GroupRateLimiterPlugin rateLimiter,
             RateLimitSentinelPlugin sentinel,
             PriorityQuotaGovernorPlugin governor,
+            TenantSubscriptionService tenantSubscriptionService,
             @Value("${oxguard.rate-limit.headroom-yield-threshold:0.25}") double headroomYieldThreshold
     ) {
         this.rateLimiter = rateLimiter;
         this.sentinel = sentinel;
         this.governor = governor;
+        this.tenantSubscriptionService = tenantSubscriptionService;
         this.headroomYieldThreshold = headroomYieldThreshold;
     }
 
@@ -146,7 +149,7 @@ public class TenantCooldownService {
         long bwdUsed = backwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
         long retries = retriesRecoveredByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).sum();
 
-        TenantProfile profile = TenantProfile.getByIdOrDefault(tenantId);
+        TenantProfile profile = tenantSubscriptionService.getTenantProfile(tenantId);
 
         map.put("tenantId", tenantId);
         map.put("organizationName", profile.organizationName());
@@ -173,7 +176,7 @@ public class TenantCooldownService {
         Map<String, Object> all = new LinkedHashMap<>();
         long totalYields = 0;
         long totalThrottles = 0;
-        for (TenantProfile p : TenantProfile.ALL_PROFILES) {
+        for (TenantProfile p : tenantSubscriptionService.getAllTenants()) {
             Map<String, Object> telem = getQuotaTelemetry(p.tenantId());
             all.put(p.tenantId(), telem);
             totalYields += ((Number) telem.get("backwardYieldCount")).longValue();

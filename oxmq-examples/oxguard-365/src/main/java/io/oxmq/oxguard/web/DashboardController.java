@@ -46,6 +46,7 @@ public class DashboardController {
     private final OxmqTemplate oxmqTemplate;
     private final TenantCooldownService cooldownService;
     private final io.oxmq.oxguard.connector.MockAdminClient mockAdminClient;
+    private final io.oxmq.oxguard.service.TenantSubscriptionService tenantSubscriptionService;
 
     @Autowired(required = false)
     private MockGraphClient mockGraphClient;
@@ -55,13 +56,15 @@ public class DashboardController {
             LiveMetricsService metricsService,
             OxmqTemplate oxmqTemplate,
             TenantCooldownService cooldownService,
-            io.oxmq.oxguard.connector.MockAdminClient mockAdminClient
+            io.oxmq.oxguard.connector.MockAdminClient mockAdminClient,
+            io.oxmq.oxguard.service.TenantSubscriptionService tenantSubscriptionService
     ) {
         this.repository = repository;
         this.metricsService = metricsService;
         this.oxmqTemplate = oxmqTemplate;
         this.cooldownService = cooldownService;
         this.mockAdminClient = mockAdminClient;
+        this.tenantSubscriptionService = tenantSubscriptionService;
     }
 
     /**
@@ -70,7 +73,7 @@ public class DashboardController {
     @GetMapping("/tenants")
     public ResponseEntity<List<Map<String, Object>>> getTenants() {
         List<Map<String, Object>> list = new ArrayList<>();
-        for (TenantProfile p : TenantProfile.ALL_PROFILES) {
+        for (TenantProfile p : tenantSubscriptionService.getAllTenants()) {
             Map<String, Object> t = new LinkedHashMap<>();
             t.put("tenantId", p.tenantId());
             t.put("organizationName", p.organizationName());
@@ -275,9 +278,9 @@ public class DashboardController {
      */
     @PostMapping("/trigger/crawl-all")
     public ResponseEntity<Map<String, Object>> triggerCrawlAll() {
-        log.info("Triggering concurrent baseline crawl across all 5 official Microsoft 365 tenant accounts");
+        log.info("Triggering concurrent baseline crawl across all official Microsoft 365 tenant accounts");
         List<String> dispatched = new ArrayList<>();
-        for (TenantProfile profile : TenantProfile.ALL_PROFILES) {
+        for (TenantProfile profile : tenantSubscriptionService.getAllTenants()) {
             JobOptions options = JobOptions.builder()
                     .priority(5)
                     .attempts(3)

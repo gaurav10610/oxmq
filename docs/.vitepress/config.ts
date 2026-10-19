@@ -80,6 +80,7 @@ export default withMermaid(
           items: [
             { text: 'Redis Key Topology', link: '/operations/redis-topology' },
             { text: 'Memory Optimization & Tuning', link: '/operations/memory-optimization' },
+            { text: 'Multi-Tenant Scaling Strategy', link: '/operations/oxguard-365-multi-tenant-strategy' },
             { text: '49 Lua Scripts Catalog', link: '/operations/lua-scripts-catalog' },
             { text: 'Scale & DAG Benchmarks', link: '/operations/benchmarks' },
             { text: 'Benchmarking Architecture', link: '/benchmarks/benchmarks-architecture' },

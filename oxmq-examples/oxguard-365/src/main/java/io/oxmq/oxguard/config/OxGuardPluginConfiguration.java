@@ -4,7 +4,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.exception.RateLimitCooldownException;
 import io.oxmq.model.Job;
-import io.oxmq.oxguard.model.TenantProfile;
+import io.oxmq.oxguard.service.TenantSubscriptionService;
 import io.oxmq.oxguard.model.TenantScopedPayload;
 import io.oxmq.plugin.GroupRateLimiterPlugin;
 import io.oxmq.plugin.PriorityQuotaGovernorPlugin;
@@ -43,14 +43,15 @@ public class OxGuardPluginConfiguration {
     @Bean
     public GroupRateLimiterPlugin groupRateLimiterPlugin(
             RedisConnectionManager connectionManager,
-            MeterRegistry meterRegistry
+            MeterRegistry meterRegistry,
+            TenantSubscriptionService tenantSubscriptionService
     ) {
         log.info("Configuring native OxMQ GroupRateLimiterPlugin for multi-tenant token bucket isolation...");
         return GroupRateLimiterPlugin.builder()
                 .connectionManager(connectionManager)
                 .keyPrefix("oxmq:limiter:tenant")
                 .groupKeyResolver(OxGuardPluginConfiguration::extractTenantId)
-                .dynamicLimit(tenantId -> TenantProfile.getByIdOrDefault(tenantId).burstLimitRUsPerSec())
+                .dynamicLimit(tenantSubscriptionService::getTenantBurstLimit)
                 .windowDuration(Duration.ofSeconds(1))
                 .retryDelayMs(150)
                 .meterRegistry(meterRegistry)

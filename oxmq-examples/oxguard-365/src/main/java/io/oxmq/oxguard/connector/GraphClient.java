@@ -2,6 +2,7 @@ package io.oxmq.oxguard.connector;
 
 import io.oxmq.oxguard.model.EffectiveExposure;
 import io.oxmq.oxguard.model.MonitoredDrive;
+import io.oxmq.oxguard.model.TenantProfile;
 import java.io.InputStream;
 import java.util.List;
 
@@ -9,6 +10,12 @@ import java.util.List;
  * Contract for interacting with Microsoft Graph API (Live or Mocked).
  */
 public interface GraphClient {
+
+    /**
+     * Discovers tenant license SKUs, paid seat counts, and organizational metadata from Microsoft Graph.
+     * Calls GET /v1.0/subscribedSkus and GET /v1.0/organization.
+     */
+    TenantProfile discoverTenantProfile(String tenantId);
 
     /**
      * Discovers all SharePoint Site Document Libraries for the tenant.
