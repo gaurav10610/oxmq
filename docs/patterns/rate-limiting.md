@@ -87,9 +87,11 @@ While standard `groupKey` protects individual queues with static thresholds, ent
 - **Dynamic Tier Limits**: Scaling burst capacity based on active subscription tiers (e.g. 50 req/s for SMB vs 500 req/s for Enterprise).
 - **Cluster-Wide Circuit Breaking (HTTP 429 Sentinel)**: Automatically deferring upcoming jobs when external SaaS APIs trigger throttling, without burning retry attempts.
 - **Priority Headroom Governance**: Forcing low-priority historical sweeps to yield quota when a tenant approaches quota exhaustion, strictly reserving headroom for real-time operations.
+- **Adaptive AIMD Capacity Management**: Automatically halving burst capacity upon encountering HTTP 429/503 errors and additively increasing capacity when execution remains clean across sustained evaluation windows.
 
 For these capabilities, see the [Plugins & Interceptors Guide](/guide/plugins) for:
-- [`GroupRateLimiterPlugin`](/guide/plugins#1-groupratelimiterplugin-multi-tenant-token-bucket)
-- [`RateLimitSentinelPlugin`](/guide/plugins#2-ratelimitsentinelplugin-external-429-cooldown-sentinel)
-- [`PriorityQuotaGovernorPlugin`](/guide/plugins#3-priorityquotagovernorplugin-headroom-based-yielding)
+- [`GroupRateLimiterPlugin`](/guide/plugins#1-groupratelimiterplugin-multi-tenant-token-bucket): Multi-tenant token bucket rate limiting.
+- [`RateLimitSentinelPlugin`](/guide/plugins#2-ratelimitsentinelplugin-external-429-cooldown-sentinel): Distributed 429 circuit breaking.
+- [`PriorityQuotaGovernorPlugin`](/guide/plugins#3-priorityquotagovernorplugin-headroom-based-yielding): Headroom-based quota protection.
+- [`AdaptiveRateLimiterPlugin`](/guide/plugins#4-adaptiveratelimiterplugin-aimd-dynamic-capacity-controller): AIMD dynamic capacity controller with oscillation damping.
 

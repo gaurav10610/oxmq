@@ -86,6 +86,7 @@ export default withMermaid(
             { text: 'Benchmarking Architecture', link: '/benchmarks/benchmarks-architecture' },
             { text: 'Architecture & Internals', link: '/ARCHITECTURE' },
             { text: 'Comparison (OxMQ vs BullMQ)', link: '/COMPARISON' },
+            { text: 'Disaster Recovery & Chaos Resilience', link: '/operations/disaster-recovery' },
             { text: 'Production Troubleshooting', link: '/operations/troubleshooting' },
             { text: 'Strategic Roadmap', link: '/ROADMAP' },
             { text: 'Attribution & License', link: '/attribution' }

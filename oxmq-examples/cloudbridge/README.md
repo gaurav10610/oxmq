@@ -2,7 +2,7 @@
 ### *The Production Reference Showcase Application for OxMQ*
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq"><img src="https://img.shields.io/badge/Powered%20By-OxMQ%20v1.0.0-blue.svg" alt="Powered By OxMQ"></a>
+  <a href="https://github.com/gaurav10610/oxmq"><img src="https://img.shields.io/badge/Powered%20By-OxMQ%20v1.5.0-blue.svg" alt="Powered By OxMQ"></a>
   <a href="https://openjdk.org/projects/jdk/21/"><img src="https://img.shields.io/badge/Java-21%2B%20LTS-orange.svg" alt="Java 21"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.3.0-brightgreen.svg" alt="Spring Boot 3"></a>
   <a href="https://redis.io"><img src="https://img.shields.io/badge/Redis-7-red.svg" alt="Redis 7"></a>

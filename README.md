@@ -80,6 +80,8 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **🏢 Multi-Tenant Token Bucket Plugin** | Dynamic burst capacity per group key (`GroupRateLimiterPlugin`) | Single-roundtrip atomic Redis `INCR` + `EXPIRE` token bucket with dynamic license tier lookups, headroom telemetry, and non-destructive yields (`skipAttempt=true`). |
 | **🛡️ Distributed 429 Sentinel Plugin** | Cluster-wide circuit-breaker (`RateLimitSentinelPlugin`) | Intercepts `RateLimitCooldownException`, locks Redis cooldown keys matching `Retry-After`, and pauses external API calls across all cluster nodes without consuming retry attempts. |
 | **⚖️ Priority Quota Governor Plugin** | Headroom-based yielding (`PriorityQuotaGovernorPlugin`) | Automatically yields low-priority background sweeps when tenant capacity drops below safety headroom (e.g. 25%), strictly reserving quota for real-time priority jobs. |
+| **📈 Adaptive Rate Limiter Plugin** | AIMD dynamic capacity controller (`AdaptiveRateLimiterPlugin`) | Auto-downgrades on 429/503 errors, locks against oscillation, upgrades on clean execution windows, and synchronizes cluster limits via Redis hash `oxmq:adaptive:limits`. |
+| **💾 Distributed Checkpointing Plugin** | Distributed cursor & delta token engine (`CheckpointStatePlugin`) | Persists cursors in Redis (`oxmq:checkpoint:<namespace>`), injects tokens into thread-local context, and enables zero-duplicate crash recovery across pod restarts. |
 | **🔄 Retries, Backoff & DLQ** | Exponential backoff with jitter & dead-letter queue | Automatic retry calculations with full exception stack traces captured and routed to Dead-Letter Queue (`bull:<q>:failed`). |
 | **🎯 Sub-Second Delays & Dedup** | Atomic sorted set scheduling, `jobId` hashing, and `keepLastIfActive` buffer | Millisecond-accurate delayed job triggers and debounced deduplication windows with automated active buffer re-queueing. |
 | **⏳ Request-Reply Awaiting** | Synchronous & async job completion awaiting (`job.waitUntilFinished`) | Zero-race `isFinished-3.lua` checking allows REST/RPC gateways to await async worker output with microsecond-accurate timeout enforcement. |
@@ -88,7 +90,8 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, dynamic listener unregistration (`events.off`), and stream events. |
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
-| **📊 Native Micrometer & Grafana Dashboards** | Pre-built enterprise Grafana dashboard template & Prometheus counters | Real-time queue depth gauges, throughput charts, error percentiles, and multi-tenant rate limiter yield counters out of the box. |
+| **📊 Dual Grafana Dashboards** | Pre-built queue operations and isolated system metrics dashboards | Real-time queue depth gauges, throughput meters, p99 latencies, isolated JVM Heap pools (Eden/Survivor/Old Gen), CPU, and adaptive capacity gauges. |
+| **🛡️ Disaster Recovery & Chaos Resilience** | Lettuce auto-reconnection, Kubernetes lifecycle hooks, and cloud chaos | Zero data loss on Redis crashes, pod SIGTERM graceful drain (`preStop: sleep 10`, `terminationGracePeriodSeconds: 45`), and cloud 429/503 chaos simulation. |
 | **🧠 Memory & Socket Optimization** | Canonical key interning, ReentrantLock non-pinning locks, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
 | **🍃 Spring Boot 3 Auto-Config** | Declarative `@EnableOxmq` and `@OxmqListener` annotations | Zero-config Spring Boot 3 starter with automatic `JobInterceptor` bean discovery, worker lifecycle binding, and `/actuator/health` indicator integration. |
 
@@ -486,10 +489,35 @@ public PriorityQuotaGovernorPlugin priorityGovernor(GroupRateLimiterPlugin limit
             .meterRegistry(registry)      // Emits 'oxmq.plugin.governor.yields'
             .build();
 }
+
+@Bean
+public AdaptiveRateLimiterPlugin adaptiveRateLimiter(RedisConnectionManager cm) {
+    return AdaptiveRateLimiterPlugin.builder()
+            .connectionManager(cm)
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .initialLimit(100)
+            .minLimit(25)
+            .maxLimit(2000)
+            .multiplicativeDecreaseFactor(0.5)     // Halve capacity on 429/503
+            .additiveIncreaseStep(25)              // +25 RUs on sustained clean windows
+            .dampingDuration(Duration.ofSeconds(30)) // Oscillation damping freeze lock
+            .build();
+}
+
+@Bean
+public CheckpointStatePlugin checkpointStatePlugin(RedisConnectionManager cm) {
+    return CheckpointStatePlugin.builder()
+            .connectionManager(cm)
+            .namespace("delta-sync")
+            .groupKeyResolver(job -> ((TenantScopedPayload) job.getData()).tenantId())
+            .build();
+}
 ```
 
-### Out-of-the-Box Prometheus & Grafana Dashboards
-Every OxMQ deployment can be monitored via Grafana using the bundled template in `oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-grafana-dashboard.json`. It displays real-time job throughput, active queue backlogs, p50/p95/p99 duration latencies, and multi-tenant rate yield telemetries.
+### Out-of-the-Box Prometheus & Dual Grafana Dashboards
+Every OxMQ deployment can be monitored via Grafana using the bundled templates:
+1. **`oxmq-grafana-dashboard.json`** (`oxmq-spring-boot-starter/src/main/resources/dashboards/`): Real-time job throughput, active queue backlogs, p50/p95/p99 duration latencies, and multi-tenant rate yield telemetries.
+2. **`oxmq-system-metrics.json`** (`oxmq-examples/oxguard-365/docker/grafana/dashboards/`): Isolated JVM Heap memory pools (Eden, Survivor, Tenured/Old Gen), Non-Heap/Metaspace, CPU, HikariCP pools, active threads, and dynamic adaptive capacity gauges.
 
 ---
 
@@ -546,6 +574,37 @@ docker compose up -d
 # 3. Open Web Dashboard
 open http://localhost:8080
 ```
+
+---
+
+## 🛡️ Enterprise Showcase Application: `OxGuard 365` (`oxmq-examples/oxguard-365/`)
+
+[`oxguard-365`](oxmq-examples/oxguard-365/README.md) is an enterprise-grade SaaS Data Security Posture Management (DSPM) showcase built on **Java 17 LTS and OxMQ**:
+* **Multi-Tenant Scale Across 5 License Tiers:** Simulates real-world Microsoft Graph licensing tiers (Enterprise E5, Enterprise E3, Business Standard, Business Basic, Free/Dev) with dynamic SKU discovery (`/v1.0/subscribedSkus`) and RU token buckets.
+* **Native OxMQ Plugins Adoption:** Delegates rate limiting to `AdaptiveRateLimiterPlugin` (AIMD capacity controller) and checkpointing to `CheckpointStatePlugin` (delta query cursors in Redis).
+* **Dual-Pillar File Inspection DAG:** Atomic `FlowProducer` fan-out evaluating Access Control Lists (ACLs) and streaming zero-heap malware heuristics (SHA-256, Shannon entropy, EICAR, MIME magic numbers).
+* **Cloud Chaos & Disaster Recovery:** Verified 100% completion across 5,000 files and 150 threats during simulated Redis crashes, worker pod SIGTERMs, and 429/503 storms. Peak Heap footprint: **106.4 MB**.
+
+```bash
+# Launch the full multi-tenant stack (Redis, Postgres, Prometheus, Grafana, Bull-Board, OxGuard)
+./oxmq-examples/oxguard-365/docker/start-oxguard.sh
+
+# Open Dashboard
+open http://localhost:8080
+```
+
+---
+
+## ☸️ Cloud Chaos, Disaster Recovery & Kubernetes Deployment
+
+OxMQ is engineered for high-availability cloud deployments with automated disaster recovery:
+* **Redis Crash Resilience**: Lettuce auto-reconnection buffers non-blocking commands during brief Redis outages. When Redis recovers, `StalledJobSentinel` safely reclaims in-flight jobs with zero data loss.
+* **Zero-Duplicate Checkpoint Resumption**: `CheckpointStatePlugin` persists progress tokens in Redis. When pods are preempted by Kubernetes autoscalers, restarted pods resume from the exact committed checkpoint.
+* **Kubernetes Production Manifests**: Production-ready specs located in [`oxmq-examples/oxguard-365/k8s/`](oxmq-examples/oxguard-365/k8s/) with:
+  - HTTP Liveness (`/actuator/health/liveness`) and Readiness (`/actuator/health/readiness`) probes.
+  - Graceful termination hooks: `preStop: exec: command: ["sh", "-c", "sleep 10"]` and `terminationGracePeriodSeconds: 45`.
+  - Resource requests (500m CPU, 512Mi RAM) and limits (2000m CPU, 1024Mi RAM).
+* **Automated Clean-Slate Disaster Recovery Benchmark**: Run [`./run_multi_tenant_resilience_test.sh`](run_multi_tenant_resilience_test.sh) to execute a full clean-wipe test across 5,000 files with injected chaos, Redis crashes, and pod kills.
 
 ---
 
@@ -646,6 +705,7 @@ Explore our comprehensive technical guides in [`docs/`](docs/):
 * 🚀 **[Getting Started Guide](docs/GETTING_STARTED.md)**: Zero-to-production manual covering producers, virtual thread workers, Spring Boot 3, DAG workflows, batch dequeue, rate limiting, and Bull-Board.
 * 🧩 **[Plugins & Interceptors Guide](docs/guide/plugins.md)**: Non-intrusive `JobInterceptor` SPI, dynamic token-bucket rate limiters (`GroupRateLimiterPlugin`), distributed 429 sentinels (`RateLimitSentinelPlugin`), priority quota governance (`PriorityQuotaGovernorPlugin`), and Grafana dashboard templates.
 * 🏢 **[Context Isolation & Namespacing Guide](docs/guide/namespacing.md)**: Deep dive on shared Redis multi-tenancy, service-level auto-inheritance, and Redis Cluster hash-tags.
+* 🛡️ **[Disaster Recovery & Chaos Resilience](docs/operations/disaster-recovery.md)**: Redis crash recovery, Kubernetes graceful termination hooks, CheckpointStatePlugin zero-duplicate resumption, and clean-slate benchmark audits.
 * 🛡️ **[OxGuard 365 Enterprise DSPM Showcase](docs/guide/oxguard-365.md)**: Real-world enterprise multi-tenant security architecture processing 5 tenant license tiers, 5,000 files across 25 drives with zero 429 throttling errors.
 * 🏛️ **[Architecture & Internals](docs/ARCHITECTURE.md)**: Deep dive into Java 21 Project Loom, official BullMQ Lua script integration, Redis key hierarchy, atomic state transitions, lock watchdog, and Micrometer telemetry.
 * 🧠 **[Memory Optimization & Tuning Guide](docs/operations/memory-optimization.md)**: Zero-allocation poller hot-path, Lettuce connection multiplexing, lazy DAG child evaluation, stream trimming (`maxLenEvents`), and Redis memory compaction.

@@ -406,3 +406,31 @@ OxMQ provides built-in enterprise plugins configurable programmatically or via S
 | `yieldDelayMs(long)` | `long` | `200` | Non-destructive delay in milliseconds for yielded jobs. |
 | `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional registry for `oxmq.plugin.governor.yields`. |
 
+### 4. `AdaptiveRateLimiterPlugin.Builder`
+
+| Method | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `connectionManager(RedisConnectionManager)` | Required | — | Shared Redis connection manager. |
+| `keyPrefix(String)` | `String` | `"oxmq:adaptive"` | Redis key prefix for cluster-wide capacity state hash. |
+| `groupKeyResolver(Function<Job<?>, String>)` | Required | — | Resolves partition/group key (e.g. `tenantId`) from the job. |
+| `initialLimit(int)` | `int` | `100` | Default initial rate limit per group key before any adjustments. |
+| `minLimit(int)` | `int` | `10` | Conservative capacity floor below which AIMD will not downgrade. |
+| `maxLimit(int)` | `int` | `1000` | Enterprise capacity ceiling above which AIMD will not upgrade. |
+| `increaseStep(int)` | `int` | `25` | Additive increase step ($\alpha$) added on sustained clean execution windows. |
+| `backoffFactor(double)` | `double` | `0.5` | Multiplicative decrease factor ($\beta$) applied upon encountering throttling errors. |
+| `dampingDuration(Duration)` | `Duration` | `30s` | Freeze window duration following a downgrade during which upgrades are locked. |
+| `cleanThreshold(int)` | `int` | `5` | Number of consecutive clean processing windows required before triggering an upgrade. |
+| `rateLimitMatcher(Predicate<Throwable>)` | `Predicate` | `RateLimitCooldownException` | Predicate identifying throttling or transient 429/503 errors. |
+| `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional Micrometer registry for capacity adjustment telemetry. |
+
+### 5. `CheckpointStatePlugin.Builder`
+
+| Method | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `connectionManager(RedisConnectionManager)` | Required | — | Shared Redis connection manager. |
+| `namespace(String)` | `String` | `"default"` | Namespace isolating checkpoint partitions in Redis. |
+| `keyPrefix(String)` | `String` | `"oxmq:checkpoint"` | Redis key prefix for distributed checkpoint hashes. |
+| `groupKeyResolver(Function<Job<?>, String>)` | Required | — | Resolves partition key (e.g. `tenantId:driveId`) from the job. |
+| `checkpointExtractor(BiFunction)` | `BiFunction` | `null` | Optional lambda extracting token from `(job, result)`. Automatically falls back to inspecting `CheckpointSupplier`. |
+| `meterRegistry(MeterRegistry)` | `MeterRegistry` | `null` | Optional Micrometer registry for `oxmq.plugin.checkpoint.reads` and `writes`. |
+
