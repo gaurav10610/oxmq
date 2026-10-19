@@ -62,10 +62,11 @@ public class TenantDiscoveryWorker {
         for (MonitoredDrive drive : allDrives) {
             repository.saveDrive(drive);
 
-            // Backward historical baseline crawl dispatched at Priority 10
+            // Backward historical baseline crawl dispatched at Priority 10 with exponential backoff
             JobOptions options = JobOptions.builder()
                     .priority(10)
                     .attempts(3)
+                    .backoff(new io.oxmq.model.BackoffStrategy.Exponential(1000L))
                     .build();
 
             DriveDeltaSyncPayload deltaPayload = new DriveDeltaSyncPayload(

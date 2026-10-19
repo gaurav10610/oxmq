@@ -2,6 +2,7 @@ package io.oxmq.oxguard.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.JobOptions;
 import io.oxmq.oxguard.model.DriveDeltaSyncPayload;
@@ -101,6 +102,7 @@ public class GraphWebhookController {
                     JobOptions options = JobOptions.builder()
                             .priority(1)
                             .attempts(3)
+                            .backoff(new BackoffStrategy.Exponential(1000L))
                             .deduplication(DeduplicationOptions.builder()
                                     .id("webhook-delta-" + driveId)
                                     .ttl(Duration.ofSeconds(15))
