@@ -6,6 +6,16 @@ description: Production-grade SaaS Data Security Posture Management (DSPM) for M
 # OxGuard 365: Enterprise SaaS DSPM & Threat Analysis Engine
 ## High-Scale Architecture & Technical Specification (Java 17 LTS + OxMQ)
 
+::: tip Specialized Deep-Dive Guides
+For exhaustive, engineering-grade walkthroughs of specific subsystems inside the `oxguard-365` module:
+* [⚡ Advanced Rate Limiting, Throttling & Adaptive Capacity](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/RATE_LIMITING_AND_THROTTLING.md)
+* [🛡️ Failure Handling & Disaster Recovery Guide](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/FAILURE_HANDLING_AND_DISASTER_RECOVERY.md)
+* [🏢 Multi-Tenant Architecture & Dynamic Licensing](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/MULTI_TENANT_ARCHITECTURE.md)
+* [🔬 Dual-Pillar Inspection DAG & Threat Engine](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/DUAL_PILLAR_INSPECTION_ENGINE.md)
+* [📐 Data Model, Schemas & LLD Specification](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/DATA_MODEL_AND_LLD_SPECIFICATION.md)
+* [📊 Observability, Metrics & Production Benchmarks](https://github.com/gaurav10610/oxmq/blob/main/oxmq-examples/oxguard-365/docs/OBSERVABILITY_AND_BENCHMARKS.md)
+:::
+
 ---
 
 ## 1. Executive Summary & Enterprise Scale Targets
