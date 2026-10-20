@@ -1,7 +1,13 @@
 # OxGuard 365: Enterprise SaaS DSPM & Threat Analysis Engine
 ## High-Scale Architecture & Technical Specification (Java 17 LTS + OxMQ)
 
-For the online documentation version, see `docs/guide/oxguard-365.md`.
+For specialized technical deep dives, see the comprehensive documentation guides:
+* [⚡ Advanced Rate Limiting, Throttling & Adaptive Capacity](docs/RATE_LIMITING_AND_THROTTLING.md)
+* [🛡️ Failure Handling & Disaster Recovery Guide](docs/FAILURE_HANDLING_AND_DISASTER_RECOVERY.md)
+* [🏢 Multi-Tenant Architecture & Dynamic Licensing](docs/MULTI_TENANT_ARCHITECTURE.md)
+* [🔬 Dual-Pillar Inspection DAG & Threat Engine](docs/DUAL_PILLAR_INSPECTION_ENGINE.md)
+* [📐 Data Model, Schemas & LLD Specification](docs/DATA_MODEL_AND_LLD_SPECIFICATION.md)
+* [📊 Observability, Metrics & Production Benchmarks](docs/OBSERVABILITY_AND_BENCHMARKS.md)
 
 ---
 
