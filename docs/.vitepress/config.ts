@@ -1,13 +1,19 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
+const base = (process.env.VITEPRESS_BASE || '/oxmq/').replace(/\/+$/, '') + '/'
+
 export default withMermaid(
   defineConfig({
     title: 'OxMQ',
     description: 'The Distributed Message Queue Engine for Java 17+ & Java 21 Loom (100% BullMQ Parity)',
-    base: process.env.VITEPRESS_BASE || '/',
+    base,
     head: [
-      ['link', { rel: 'icon', type: 'image/png', href: '/assets/oxmq-icon.png' }]
+      ['link', { rel: 'icon', type: 'image/png', href: `${base}assets/oxmq-icon.png` }],
+      ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: `${base}assets/oxmq-icon.png` }],
+      ['link', { rel: 'icon', type: 'image/png', sizes: '16x16', href: `${base}assets/oxmq-icon.png` }],
+      ['link', { rel: 'shortcut icon', href: `${base}favicon.ico` }],
+      ['link', { rel: 'apple-touch-icon', href: `${base}assets/oxmq-icon.png` }]
     ],
     themeConfig: {
       logo: '/assets/oxmq-icon.png',
