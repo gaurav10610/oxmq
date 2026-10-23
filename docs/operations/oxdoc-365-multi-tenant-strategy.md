@@ -42,7 +42,7 @@ We will onboard and simultaneously manage 5 distinct enterprise accounts matchin
 ### 3.1 Multi-Tenant Graph API Emulation
 The Mock Server (`MockOffice365Server.java`) will be upgraded to support multi-tenant routing:
 - **Tenant Context:** Requests carry `X-Tenant-Id: <tenantId>` or Bearer token `Bearer token-for-<tenantId>`.
-- **Dedicated Site & OneDrive Catalog per Tenant:** Each tenant will have its own SharePoint sites and OneDrive user accounts (e.g. 5 drives $\times$ 5 tenants = 25 distinct monitored drives).
+- **Dedicated Site & OneDrive Catalog per Tenant:** Each tenant will have its own SharePoint sites and OneDrive user accounts (e.g. 5 drives × 5 tenants = 25 distinct monitored drives).
 - **Physical Shared File Pool:** All tenants reference the real 1,000+ files on disk (clean business documents, ransomware payloads with high Shannon entropy, MZ/ELF MIME mismatches, and EICAR malware signatures).
 
 ### 3.2 Real-World Resource Unit (RU) Cost Model
@@ -163,7 +163,7 @@ sequenceDiagram
 - [x] **Clean Slate:** Previous PostgreSQL database and Redis keys obliterated.
 - [x] **Multi-Tenant Ingestion:** 5,000+ total documents cataloged and indexed across all 5 tenant tiers with **0.00% data drop**.
 - [x] **True Isolation:** 429 throttling on `Acme TinyCorp` (Tier 1) causes only Acme workers to defer, while `MegaCorp` (Tier 5) continues scanning without delay.
-- [x] **Hierarchy:** UI hierarchy displays 5 tenants $\rightarrow$ 25+ drives $\rightarrow$ nested folders $\rightarrow$ documents.
+- [x] **Hierarchy:** UI hierarchy displays 5 tenants → 25+ drives → nested folders → documents.
 - [x] **Observability:** Bull-Board tracks completed jobs across all 5 queues without errors.
 - [x] **Test Suite:** 100% integration tests pass across the entire repository.
 
@@ -209,7 +209,7 @@ All tenant rate limiting, quota yielding, and circuit breaking are powered nativ
    - Defaults new or unresolvable tenants to Tier 1 (`SMB`: 250 seats, 25 RUs/s) as a conservative, safe baseline.
 
 #### Conservative AIMD Adaptive Capacity Controller
-* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s $\to$ `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
+* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s → `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
 * **Oscillation Damping Lock:** To avoid flapping ("yo-yo effect"), any downgrade triggers an oscillation damping lock (`dampingWindowMs`, default 60s) freezing upgrades during recovery.
 * **Auto-Upgrade on Sustained Clean Work:** If a tenant sustains clean processing without any 429s across consecutive evaluation windows (`cleanWindowsForUpgrade = 2`), the controller automatically escalates the tier by one level, increasing the OxMQ token bucket burst limit in real time without downtime or restart.
 * **Zero OxMQ Lua Modification:** Burst limits are fed into OxMQ's `GroupRateLimiterPlugin` dynamically via `.dynamicLimit(tenantSubscriptionService::getTenantBurstLimit)`, taking effect immediately on the very next token acquisition.

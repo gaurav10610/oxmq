@@ -269,12 +269,12 @@ The **`AdaptiveRateLimiterPlugin`** brings TCP-style **AIMD (Additive Increase, 
 ### Core Mechanics & Mathematical Model:
 1. **Multiplicative Decrease on Error / Throttling**:
    When an external request fails due to rate limits or transient server faults (matching `errorMatcher`), the capacity limit is halved:
-   $$L_{t+1} = \max\left(L_{\min}, \lfloor L_t \times \beta \rfloor\right) \quad (\text{default } \beta = 0.5)$$
+   > **Multiplicative Decrease:** `L(t+1) = max(L_min, ⌊L(t) × β⌋)` *(default β = 0.5)*
 2. **Oscillation Damping Lock (`dampingWindowMs`)**:
    Downgrades immediately trigger a freeze window (e.g. 30–60 seconds). During this lock, all upward capacity adjustments are frozen, preventing rapid upgrade/downgrade flapping ("hunting" or "yo-yo" effect).
 3. **Additive Increase on Sustained Clean Execution**:
    When a group key sustains execution without any throttling errors for a configurable window (`cleanWindowsForUpgrade`), capacity increases additively:
-   $$L_{t+1} = \min\left(L_{\max}, L_t + \alpha\right) \quad (\text{default } \alpha = +25 \text{ RUs})$$
+   > **Additive Increase:** `L(t+1) = min(L_max, L(t) + α)` *(default α = +25 RUs)*
 4. **Static Overrides Pinning**:
    Operators can pin any tenant to a fixed limit (`setStaticLimit`), bypassing AIMD adjustments for guaranteed provisioning.
 5. **Distributed Redis State Synchronization**:

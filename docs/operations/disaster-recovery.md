@@ -137,8 +137,8 @@ Without adaptive throttling, worker threads hammer the downstream gateway, causi
 ### How OxMQ Solves It:
 1. **Dynamic Capacity Throttling (`AdaptiveRateLimiterPlugin`)**:
    - Implements **Additive Increase, Multiplicative Decrease (AIMD)**.
-   - On HTTP 429/503: Immediately halves tenant capacity ($L_{t+1} = \max(L_{\min}, L_t \times 0.5)$) and engages an **oscillation damping lock** (30s) to prevent upgrade flapping.
-   - On sustained clean windows: Additively increases capacity ($L_{t+1} = \min(L_{\max}, L_t + 25)$).
+   - On HTTP 429/503: Immediately halves tenant capacity (`L(t+1) = max(L_min, L(t) × 0.5)`) and engages an **oscillation damping lock** (30s) to prevent upgrade flapping.
+   - On sustained clean windows: Additively increases capacity (`L(t+1) = min(L_max, L(t) + 25)`).
 2. **Distributed 429 Circuit-Breaker (`RateLimitSentinelPlugin`)**:
    - When an HTTP 429 response includes `Retry-After: N`, the worker throws `RateLimitCooldownException`.
    - The plugin sets a distributed Redis cooldown key with TTL matching `Retry-After`.

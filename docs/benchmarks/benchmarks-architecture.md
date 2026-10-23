@@ -71,7 +71,7 @@ The following benchmarks were captured directly from live test executions on bot
 2. **DAG Fan-out Capacity (Scale Limit: 10,001 Nodes)**:
    - Zero dropped tasks or race conditions across 10,000 parallel children with automatic result passing to the parent job upon completion. Ingestion peaks at **~3,250 nodes/s** (Redis TCP packet buffer limit).
 3. **Memory Asymptotic Stabilization**:
-   - At scale ($\ge 2,500$ nodes), Redis memory consumption asymptotically stabilizes at **~904 – 909 Bytes/node**.
+   - At scale (≥ 2,500 nodes), Redis memory consumption asymptotically stabilizes at **~904 – 909 Bytes/node**.
 4. **Loom Virtual Thread Isolation**:
    - Under realistic 10ms I/O delays, Java 21 Virtual Threads maintain a **strictly flat 35 OS threads** up to 800 workers, while Java 17 spawns up to 68 OS threads in its platform thread pool.
 
