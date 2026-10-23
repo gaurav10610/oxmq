@@ -1,4 +1,4 @@
-# ⚖️ Architectural Comparison: OxMQ & The Queue Ecosystem
+# Architectural Comparison: OxMQ vs. BullMQ
 ### *An Objective Engineering Evaluation of OxMQ (Java 17+ / Java 21 Loom) as the Premier Java Alternative to BullMQ*
 
 **OxMQ** was created to bring the battle-tested, world-class queue architecture of **BullMQ** into the modern **Java 17+ / Java 21+ enterprise ecosystem**.
@@ -7,9 +7,9 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 
 ---
 
-## 📊 Comprehensive Comparison Matrix: OxMQ vs. BullMQ
+## Comparison Matrix: OxMQ vs. BullMQ
 
-| Feature / Capability | 🐂 **OxMQ** (Java 17+ / Java 21+) | 🐂 **BullMQ** (Node.js / TypeScript) |
+| Feature / Capability | OxMQ (Java 17+ / Java 21+) | BullMQ (Node.js / TypeScript) |
 | :--- | :---: | :---: |
 | **Target Runtime** | **Java 17+ LTS** (OpenJDK, Temurin) — native **Java 21+ Project Loom** | **Node.js 16+** / TypeScript |
 | **Concurrency Model** | **Project Loom Virtual Threads** (Java 21+) / Platform Thread Pool (Java 17) | Single-Threaded Event Loop |
@@ -27,6 +27,13 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Worker Postponement** | `DelayedException` (zero attempt consumption) | `DelayedError` (skipAttempt) |
 | **Priority Preservation on Retry**| Yes (`reprocessJob-9.lua`) | Yes (`reprocessJob-9.lua`) |
 | **Storage Backend Contract** | Pluggable `QueueBackend` (`RedisQueueBackend`) | Pluggable `IQueueBackend` (`RedisBackend`) |
+| **Queue Range Pagination & Inspection** | Built-in `getJobs(states, start, end, asc)`, `getWaiting`, `getActive`, `getJobCounts` | Built-in `getJobs(types, start, end, asc)`, `getJobCounts` |
+| **Global Concurrency & Rate Limit Metadata** | Built-in `setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed` | Built-in `setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed` |
+| **Pluggable Custom Backoff Registry** | Dynamic `BackoffStrategy.custom(...)` + worker registry | Custom backoff strategies via worker settings |
+| **Programmatic Job Discarding** | `job.discard()` (aborts retries and fails immediately) | `job.discard()` |
+| **Ignored Children Failures** | `job.getIgnoredChildrenFailures()` on parent DAG jobs | `job.getIgnoredChildrenFailures()` |
+| **Worker Event Emitter** | Fluent `worker.onActive`, `onCompleted`, `onFailed`, etc. | `worker.on('active')`, `worker.on('completed')`, etc. |
+| **Distributed Tracing (OpenTelemetry)** | Built-in W3C `TraceContext` (`traceparent`, `tracestate`) | BullMQ OpenTelemetry instrumentation / telemetry opts |
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility (Zero Node.js code) | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, `@OxmqBatchListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |
@@ -34,24 +41,24 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 
 ---
 
-## 🌐 The Broader Distributed Queue Landscape
+## The Distributed Queue Landscape
 
 When evaluating task processing in enterprise systems, teams frequently compare OxMQ to brokers like **Kafka**, **RabbitMQ**, and Python's **Celery**:
 
 | Dimension | OxMQ (Java 17/21) | BullMQ (Node.js) | Celery (Python) | Kafka / RabbitMQ |
 | :--- | :---: | :---: | :---: | :---: |
 | **Primary Domain** | Distributed Jobs & DAGs | Distributed Jobs & DAGs | Background Tasks | Event Streaming / Messaging |
-| **Delayed Execution** | 🟢 Native (Redis ZSET) | 🟢 Native (Redis ZSET) | 🟡 In-memory ETA | ❌ Requires custom DLX / plugins |
-| **Parent-Child DAGs** | 🟢 Native `FlowProducer` | 🟢 Native `FlowProducer` | 🟡 Canvas primitives | ❌ External orchestrator needed |
-| **Rate Limiting** | 🟢 Token Bucket + Grouping | 🟢 Token Bucket + Grouping | 🟡 External extension | ❌ Downstream consumer throttling |
-| **Request-Reply** | 🟢 Native `waitUntilFinished` | 🟢 Native `waitUntilFinished` | 🟡 Backend result polling | ❌ Complex correlation ID routing |
-| **Web UI** | 🟢 Instant Bull-Board UI | 🟢 Instant Bull-Board UI | 🟡 Flower | 🟡 Confluent / RabbitMQ Mgmt |
-| **Concurrency Engine** | 🟢 Virtual Threads (Loom) | 🟡 Single-thread Event Loop | 🔴 Gevent / Fork processes | 🟢 Multi-threaded consumers |
-| **Operational Simplicity** | 🟢 Reuses existing Redis | 🟢 Reuses existing Redis | 🟡 Requires Redis + Result DB | 🔴 Heavy broker cluster maintenance |
+| **Delayed Execution** | Native (Redis ZSET) | Native (Redis ZSET) | In-memory ETA | Requires custom DLX / plugins |
+| **Parent-Child DAGs** | Native `FlowProducer` | Native `FlowProducer` | Canvas primitives | External orchestrator needed |
+| **Rate Limiting** | Token Bucket + Grouping | Token Bucket + Grouping | External extension | Downstream consumer throttling |
+| **Request-Reply** | Native `waitUntilFinished` | Native `waitUntilFinished` | Backend result polling | Complex correlation ID routing |
+| **Web UI** | Instant Bull-Board UI | Instant Bull-Board UI | Flower | Confluent / RabbitMQ Mgmt |
+| **Concurrency Engine** | Virtual Threads (Loom) | Single-thread Event Loop | Gevent / Fork processes | Multi-threaded consumers |
+| **Operational Simplicity** | Reuses existing Redis | Reuses existing Redis | Requires Redis + Result DB | Heavy broker cluster maintenance |
 
 ---
 
-## 🔍 In-Depth Architectural Analysis
+## In-Depth Architectural Analysis
 
 ### 1. Concurrency: Project Loom Virtual Threads vs. Node.js Event Loop
 * **BullMQ in Node.js**:
@@ -83,7 +90,7 @@ When evaluating task processing in enterprise systems, teams frequently compare 
 
 ---
 
-## 🧪 Measuring Performance in Your Environment
+## Measuring Performance in Your Environment
 
 Because throughput and latency depend heavily on network round-trip time (RTT), payload size, Redis persistence configuration (AOF vs RDB), and worker business logic, **we encourage running empirical benchmarks**:
 
@@ -99,6 +106,6 @@ java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.5.0.jar
 
 ---
 
-## 🙏 Attribution
+## Attribution
 
 OxMQ proudly stands on the shoulders of giants. We express our sincere appreciation to the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project and its community for originating and maintaining world-class Redis queue architectures under the permissive MIT license. OxMQ directly reuses the official BullMQ Lua scripts to deliver 100% wire and functional parity in the Java ecosystem.

@@ -4,7 +4,7 @@ A **Queue** in OxMQ is the primary interface for creating, managing, and inspect
 
 ---
 
-## 🏗️ Initializing a Queue
+## Initializing a Queue
 
 ::: code-group
 
@@ -44,7 +44,7 @@ public class OrderService {
 
 ---
 
-## 📤 Enqueuing Jobs
+## Enqueuing Jobs
 
 ### 1. Single Job (`add`)
 
@@ -84,7 +84,7 @@ System.out.println("Enqueued " + createdJobs.size() + " jobs in a single pipelin
 
 ---
 
-## 🔍 Inspecting Jobs & Queue Metrics
+## Inspecting Jobs & Queue Metrics
 
 ### Query Current Job State (`getJobState`)
 
@@ -113,9 +113,10 @@ CompletableFuture<Object> future = queue.waitUntilFinishedAsync(job.getId(), que
 
 ### Aggregate Queue Counts (`getJobCounts`)
 
-Retrieve a snapshot of all job counts in the queue:
+Retrieve a snapshot of all job counts in the queue, or query counts for specific states:
 
 ```java
+// Snapshot of all states (waiting, active, delayed, completed, failed, paused, etc.)
 Map<String, Long> counts = queue.getJobCounts();
 System.out.printf("Waiting: %d | Active: %d | Delayed: %d | Completed: %d | Failed: %d%n",
         counts.get("waiting"),
@@ -124,6 +125,65 @@ System.out.printf("Waiting: %d | Active: %d | Delayed: %d | Completed: %d | Fail
         counts.get("completed"),
         counts.get("failed")
 );
+
+// Targeted query for specific states (returns typed Map<JobState, Long>)
+Map<JobState, Long> filteredCounts = queue.getJobCounts(JobState.WAITING, JobState.ACTIVE, JobState.FAILED);
+System.out.println("Active jobs: " + filteredCounts.get(JobState.ACTIVE));
+```
+
+### Range Pagination & Inspection (`getJobs`)
+
+OxMQ provides high-performance atomic range pagination across any combination of job lifecycle states using BullMQ's fast Lua range pipelines:
+
+```java
+// 1. Query across multiple states with offset range and ascending/descending ordering
+List<Job<OrderData>> jobs = queue.getJobs(
+    List.of(JobState.WAITING, JobState.ACTIVE),
+    0,   // start index
+    25,  // end index
+    true // asc (true = FIFO, false = LIFO)
+);
+
+// 2. Ergonomic single-state convenience methods:
+List<Job<OrderData>> waitingJobs   = queue.getWaiting(0, 10);
+List<Job<OrderData>> activeJobs    = queue.getActive(0, 10);
+List<Job<OrderData>> delayedJobs   = queue.getDelayed(0, 10);
+List<Job<OrderData>> completedJobs = queue.getCompleted(0, 50);
+List<Job<OrderData>> failedJobs    = queue.getFailed(0, 50);
+List<Job<OrderData>> waitingChildren = queue.getWaitingChildren(0, 20);
+List<Job<OrderData>> prioritizedJobs = queue.getPrioritized(0, 20);
+List<Job<OrderData>> pausedJobs    = queue.getPaused(0, 10);
+```
+
+### Rate Limit Window TTL (`getRateLimitTtl`)
+
+Inspect the remaining time-to-live (in milliseconds) on the active sliding-window rate limit token bucket:
+
+```java
+long remainingTtlMs = queue.getRateLimitTtl();
+if (remainingTtlMs > 0) {
+    System.out.printf("Queue is currently rate-limited. Window resets in %d ms%n", remainingTtlMs);
+} else {
+    System.out.println("Rate limit bucket is currently clear.");
+}
+```
+
+### Global Concurrency & Rate Limit Metadata
+
+OxMQ natively matches BullMQ v6 queue metadata controls stored directly in `bull:<queue>:meta` and enforced atomically by `moveToActive-11.lua` and `isMaxed-2.lua`:
+
+```java
+// 1. Cluster-wide global concurrency cap
+queue.setGlobalConcurrency(25);                  // Max 25 concurrent active jobs across the entire cluster
+Integer concurrency = queue.getGlobalConcurrency(); // 25
+boolean maxed = queue.isMaxed();                 // true if activeCount >= concurrency
+queue.removeGlobalConcurrency();                 // Remove cluster concurrency limit
+
+// 2. Cluster-wide global rate limiting
+queue.setGlobalRateLimit(100, Duration.ofSeconds(1)); // Max 100 jobs per 1 second across all workers
+GlobalRateLimit rl = queue.getGlobalRateLimit();      // GlobalRateLimit[max=100, durationMillis=1000]
+queue.removeRateLimitKey();                           // Clear active rate limit token bucket early
+queue.removeGlobalRateLimit();                        // Remove rate limit configuration from queue meta
 ```
 
 ### Retrieve Job Execution Logs (`getJobLogs`)
@@ -138,7 +198,7 @@ logs.forEach(System.out::println);
 
 ---
 
-## ⏸️ Queue Lifecycle Control
+## Queue Lifecycle Control
 
 ### Pausing & Resuming
 
@@ -186,7 +246,7 @@ queue.obliterate();
 
 ---
 
-## 🔄 Dynamic In-Flight Job Operations
+## Dynamic In-Flight Job Operations
 
 OxMQ allows mutating jobs already submitted to Redis:
 

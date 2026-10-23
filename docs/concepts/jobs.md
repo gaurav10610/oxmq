@@ -4,7 +4,7 @@ A **Job** represents an individual unit of work in OxMQ. Jobs carry user-defined
 
 ---
 
-## 🧬 Job Anatomy
+## Job Anatomy & Data Model
 
 In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 
@@ -24,10 +24,13 @@ In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 | `stacktrace` | `JSON Array` | Stack trace of exception (bounded to 8 KB with truncation marker to prevent OOM). |
 | `progress` | `Number / JSON` | Real-time execution progress (e.g. `0` to `100`). |
 | `childrenValues` | `Map<String, Object>` | Return values of completed child DAG tasks (lazily evaluated on-demand; 0 network calls for standard jobs). |
+| `ignoredChildrenFailures` | `Map<String, String>` | Failure reasons of failed child tasks when `ignoreDependencyOnFailure` is enabled (lazily loaded from `job:failed` hash). |
+| `traceparent` | `String` | W3C Distributed Tracing header (`00-{traceId}-{spanId}-{traceFlags}`) for end-to-end telemetry propagation. |
+| `tracestate` | `String` | W3C Distributed Tracing state vendor metadata. |
 
 ---
 
-## ⚙️ `JobOptions` Reference
+## JobOptions Reference
 
 Customize job execution behavior using the `JobOptions` builder:
 
@@ -62,12 +65,16 @@ JobOptions options = JobOptions.builder()
     // DAG Workflow Policies
     .failParentOnFailure(true)                 // If child fails, immediately fail parent DAG job
     .removeDependencyOnFailure(false)          // If true, unlink failed child so parent can still run
+    
+    // OpenTelemetry W3C Distributed Tracing
+    .traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+    .tracestate("congo=t61rcWkgMzE")
     .build();
 ```
 
 ---
 
-## 🚦 Standardized Lifecycle States (`JobState`)
+## Job Lifecycle States (`JobState`)
 
 OxMQ models the complete lifecycle of a job via the **`JobState`** enum:
 
@@ -101,7 +108,7 @@ if (state.isCompleted()) {
 
 ---
 
-## ⏱️ Request-Reply: Awaiting Completion (`waitUntilFinished`)
+## Request-Reply Synchronization (`waitUntilFinished`)
 
 A producer or controller can await the final result of a background job directly from the `Job` instance:
 
@@ -128,7 +135,7 @@ future.thenAccept(result -> log.info("Async result received: {}", result));
 
 ---
 
-## 📈 Real-Time Progress & Execution Logs
+## Real-Time Progress & Execution Logs
 
 Workers can stream real-time progress and emit diagnostic logs directly from the execution loop:
 
@@ -166,7 +173,7 @@ logs.forEach(System.out::println);
 
 ---
 
-## 🔁 Automatic Retries & Backoff Calculation
+## Automatic Retries & Backoff Calculation
 
 When an exception is thrown inside a worker processor:
 1. OxMQ checks if `attemptsMade < attempts`.
@@ -179,7 +186,7 @@ When an exception is thrown inside a worker processor:
 
 ---
 
-## 🚫 Non-Recoverable Errors (`UnrecoverableError`)
+## Non-Recoverable Errors (`UnrecoverableError`)
 
 If an exception indicates a fatal condition that will never succeed on retry (e.g. malformed payload, account suspended), throw `UnrecoverableError`:
 
@@ -195,7 +202,7 @@ OxMQ catches `UnrecoverableError` and immediately moves the job to `FAILED`, byp
 
 ---
 
-## ⏸️ Worker-Driven Postponement (`DelayedException`)
+## Worker-Driven Postponement (`DelayedException`)
 
 In BullMQ v6, a worker can postpone execution without consuming an attempt count or marking the attempt as failed. In OxMQ, simply throw `DelayedException`:
 
@@ -212,9 +219,106 @@ Behind the scenes, OxMQ catches `DelayedException` and executes BullMQ's `moveTo
 
 ---
 
-## 🛑 Dynamic Job Parking (`WaitingException` & `WaitingChildrenException`)
+## Dynamic Job Parking (`WaitingException` & `WaitingChildrenException`)
 
 Workers can dynamically yield and park execution when waiting for external conditions or dependent child trees:
 
 - **`WaitingException`**: Moves the job back to `WAITING` state to be retried after other queued jobs.
 - **`WaitingChildrenException`**: Parks a job in `WAITING_CHILDREN` until dependencies complete.
+
+---
+
+## Programmatic Job Discarding (`job.discard()`)
+
+In BullMQ, workers can call `job.discard()` to instruct the queue to abandon any remaining retry attempts and fail the job immediately. OxMQ provides native parity with `job.discard()`:
+
+```java
+OxmqWorker<OrderRequest> worker = OxmqWorker.<OrderRequest>builder()
+    .queueName("orders")
+    .redisUri("redis://localhost:6379")
+    .processor(job -> {
+        OrderRequest order = job.getData();
+        if (order.isFraudulent()) {
+            // Mark job as discarded: any subsequent failure aborts retries immediately!
+            job.discard();
+            throw new RuntimeException("Detected fraudulent transaction; retries aborted.");
+        }
+        return processOrder(order);
+    })
+    .build();
+```
+
+When `job.discard()` is invoked:
+1. `job.isDiscarded()` transitions to `true`.
+2. When the processor throws an exception or fails, `OxmqWorker` detects the discarded state and treats it as an unrecoverable failure.
+3. The job immediately transitions to `FAILED` (`moveToFinished-14.lua`) regardless of how many retry attempts were initially configured.
+
+---
+
+## Inspecting Ignored Children Failures (`getIgnoredChildrenFailures()`)
+
+In parent-child DAG workflows configured with `ignoreDependencyOnFailure(true)` (or `failParentOnFailure(false)`), parent jobs continue to execute even if one or more child jobs fail.
+
+To inspect which children failed and retrieve their error messages, use `job.getIgnoredChildrenFailures()`:
+
+```java
+OxmqWorker<ReportAggregator> worker = OxmqWorker.<ReportAggregator>builder()
+    .queueName("report-parent")
+    .redisUri("redis://localhost:6379")
+    .processor(parentJob -> {
+        // Successful child task outputs (lazily loaded)
+        Map<String, Object> childResults = parentJob.getChildrenValues();
+        
+        // Failed child task error messages (lazily loaded from Redis hash {job:failed})
+        Map<String, String> failedChildren = parentJob.getIgnoredChildrenFailures();
+        
+        if (!failedChildren.isEmpty()) {
+            failedChildren.forEach((childJobId, errorReason) -> {
+                log.warn("Child task {} failed with reason: {}", childJobId, errorReason);
+            });
+        }
+        
+        return aggregateReport(childResults, failedChildren);
+    })
+    .build();
+```
+
+`getIgnoredChildrenFailures()` is evaluated **lazily on-demand**. Standard jobs or DAGs without failed children incur zero Redis network calls.
+
+---
+
+## OpenTelemetry Distributed Tracing (`TraceContext`)
+
+OxMQ natively supports W3C distributed tracing standards (`traceparent` and `tracestate`), allowing distributed traces to flow seamlessly across microservice boundaries, queues, and DAG dependencies.
+
+```java
+import io.oxmq.tracing.TraceContext;
+
+// 1. Enqueue job with existing OpenTelemetry trace context
+TraceContext parentContext = TraceContext.of(
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+    "rojo=1"
+);
+
+Job<PaymentRequest> job = queue.add("payments", request, JobOptions.builder()
+    .traceparent(parentContext.traceparent())
+    .tracestate(parentContext.tracestate())
+    .build());
+
+// 2. Consume and propagate trace in worker
+OxmqWorker<PaymentRequest> worker = OxmqWorker.<PaymentRequest>builder()
+    .queueName("payments")
+    .processor(job -> {
+        // Extract incoming W3C TraceContext
+        TraceContext incomingTrace = job.getTraceContext();
+        if (incomingTrace != null) {
+            log.info("Processing job under Trace ID: {}", incomingTrace.traceId());
+            
+            // Create child span context for downstream calls
+            TraceContext childSpan = incomingTrace.createChildSpan();
+            httpClient.setHeader("traceparent", childSpan.traceparent());
+        }
+        return processPayment(job.getData());
+    })
+    .build();
+```

@@ -1,18 +1,18 @@
-# 🏛️ OxMQ Architecture & Internals
+# Architecture & Engine Internals
 
-This document details the architectural design, Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and performance telemetry in **OxMQ**.
+This document details the architectural design, low-level Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and distributed tracing protocols implemented in **OxMQ**.
 
 ---
 
 ## 1. High-Level System Architecture
 
-OxMQ is engineered around 6 core pillars:
-1. **Atomic Redis State Transitions:** All state transitions (`WAITING` $\rightarrow$ `ACTIVE` $\rightarrow$ `COMPLETED` / `FAILED` / `DELAYED`) execute via official BullMQ Lua scripts with single-roundtrip ACID guarantees.
-2. **Virtual Thread Native with Java 17 Fallback:** Every task execution runs in an ultra-lightweight Java 21 Virtual Thread (with automatic fallback to high-performance platform thread pools on Java 17 LTS via `DispatcherExecutorFactory`), enabling 1,000+ to 10,000+ concurrent I/O-bound workers with near-zero memory overhead.
-3. **High-Throughput Batch Dequeue:** Bulk pop up to $N$ jobs atomically in 1 Redis call for fast database ingestion (ClickHouse, Elasticsearch, PostgreSQL batch inserts).
-4. **100% BullMQ v6 Wire & Script Parity:** Reuses official, battle-tested BullMQ v6 Lua scripts with zero custom Lua code. Standard BullMQ Redis key hierarchies enable seamless polyglot interoperability with Node.js/Python workers and instant compatibility with **Bull-Board UI**.
-5. **Pluggable Storage Backend (`QueueBackend`):** Mirrors BullMQ v6's internal backend abstraction (`io.oxmq.backend.QueueBackend`), decoupling high-level queue operations from the Lettuce Redis connection driver (`RedisQueueBackend`).
-6. **Native Performance Instrumentation:** Microsecond-resolution Micrometer timers, gauges, and counters built into the core path.
+OxMQ is engineered around 6 foundational pillars:
+1. **Atomic State Transitions**: All state transitions (`WAITING` &rarr; `ACTIVE` &rarr; `COMPLETED` / `FAILED` / `DELAYED`) execute via official BullMQ Lua scripts with single-roundtrip ACID atomicity.
+2. **Virtual Thread Native**: Built for Java 21+ Project Loom Virtual Threads (with automatic fallback to platform thread pools on Java 17 LTS), enabling 10,000+ concurrent I/O-bound workers with ~1 KB heap footprint per task.
+3. **High-Throughput Batch Dequeue**: Bulk pop up to $N$ jobs atomically in a single Redis call (`OxmqBatchWorker`) with `maxBatchBytes` memory safety for fast database ingestion.
+4. **100% BullMQ Wire & Script Parity**: Reuses the official 49 BullMQ Lua scripts with standard Redis key topologies, unlocking seamless polyglot interoperability (Java &harr; Node.js) and instant compatibility with **Bull-Board UI**.
+5. **Pluggable Storage Backend (`QueueBackend`)**: Decouples high-level queue abstractions from the underlying Lettuce Redis driver (`RedisQueueBackend`).
+6. **Microsecond Observability**: Built-in Micrometer instrumentation, OpenTelemetry W3C distributed tracing, and pre-configured Grafana dashboards.
 
 ```mermaid
 graph TB
@@ -20,16 +20,16 @@ graph TB
         Producer["OxmqQueue&lt;T&gt;<br/>(Producer)"]
         Flow["FlowProducer<br/>(DAG Workflows)"]
         SpringWorker["@OxmqListener<br/>(Spring Boot 3)"]
-        CoreWorker["OxmqWorker&lt;T&gt;<br/>(1-by-1 Loom Worker)"]
+        CoreWorker["OxmqWorker&lt;T&gt;<br/>(Virtual Thread Worker)"]
         BatchWorker["OxmqBatchWorker&lt;T&gt;<br/>(Bulk Ingestion Worker)"]
-        Events["QueueEvents<br/>(Pub/Sub Listener)"]
+        Events["QueueEvents<br/>(Stream Listener)"]
     end
 
     subgraph OxmqCore["OxMQ Core Engine"]
-        LoomDispatcher["Virtual Thread Dispatcher<br/>(Executors.newVirtualThreadPerTaskExecutor)"]
+        LoomDispatcher["Virtual Thread Dispatcher<br/>(newVirtualThreadPerTaskExecutor)"]
         LockWatchdog["LockExtender &amp; StalledJobSentinel<br/>(Background Watchdog)"]
-        RateLimit["RateLimiter<br/>(Sliding Window Token Bucket)"]
-        MetricsEngine["OxmqMetrics<br/>(Native Micrometer Integration)"]
+        RateLimit["RateLimiter &amp; Queue Meta<br/>(concurrency, max, duration)"]
+        TracingEngine["TraceContext Engine<br/>(W3C traceparent / tracestate)"]
         LuaManager["LuaScriptManager<br/>(SHA-1 Digest Caching &amp; EVALSHA)"]
     end
 
@@ -40,13 +40,9 @@ graph TB
         CompletedZSet[("bull:&lt;queue&gt;:completed<br/>[Completed ZSet]")]
         FailedZSet[("bull:&lt;queue&gt;:failed<br/>[Failed ZSet]")]
         JobHashes[("bull:&lt;queue&gt;:&lt;id&gt;<br/>[Job Metadata Hash]")]
-        EventsPubSub[("bull:&lt;queue&gt;:events<br/>[Pub/Sub Channel]")]
-        LimiterKey[("bull:&lt;queue&gt;:limiter<br/>[Sliding Window ZSet]")]
-    end
-
-    subgraph TelemetrySink["Observability Sinks"]
-        Prometheus["Prometheus / Grafana"]
-        BullBoardUI["Bull-Board UI Dashboard"]
+        EventsStream[("bull:&lt;queue&gt;:events<br/>[Redis Stream]")]
+        LimiterKey[("bull:&lt;queue&gt;:limiter<br/>[Token Bucket]")]
+        MetaKey[("bull:&lt;queue&gt;:meta<br/>[Queue Metadata Hash]")]
     end
 
     Producer -->|add / addBulk| LuaManager
@@ -60,253 +56,203 @@ graph TB
     RateLimit --> LuaManager
 
     LuaManager --> RedisStorage
-    MetricsEngine --> Prometheus
-    EventsPubSub --> Events
-    EventsPubSub --> BullBoardUI
-    JobHashes --> BullBoardUI
+    EventsStream --> Events
 ```
 
 ---
 
-## 2. Job Lifecycle State Machine
+## 2. Low-Level Redis Data Model & Hash Field Dictionary
 
-Jobs transition through a strictly enforced, atomic state machine managed by official BullMQ Redis Lua scripts:
+Every job in OxMQ is stored in Redis as a Hash at the key `bull:<queue>:<jobId>`. The table below details every canonical field, its serialization encoding, and its purpose across the lifecycle:
 
-<p align="center">
-  <img src="/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
-</p>
-
-```mermaid
-stateDiagram-v2
-    [*] --> WAITING: addStandardJob-9.lua [delay == 0]
-    [*] --> DELAYED: addDelayedJob-6.lua [delay > 0]
-    [*] --> WAITING_CHILDREN: addParentJob-6.lua [parent node]
-
-    DELAYED --> WAITING: Maturity timestamp reached (now >= score)
-    WAITING_CHILDREN --> WAITING: All children completed (unresolved == 0)
-
-    WAITING --> ACTIVE: moveToActive-11.lua (Worker acquires job & lock)
-    
-    state ACTIVE {
-        [*] --> Executing
-        Executing --> ProgressUpdated: updateProgress-3.lua
-        ProgressUpdated --> Executing
-        Executing --> LockExtended: extendLock-2.lua Heartbeat
-        LockExtended --> Executing
-    }
-
-    ACTIVE --> COMPLETED: Success (moveToFinished-14.lua)
-    ACTIVE --> DELAYED: Failed & retries remain (retryJob-11.lua with backoff)
-    ACTIVE --> FAILED: Failed & max attempts exhausted
-    ACTIVE --> WAITING: Lock expired (moveStalledJobsToWait-9.lua recovers job)
-
-    FAILED --> WAITING: Explicit retry (retryJob-11.lua)
-    
-    COMPLETED --> [*]: TTL expired / cleanJobsInSet-3.lua
-    FAILED --> [*]: TTL expired / cleanJobsInSet-3.lua
-```
+| Hash Field | Wire Key | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `id` | String | Unique job identifier (auto-incrementing or deterministic custom ID). |
+| `name` | `name` | String | Logical task name (e.g. `send-email`, `process-invoice`). |
+| `data` | `data` | String (JSON) | Serialized payload object. |
+| `opts` | `opts` | String (JSON) | Serialized `JobOptions` (retry attempts, backoff parameters, delays, retention policies). |
+| `timestamp` | `timestamp` | Int64 | Epoch millisecond timestamp when the job was initially enqueued. |
+| `processedOn` | `processedOn` | Int64 | Epoch millisecond timestamp when a worker locked the job and transitioned to `ACTIVE`. |
+| `finishedOn` | `finishedOn` | Int64 | Epoch millisecond timestamp when execution terminated (`COMPLETED` or `FAILED`). |
+| `attemptsStarted` | `ats` | Int32 | Number of times a worker has claimed the job and entered `ACTIVE`. |
+| `attemptsMade` | `attemptsMade` | Int32 | Number of times the job has finished an execution attempt (failed or completed). |
+| `returnvalue` | `returnvalue` | String (JSON) | Value returned by the worker upon successful completion. |
+| `failedReason` | `failedReason` | String | Error message if the job failed (automatically capped at 8 KB to prevent memory exhaustion). |
+| `stacktrace` | `stacktrace` | String (JSON) | Diagnostic exception stack trace (automatically bounded to 8 KB with truncation markers). |
+| `progress` | `progress` | Number / JSON | Real-time progress metric reported by the running worker (e.g. `0` to `100`). |
+| `childrenValues` | `childrenValues` | Hash Key Ref | Return values of completed child DAG tasks (lazily evaluated; 0 overhead for standard jobs). |
+| `ignoredChildrenFailures` | `:failed` | Hash Key Ref | Error messages of failed child jobs when `ignoreDependencyOnFailure` is enabled. |
+| `traceparent` | `traceparent` | String | W3C Distributed Tracing header (`00-{traceId}-{spanId}-{traceFlags}`). |
+| `tracestate` | `tracestate` | String | W3C Distributed Tracing vendor metadata. |
+| `deferredFailure` | `defa` | Int32 (Flag) | Present (`1`) when job failure was deferred by worker interceptor or sentinel. |
 
 ---
 
-## 3. High-Throughput Batch Dequeue Architecture
+## 3. Lock Watchdog & Stalled Recovery State Machine
 
-For high-volume data pipelines (e.g. audit logs, clickstream events, metrics ingestion into ClickHouse, Elasticsearch, or PostgreSQL), OxMQ provides **Batch Dequeue**:
+To guarantee that long-running jobs never lose their locks while healthy, and crashed worker nodes are swiftly recovered, OxMQ coordinates a **heartbeat lock timer** with a **stalled job sentinel**:
 
 ```mermaid
 sequenceDiagram
     autonumber
+    participant Worker as Worker (Virtual Thread)
     participant Redis as Redis Storage
-    participant BatchPoller as OxmqBatchWorker
-    participant Loom as VirtualThreadPerTaskExecutor
-    participant TargetDB as ClickHouse / Elasticsearch / Postgres
+    participant Sentinel as Stalled Sentinel (Watcher)
 
-    BatchPoller->>Redis: moveToActiveBatch.lua (Pop up to 100 jobs atomically)
-    Redis-->>BatchPoller: List<Job<T>> [100 items]
-    BatchPoller->>Loom: submit(() -> processor.process(batch))
-    activate Loom
-    Loom->>TargetDB: 1 Bulk INSERT / _bulk API call (100 items)
-    TargetDB-->>Loom: Batch Write Confirmed (200 OK)
-    Loom->>Redis: moveToFinishedBatch.lua (Atomically complete all 100 jobs)
-    deactivate Loom
+    Note over Worker,Redis: Scenario A: Normal Execution (Auto-Heartbeat)
+    Worker->>Redis: 1. Claim job & acquire lock (TTL = 30s)
+    loop Every 15 seconds (lockDuration / 2)
+        Worker->>Redis: 2. extendLock-2.lua (Checks token, resets TTL to 30s)
+    end
+    Worker->>Redis: 3. Job finishes -> moveToFinished-14.lua (Saves result & clears lock)
+
+    Note over Worker,Redis: Scenario B: Worker Node Crash (SIGKILL / OOM)
+    Worker-xRedis: Node crashes abruptly -> Lock heartbeat ceases
+    Note over Redis: 30s TTL expires -> Lock key deleted automatically by Redis
+    Sentinel->>Redis: 4. moveStalledJobsToWait-9.lua (Runs every 30s)
+    Note over Redis: Detects active job with no lock key -> Increments stalledCounter
+    alt stalledCounter <= maxStalledCount (default: 1)
+        Redis->>Redis: Moves job from active back to wait queue
+        Redis-->>Sentinel: Emits 'stalled' event on Redis stream
+    else stalledCounter > maxStalledCount
+        Redis->>Redis: Moves job to failed set (Prevents crash loop)
+    end
 ```
+
+> [!NOTE]
+> The auto-heartbeat timer uses non-blocking Lettuce connections to multiplex heartbeat calls across all active tasks on a single TCP socket, preventing socket exhaustion.
 
 ---
 
-## 4. Virtual Thread Concurrency Model (with Java 17 Graceful Fallback)
+## 4. Atomic Polling & Rate Limiter Execution Pipeline
 
-Unlike traditional thread pools that exhaust operating system carrier threads when tasks perform blocking I/O (HTTP calls, DB queries, LLM inferences), OxMQ leverages Java 21 **Virtual Threads (Project Loom)** on JVM 21+, with automatic, zero-config fallback to platform thread pools on **Java 17 LTS** via [`DispatcherExecutorFactory`](/guide/virtual-threads):
+Every job dequeue operation in OxMQ executes BullMQ's official `moveToActive-11.lua`. This script evaluates queue state, cluster concurrency caps, and sliding-window rate limits atomically in a single Redis roundtrip:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    participant Redis as Redis Cluster
-    participant Poller as OxMQ Poller Thread
-    participant Loom as VirtualThreadPerTaskExecutor
-    participant Worker as Virtual Thread #N
-    participant IO as External I/O (HTTP/DB/LLM)
-
-    loop Continuous Non-Blocking Polling
-        Poller->>Redis: moveToActive.lua (Atomic pop & set lock)
-        Redis-->>Poller: Job Payload [ID: 1042]
-        Poller->>Loom: submit(JobTask)
-        Note over Poller: Immediately ready for next job (Zero blocking)
-    end
-
-    activate Worker
-    Loom->>Worker: Spawn Virtual Thread
-    Worker->>Worker: job.updateProgress(25%)
-    Worker->>IO: Dispatch HTTP Request / LLM Call
-    Note over Worker: Carrier thread unmounted during blocking I/O!
-    IO-->>Worker: HTTP 200 OK Response
-    Worker->>Redis: moveToFinished.lua (Save return value & release lock)
-    Worker->>Redis: Record Micrometer Metrics (Duration & Status)
-    deactivate Worker
+flowchart LR
+    Queue[("Waiting Jobs")] --> Gate1{"1. Queue Status<br/>Paused or Maxed?"}
+    Gate1 -- No --> Gate2{"2. Rate Limit<br/>Quota Available?"}
+    Gate1 -- Yes (Paused/Maxed) --> Sleep["Wait Poll Interval"]
+    Gate2 -- Yes --> Dispatch["3. Atomically Pop Job<br/>Dispatch to Virtual Thread"]
+    Gate2 -- Quota Full --> SleepTTL["Sleep for Rate Limit TTL"]
+    
+    style Queue fill:#1e293b,stroke:#475569,color:#fff
+    style Gate1 fill:#334155,stroke:#64748b,color:#fff
+    style Gate2 fill:#334155,stroke:#64748b,color:#fff
+    style Dispatch fill:#047857,stroke:#10b981,color:#fff
+    style Sleep fill:#b91c1c,stroke:#ef4444,color:#fff
+    style SleepTTL fill:#b45309,stroke:#f59e0b,color:#fff
 ```
+
+### Execution Rules inside `moveToActive-11.lua`:
+1. **Queue Metadata Check**: Reads `concurrency`, `paused`, `max`, and `duration` from `bull:<queue>:meta`.
+2. **Concurrency Enforced**: If `concurrency` is configured and `LLEN bull:<queue>:active >= concurrency`, returns `{0, 0, 0, 0}`.
+3. **Rate Limit Enforced**: If `max` and `duration` are configured, checks the counter `bull:<queue>:limiter`. If count &ge; max, returns `{0, 0, expireTimeMs, 0}`. The worker unmounts and sleeps for `expireTimeMs` without polling.
+4. **Atomic Dispatch**: If clear, executes `RPOPLPUSH wait active` (or `ZPOPMIN prioritized active`), sets the lock key, records `processedOn`, and returns the full job hash.
 
 ---
 
 ## 5. Parent-Child DAG Workflow Engine (`FlowProducer`)
 
-OxMQ supports complex task trees where parent tasks dynamically activate and consume the results of their children:
-
-<p align="center">
-  <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
-</p>
+OxMQ's `FlowProducer` orchestrates complex directed acyclic graphs (DAGs) without external workflow engines:
 
 ```mermaid
 graph TD
-    Parent["Parent Job: Video Assembly<br/>(State: WAITING_CHILDREN, unresolvedChildren = 3)"]
-    
-    Child1["Child 1: Transcode 1080p<br/>(State: ACTIVE)"]
-    Child2["Child 2: Transcode 720p<br/>(State: ACTIVE)"]
-    Child3["Child 3: Transcode 480p<br/>(State: ACTIVE)"]
+    Parent["Parent Task: Generate Compliance Report<br/><i>State: WAITING_CHILDREN | Dependencies: 2</i>"]
 
-    Child1 -->|On Finish: HSET childrenValues & Decr counter| Parent
-    Child2 -->|On Finish: HSET childrenValues & Decr counter| Parent
-    Child3 -->|On Finish: Counter reaches 0 -> Move to WAITING| Parent
+    ChildA["Child A: Audit Exchange Mailboxes<br/><i>Worker 1 (Virtual Thread)</i>"] -->|Returns Dataset A| Parent
+    ChildB["Child B: Audit SharePoint Files<br/><i>Worker 2 (Virtual Thread)</i>"] -->|Returns Dataset B| Parent
 
-    style Parent fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
-    style Child1 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
-    style Child2 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
-    style Child3 fill:#2b6cb0,stroke:#3182ce,stroke-width:2px,color:#fff
+    Parent -.->|Dependencies reach 0| ReadyQueue["bull:reports:wait<br/><i>Parent Claimed &amp; Executed with Child Data</i>"]
+
+    style Parent fill:#1e293b,stroke:#475569,color:#fff
+    style ChildA fill:#0f766e,stroke:#14b8a6,color:#fff
+    style ChildB fill:#0f766e,stroke:#14b8a6,color:#fff
+    style ReadyQueue fill:#1e3a8a,stroke:#3b82f6,color:#fff
 ```
+
+### Mechanical Steps during DAG Completion:
+1. **Atomic Leaf Execution**: Child jobs run concurrently across worker nodes.
+2. **Result Propagation**: When a child finishes, `moveToFinished-14.lua` saves its return value into the parent's `childrenValues` hash and decrements the parent's unresolved dependency counter.
+3. **Parent Promotion**: When the dependency counter reaches 0, Redis automatically transitions the parent from `waiting-children` to `wait`.
+4. **Failure Policies**:
+   - `failParentOnFailure = true`: Any child failure immediately fails the parent.
+   - `ignoreDependencyOnFailure = true`: The child error is recorded in `{parentJob}:failed` (accessible via `parentJob.getIgnoredChildrenFailures()`), and the parent continues execution.
 
 ---
 
-## 6. Native Performance Telemetry Pipeline
+## 6. Redis Cluster CRC16 Slot Allocation & Hash-Tag Routing
+
+Redis Cluster partitions keys across 16,384 hash slots. Multi-key Lua scripts (`moveToActive`, `moveToFinished`, `addBulk`) require that all evaluated keys belong to the **same hash slot**, or Redis aborts with a `CROSSSLOT Keys in request don't hash to the same slot` error.
+
+OxMQ guarantees cluster safety via automated hash-tags `{prefix:queue}`:
 
 ```mermaid
 graph LR
-    subgraph OxmqCore["OxMQ Execution Hooks"]
-        EnqHook["Job Enqueued"]
-        WaitHook["Job Dequeued (Wait Latency)"]
-        ExecHook["Job Executed (Duration & SLA)"]
-        FailHook["Job Failed / Retried"]
+    subgraph Node1["Redis Cluster Node 1 (Slots 0 - 5460)"]
+        SlotA["CRC16('{billing:invoices}') = Slot 3842<br/>-------------------------------------------<br/>• {billing:invoices}:wait<br/>• {billing:invoices}:active<br/>• {billing:invoices}:meta<br/>• {billing:invoices}:limiter<br/>• {billing:invoices}:pc<br/>• {billing:invoices}:events"]
     end
 
-    subgraph MicrometerEngine["OxmqMetrics (Micrometer)"]
-        CounterEnq["oxmq.jobs.enqueued (Counter)"]
-        CounterComp["oxmq.jobs.completed (Counter)"]
-        CounterFail["oxmq.jobs.failed (Counter)"]
-        TimerDuration["oxmq.job.duration (p50, p95, p99 Timer)"]
-        TimerWait["oxmq.job.wait_time (Timer)"]
-        Gauges["oxmq.jobs.active / waiting / delayed (Gauges)"]
+    subgraph Node2["Redis Cluster Node 2 (Slots 5461 - 10922)"]
+        SlotB["CRC16('{shipping:orders}') = Slot 8914<br/>-------------------------------------------<br/>• {shipping:orders}:wait<br/>• {shipping:orders}:active<br/>• {shipping:orders}:meta<br/>• {shipping:orders}:limiter<br/>• {shipping:orders}:events"]
     end
 
-    subgraph Observability["Dashboards & Sinks"]
-        Prometheus["Prometheus / OpenTelemetry"]
-        Grafana["Grafana Dashboards"]
-        Actuator["Spring Boot /actuator/metrics"]
-    end
+    MultiKeyLua["Lua Script (moveToActive-11.lua)<br/>Evaluates 11 keys simultaneously"] -->|Guaranteed single-slot execution| SlotA
 
-    EnqHook --> CounterEnq
-    WaitHook --> TimerWait
-    ExecHook --> TimerDuration
-    ExecHook --> CounterComp
-    FailHook --> CounterFail
-
-    MicrometerEngine --> Prometheus
-    MicrometerEngine --> Actuator
-    Prometheus --> Grafana
+    style Node1 fill:#1e293b,stroke:#334155,color:#fff
+    style Node2 fill:#1e293b,stroke:#334155,color:#fff
+    style MultiKeyLua fill:#047857,stroke:#10b981,color:#fff
 ```
 
----
-
-## 7. Official BullMQ Lua Script Engine & Key Topology
-
-OxMQ directly incorporates the complete suite of **49 official standalone Lua scripts from BullMQ v6**. By executing the exact same Lua state transitions as BullMQ, OxMQ guarantees 100% wire and functional compatibility:
-
-### Key Topology (`QueueKeys`)
-| Key | Redis Type | Purpose |
-| :--- | :--- | :--- |
-| `bull:<queue>:wait` | LIST / STREAM | Pending jobs waiting to be claimed by workers |
-| `bull:<queue>:active` | LIST | Currently executing jobs locked by workers |
-| `bull:<queue>:delayed` | ZSET | Jobs scheduled for future timestamps (`score = timestamp`) |
-| `bull:<queue>:waiting-children` | ZSET | Parent jobs waiting for dependencies to complete |
-| `bull:<queue>:completed` | ZSET | Successfully finished jobs |
-| `bull:<queue>:failed` | ZSET | Failed jobs that have exhausted all retries |
-| `bull:<queue>:<jobId>` | HASH | Job metadata, payload, opts, stacktrace, progress |
-| `bull:<queue>:<jobId>:lock` | STRING | Worker ownership token with lock lease TTL |
-| `bull:<queue>:events` | STREAM / PUBSUB | Real-time state transition events |
-| `bull:<queue>:dn:<dedupId>` | STRING | `keepLastIfActive` deduplication buffer storing latest payload |
-| `bull:<queue>:pc` | ZSET | Priority counter set for prioritized jobs |
-
-### BullMQ v6 Architectural Enhancements in OxMQ
-1. **Priority-Preserving Retries (`reprocessJob-9.lua`)**: Re-queuing failed or completed jobs checks if `priority > 0` and atomically adds the job back to the priority sorted set (`KEYS[8] prioritized`, `KEYS[9] pc`), ensuring high-priority jobs jump ahead upon dead-letter replay.
-2. **DAG Child Dependency Re-attachment (`moveJobsToWait-8.lua`)**: In bulk retries, the script detects parent linkages (`parentKey`) and atomically restores retried child jobs to `parentKey:dependencies`, preventing premature parent job resolution.
-3. **Zero-Attempt Worker Postponement (`moveToDelayed-11.lua`)**: Accepts `skipAttempt: true` (ARGV[6]), enabling workers to defer execution via `DelayedException` without burning attempt budgets.
-4. **Deduplication Buffer Re-queueing (`moveToFinished-14.lua`)**: Automatically checks the `dn:<dedupId>` key and re-dispatches the last deduplicated job upon active task completion.
-
-### MessagePack Binary Protocol (`BullMsgPack`)
-BullMQ scripts unpack complex arguments (`opts`, `jobArgs`) using `cmsgpack.unpack(ARGV[i])`. OxMQ encodes these options into binary MessagePack format using Jackson's MessagePack format and maps key names using BullMQ's option compression table (`fpof` for `failParentOnFailure`, `cpof` for `continueParentOnFailure`, `idof` for `ignoreDependencyOnFailure`, etc.).
+When building cross-queue DAG workflows, use `FlowProducer.forCluster("{myWorkflow}")` to ensure parents and children share the identical cluster slot.
 
 ---
 
-## 8. Memory Optimization & Resource Efficiency Architecture
+## 7. OpenTelemetry Distributed Tracing Protocol
 
-In high-throughput distributed systems processing tens of thousands of jobs per second, unbounded memory allocations can degrade GC latency or exhaust Redis capacity:
+OxMQ natively propagates W3C Trace Context across queues, workers, and microservices:
 
 ```mermaid
-flowchart LR
-    subgraph Consumer["☕ JVM Consumer Optimizations"]
-        Intern["Canonical Key Interning<br/>(Zero string allocations on hot path)"]
-        Lazy["Lazy Child Resolution<br/>(0 roundtrips for standalone jobs)"]
-        Guard["Stack Trace Guardrail<br/>(8KB truncation ceiling)"]
-        Mux["Lettuce Multiplexing<br/>(Watchdogs share binary connection)"]
-    end
-    subgraph Storage["⚡ Redis Storage Optimizations"]
-        Trim["Stream Event Trimming<br/>(XADD MAXLEN ~ N)"]
-        AutoRetention["Default Job Options<br/>(Auto removeOnComplete / Fail)"]
-        Compaction["ZSET Compaction<br/>(Automatic hash eviction)"]
-    end
-    Consumer <--> Storage
+sequenceDiagram
+    autonumber
+    participant Gateway as API Gateway / Upstream Service
+    participant Producer as OxmqQueue (Producer)
+    participant Redis as Redis Storage
+    participant Worker as OxmqWorker (Consumer)
+    participant Downstream as Downstream Database / HTTP API
+
+    Gateway->>Gateway: Receives HTTP request with traceparent header
+    Gateway->>Producer: queue.add("order", data, opts.traceparent(...))
+    Producer->>Redis: HSET bull:orders:101 traceparent 00-4bf92f...-01
+    
+    Note over Redis: Job persists with W3C trace context embedded
+    
+    Worker->>Redis: moveToActive-11.lua (Claims job)
+    Redis-->>Worker: Returns job hash with traceparent
+    Worker->>Worker: TraceContext.fromTraceparent(...)
+    Worker->>Worker: childSpan = traceContext.createChildSpan()
+    Worker->>Downstream: HTTP POST /v1/process (Header: traceparent: childSpan)
+    Downstream-->>Worker: HTTP 200 OK Response
+    Worker->>Redis: moveToFinished-14.lua (Saves result)
 ```
 
-1. **Zero-Allocation Poller Hot-Path**:
-   - Interns canonical BullMQ hash field keys (`id`, `name`, `data`, `opts`, etc.) and pre-sizes field map capacities to prevent map rehashes and Young Gen garbage collector churn.
-2. **Lazy Parent-Child Result Supplier**:
-   - `Job<T>` defers fetching child job return values via a `Supplier<Map<String, Object>>`. Standalone jobs (99.9% of traffic) execute **0 Redis network calls** for `:processed` hashes.
-3. **Lettuce Connection Multiplexing**:
-   - `LockExtender` (heartbeats) and `StalledJobSentinel` (recovery) multiplex over the shared thread-safe binary connection, slashing background TCP sockets by 66%. Dedicated blocking sockets (`bpop`, `xread`) are guarded with deterministic `try ... finally { conn.close(); }` closures.
-4. **Stack Trace Truncation Guardrail**:
-   - Limits exception failure reasons to `8,192` characters (8 KB) with an explicit marker to protect Redis RAM and consumer heap during cascading outage loops.
-5. **Global Retention Inheritance & Stream Trimming**:
-   - Queues and Spring Boot starters automatically apply `removeOnComplete` and `removeOnFail` defaults without requiring repetitive configuration on every `queue.add(...)` call.
-   - Bounded Redis Streams (`maxLenEvents`) ensure `events` streams never grow unbounded under sustained load.
-
-*For complete implementation details, benchmarking metrics, and production tuning parameters, see the [Memory Optimization & Resource Efficiency Guide](/operations/memory-optimization).*
-
 ---
 
-## 🙏 Attribution
+## 8. Virtual Thread Concurrency vs Platform Threads
 
-OxMQ builds upon the foundational queue architecture developed by the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** community. The official BullMQ Lua scripts are included under the permissive MIT license in [`BULLMQ_ATTRIBUTION.md`](https://github.com/gaurav10610/oxmq/blob/main/oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+When tasks perform blocking I/O (such as JDBC database queries, third-party REST API calls, or file reads), Java 21 Project Loom unmounts the Virtual Thread from its underlying OS carrier thread:
 
----
+```
+Platform Threads (Java 17 LTS):
+[OS Carrier Thread #1] ====> [Blocks on Database Query (100ms)] ====> CPU Idle / Thread Pinned
 
-## 👤 Architect & Author
+Virtual Threads (Java 21 Loom):
+[OS Carrier Thread #1] ====> [Task A blocks on DB]
+                           |
+                           +---> Carrier thread immediately switches to Task B!
+                                 (Task A virtual thread unmounts in user space with ~1 KB heap)
+```
 
-**Gaurav Kumar Yadav**
-* 💼 **LinkedIn:** [linkedin.com/in/gaurav-kumar-yadav-6125817a](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)
-* 🐙 **GitHub:** [@gaurav10610](https://github.com/gaurav10610)
-
+- **Memory Footprint**: ~1 KB heap per virtual thread vs ~1 MB stack per platform thread.
+- **Concurrency Limit**: 10,000+ concurrent workers on a single JVM node with zero carrier thread starvation.
+- **Graceful Fallback**: On Java 17 LTS runtimes, OxMQ's `DispatcherExecutorFactory` transparently falls back to an optimized dynamic platform thread pool.

@@ -4,7 +4,7 @@ A **Worker** is the consumer engine in OxMQ responsible for claiming waiting job
 
 ---
 
-## 🏗️ Worker Architecture
+## Worker Architecture
 
 ```text
 +-------------------------------------------------------------------------+
@@ -35,7 +35,7 @@ A **Worker** is the consumer engine in OxMQ responsible for claiming waiting job
 
 ---
 
-## 🧵 Concurrency & Virtual Threads
+## Concurrency & Virtual Threads
 
 OxMQ allows configuring high concurrency without the risk of OS thread pool exhaustion:
 
@@ -59,7 +59,7 @@ The carrier OS thread is immediately free to process other jobs, allowing a sing
 
 ---
 
-## 🔒 Heartbeat Lock Watchdog & Auto-Extension
+## Heartbeat Lock Watchdog & Auto-Extension
 
 When a worker claims a job from Redis, it acquires an exclusive distributed lock:
 - **Default Lock TTL**: 30,000 ms (30 seconds).
@@ -68,7 +68,7 @@ When a worker claims a job from Redis, it acquires an exclusive distributed lock
 
 ---
 
-## 🛡️ Stalled Job Recovery Sentinel
+## Stalled Job Recovery Sentinel
 
 If a worker node crashes abruptly (e.g. `SIGKILL`, server crash, hardware power cut, OutOfMemory):
 1. The heartbeat timer stops extending the lock.
@@ -88,7 +88,7 @@ OxmqWorker.<Payload>builder()
 
 ---
 
-## 🛑 Worker Lifecycle & Graceful Shutdown
+## Worker Lifecycle & Graceful Shutdown
 
 Always shut down workers cleanly so in-flight tasks finish without stalling:
 
@@ -113,7 +113,7 @@ worker.resume();
 
 ---
 
-## 🛑 In-Flight Job Cancellation & Cooperative Interruption
+## In-Flight Job Cancellation & Cooperative Interruption
 
 In high-concurrency environments, users or orchestrators often need to abort in-flight jobs (e.g. user cancels an active video render, API timeout triggers task cancellation, or tenant disconnects).
 
@@ -157,7 +157,47 @@ worker.cancelAllJobs("Node entering maintenance drain");
 
 ---
 
-## 🧠 Zero-Allocation Poller & Resource Efficiency
+## Worker-Level Event Emitter (`worker.on(...)`)
+
+In addition to cluster-wide Redis Streams events (`QueueEvents`), individual `Worker` instances expose typed local lifecycle listeners matching BullMQ's EventEmitter API (`worker.on('active')`, `worker.on('completed')`, etc.):
+
+```java
+OxmqWorker<EmailTask> worker = OxmqWorker.<EmailTask>builder()
+        .queueName("emails")
+        .redisUri("redis://localhost:6379")
+        .processor(job -> sendEmail(job.getData()))
+        // 1. Fluent Builder Event Binding:
+        .onActive(job -> log.info("Job {} is now active on worker {}", job.getId(), worker.getId()))
+        .onCompleted((job, result) -> log.info("Job {} completed successfully with: {}", job.getId(), result))
+        .onFailed((job, error) -> log.error("Job {} failed with error: {}", job.getId(), error.getMessage()))
+        .onProgress((job, progress) -> log.debug("Job {} reported progress: {}", job.getId(), progress))
+        .onDrained(() -> log.info("Queue is drained; no remaining jobs waiting"))
+        .onPaused(() -> log.warn("Worker has been paused"))
+        .onResumed(() -> log.info("Worker has resumed processing"))
+        .onError(err -> log.error("Internal worker error: {}", err.getMessage()))
+        .build();
+
+// 2. Programmatic Runtime Event Registration:
+worker.onActive(job -> metricsService.recordJobStart(job.getId()));
+worker.onCompleted((job, result) -> metricsService.recordJobSuccess(job.getId()));
+worker.onFailed((job, err) -> alertService.notifyFailure(job.getId(), err));
+```
+
+### Supported Worker Events:
+| Event Callback | Arguments | Trigger Condition |
+| :--- | :--- | :--- |
+| `onActive` | `Job<T> job` | Fired when a worker successfully locks and begins processing a job. |
+| `onCompleted` | `Job<T> job, Object result` | Fired when job processing returns successfully and transitions in Redis. |
+| `onFailed` | `Job<T> job, Throwable error` | Fired when job processing throws an exception or fails execution. |
+| `onProgress` | `Job<T> job, Object progress` | Fired when `job.updateProgress(...)` is invoked. |
+| `onDrained` | None | Fired when the waiting queue has zero remaining jobs during polling. |
+| `onPaused` | None | Fired when worker transitions to paused state. |
+| `onResumed` | None | Fired when worker resumes polling. |
+| `onError` | `Throwable error` | Fired on unhandled background worker loop or Redis connection errors. |
+
+---
+
+## Zero-Allocation Poller & Resource Efficiency
 
 OxMQ workers are engineered for high-throughput zero-churn consumption:
 - **Canonical Key Interning**: The polling loop maps standard BullMQ hash fields to `static final` interned String references, eliminating millions of transient String allocations per minute.

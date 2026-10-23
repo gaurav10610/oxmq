@@ -11,7 +11,8 @@ public enum JobState {
     FAILED,
     PAUSED,
     STALLED,
-    WAITING_CHILDREN;
+    WAITING_CHILDREN,
+    PRIORITIZED;
 
     public static JobState fromBullMqState(String stateStr) {
         if (stateStr == null || stateStr.isBlank()) {
@@ -26,6 +27,7 @@ public enum JobState {
             case "paused" -> PAUSED;
             case "waiting-children" -> WAITING_CHILDREN;
             case "stalled" -> STALLED;
+            case "prioritized" -> PRIORITIZED;
             default -> null;
         };
     }
@@ -40,6 +42,11 @@ public enum JobState {
             case PAUSED -> "paused";
             case WAITING_CHILDREN -> "waiting-children";
             case STALLED -> "stalled";
+            case PRIORITIZED -> "prioritized";
         };
+    }
+
+    public String getBullMqName() {
+        return toBullMqState();
     }
 }

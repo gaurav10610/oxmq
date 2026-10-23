@@ -7,7 +7,7 @@ Welcome to **OxMQ**! OxMQ brings the battle-tested power of **BullMQ** to the Ja
 
 ## 📦 1. Installation
 
-Add OxMQ to your project directly from **Maven Central** (globally available out-of-the-box with zero configuration), **JitPack**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0).
+Add OxMQ to your project directly from **Maven Central** (globally available out-of-the-box with zero configuration), **JitPack**, or download standalone JARs from [GitHub Releases](https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0).
 
 ### Option 1: Maven Central (Global Standard — Zero Configuration)
 
@@ -20,14 +20,14 @@ Because OxMQ is published to Maven Central under `io.github.gaurav10610`, **no c
     <dependency>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 </dependencies>
 ```
@@ -35,9 +35,9 @@ Because OxMQ is published to Maven Central under `io.github.gaurav10610`, **no c
 #### Gradle (`build.gradle.kts`)
 ```kotlin
 dependencies {
-    implementation("io.github.gaurav10610:oxmq-core:1.6.0")
+    implementation("io.github.gaurav10610:oxmq-core:1.7.0")
     // or for Spring Boot 3 applications:
-    // implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.6.0")
+    // implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.7.0")
 }
 ```
 
@@ -59,14 +59,14 @@ No GitHub token or authentication required. Simply add the JitPack repository:
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 
     <!-- Optional: Spring Boot 3 Starter (@OxmqListener, Actuator) -->
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 </dependencies>
 ```
@@ -79,9 +79,9 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.6.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.7.0")
     // or for Spring Boot 3 applications:
-    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.6.0")
+    // implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.7.0")
 }
 ```
 
