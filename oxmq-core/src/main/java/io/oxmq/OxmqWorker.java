@@ -24,6 +24,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,11 +32,15 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -81,6 +86,21 @@ public class OxmqWorker<T> implements Worker<T> {
     private LockExtender lockExtender;
     private StalledJobSentinel stalledJobSentinel;
 
+    @FunctionalInterface
+    public interface CustomBackoffStrategy<T> {
+        Duration calculateDelay(int attemptsMade, Throwable error, Job<T> job);
+    }
+
+    private final Map<String, CustomBackoffStrategy<T>> customBackoffStrategies;
+    private final List<Consumer<Job<T>>> activeListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Object>> completedListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Throwable>> failedListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Object>> progressListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> drainedListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> pausedListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> resumedListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<Throwable>> errorListeners = new CopyOnWriteArrayList<>();
+
     private record ActiveExecution<T>(Job<T> job, Thread thread) {}
     private final ConcurrentMap<String, ActiveExecution<T>> activeExecutions = new ConcurrentHashMap<>();
 
@@ -109,6 +129,16 @@ public class OxmqWorker<T> implements Worker<T> {
         this.interceptors = builder.interceptors != null && !builder.interceptors.isEmpty()
                 ? List.copyOf(builder.interceptors)
                 : List.of();
+
+        this.customBackoffStrategies = Map.copyOf(builder.customBackoffStrategies);
+        this.activeListeners.addAll(builder.activeListeners);
+        this.completedListeners.addAll(builder.completedListeners);
+        this.failedListeners.addAll(builder.failedListeners);
+        this.progressListeners.addAll(builder.progressListeners);
+        this.drainedListeners.addAll(builder.drainedListeners);
+        this.pausedListeners.addAll(builder.pausedListeners);
+        this.resumedListeners.addAll(builder.resumedListeners);
+        this.errorListeners.addAll(builder.errorListeners);
 
         if (builder.rateLimitMax > 0 && builder.rateLimitDuration != null) {
             this.rateLimiter = new RateLimiter(connectionManager.getCommandConnection(), this.scriptManager,
@@ -176,6 +206,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
                 if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
                     concurrencySemaphore.release();
+                    emitDrained();
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
                     continue;
                 }
@@ -186,6 +217,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 if (jobId == null || jobId.isEmpty() || "0".equals(jobId)) {
                     long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
                     concurrencySemaphore.release();
+                    emitDrained();
                     TimeUnit.MILLISECONDS.sleep(expireTime > 0 ? Math.min(expireTime, pollIntervalMs) : pollIntervalMs);
                     continue;
                 }
@@ -207,6 +239,7 @@ public class OxmqWorker<T> implements Worker<T> {
                     Thread.currentThread().interrupt();
                     break;
                 }
+                emitError(e);
                 log.warn("Error in OxMQ worker poll loop for queue {}", queueName, e);
                 try {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
@@ -226,6 +259,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private void executeJob(Job<T> job) {
         long startTime = System.nanoTime();
         activeExecutions.put(job.getId(), new ActiveExecution<>(job, Thread.currentThread()));
+        emitActive(job);
         try {
             // 1. Interceptor pre-processing
             if (!interceptors.isEmpty()) {
@@ -327,6 +361,7 @@ public class OxmqWorker<T> implements Worker<T> {
         JobOptions opts = job.getOpts();
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 serializedResult, "returnvalue", "completed", workerId, false, opts != null ? opts.toMap() : Map.of());
+        emitCompleted(job, result);
     }
 
     private static final int MAX_FAILED_REASON_LENGTH = 8192;
@@ -365,7 +400,8 @@ public class OxmqWorker<T> implements Worker<T> {
                                   (error.getCause() instanceof UnrecoverableError) ||
                                   (error instanceof io.oxmq.exception.JobCancelledException) ||
                                   (error instanceof InterruptedException) ||
-                                  job.isCancelled();
+                                  job.isCancelled() ||
+                                  job.isDiscarded();
 
         if (maxStartedAttempts > 0 && job.getAttemptsStarted() >= maxStartedAttempts) {
             isUnrecoverable = true;
@@ -377,16 +413,28 @@ public class OxmqWorker<T> implements Worker<T> {
 
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
             BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
-            long delayMs = backoff != null ? backoff.calculateDelayMs(currentAttempts) : 0;
+            long delayMs = 0;
+            if (backoff instanceof BackoffStrategy.Custom custom) {
+                CustomBackoffStrategy<T> customFn = customBackoffStrategies.get(custom.name());
+                if (customFn != null) {
+                    Duration d = customFn.calculateDelay(currentAttempts, error, job);
+                    delayMs = d != null ? Math.max(0, d.toMillis()) : 0;
+                }
+            } else if (backoff != null) {
+                delayMs = backoff.calculateDelayMs(currentAttempts);
+            }
+
             if (delayMs > 0) {
                 bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
                         job.getId(), workerId, delayMs);
+                emitFailed(job, error);
                 log.debug("Job {} [id: {}] failed (attempt {}/{}), delayed by {} ms for retry",
                         job.getName(), job.getId(), currentAttempts, maxAttempts, delayMs);
                 return;
             } else {
                 bullScripts.retryJob(connectionManager.getBinaryConnection(), queueKeys,
                         job.getId(), workerId, opts != null && opts.isLifo());
+                emitFailed(job, error);
                 log.debug("Job {} [id: {}] failed (attempt {}/{}), moved to wait for retry",
                         job.getName(), job.getId(), currentAttempts, maxAttempts);
                 return;
@@ -402,6 +450,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 failedReasonValue, "failedReason", "failed", workerId, false, opts != null ? opts.toMap() : Map.of());
+        emitFailed(job, error);
     }
 
     private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
@@ -453,9 +502,20 @@ public class OxmqWorker<T> implements Worker<T> {
             return null;
         });
 
+        job.setIgnoredChildrenFailuresSupplier(() -> {
+            try {
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
+                return failures != null ? failures : Map.of();
+            } catch (Exception e) {
+                return Map.of();
+            }
+        });
+
         job.setProgressUpdater((percentage, payload) -> {
             try {
                 bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+                emitProgress(job, payload != null ? payload : percentage);
             } catch (Exception e) {
                 log.warn("Failed to sync progress for job {}", jobId, e);
             }
@@ -498,14 +558,18 @@ public class OxmqWorker<T> implements Worker<T> {
 
     @Override
     public void pause() {
-        paused.set(true);
-        log.info("Paused worker [{}] for queue {}", workerId, queueName);
+        if (paused.compareAndSet(false, true)) {
+            emitPaused();
+            log.info("Paused worker [{}] for queue {}", workerId, queueName);
+        }
     }
 
     @Override
     public void resume() {
-        paused.set(false);
-        log.info("Resumed worker [{}] for queue {}", workerId, queueName);
+        if (paused.compareAndSet(true, false)) {
+            emitResumed();
+            log.info("Resumed worker [{}] for queue {}", workerId, queueName);
+        }
     }
 
     @Override
@@ -563,6 +627,102 @@ public class OxmqWorker<T> implements Worker<T> {
     @Override
     public int getActiveJobCount() {
         return activeExecutions.size();
+    }
+
+    @Override
+    public OxmqWorker<T> onActive(Consumer<Job<T>> listener) {
+        if (listener != null) activeListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onCompleted(BiConsumer<Job<T>, Object> listener) {
+        if (listener != null) completedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onFailed(BiConsumer<Job<T>, Throwable> listener) {
+        if (listener != null) failedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onProgress(BiConsumer<Job<T>, Object> listener) {
+        if (listener != null) progressListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onDrained(Runnable listener) {
+        if (listener != null) drainedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onPaused(Runnable listener) {
+        if (listener != null) pausedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onResumed(Runnable listener) {
+        if (listener != null) resumedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqWorker<T> onError(Consumer<Throwable> listener) {
+        if (listener != null) errorListeners.add(listener);
+        return this;
+    }
+
+    private void emitActive(Job<T> job) {
+        for (Consumer<Job<T>> l : activeListeners) {
+            try { l.accept(job); } catch (Throwable e) { log.warn("Error in worker onActive listener", e); }
+        }
+    }
+
+    private void emitCompleted(Job<T> job, Object result) {
+        for (BiConsumer<Job<T>, Object> l : completedListeners) {
+            try { l.accept(job, result); } catch (Throwable e) { log.warn("Error in worker onCompleted listener", e); }
+        }
+    }
+
+    private void emitFailed(Job<T> job, Throwable error) {
+        for (BiConsumer<Job<T>, Throwable> l : failedListeners) {
+            try { l.accept(job, error); } catch (Throwable e) { log.warn("Error in worker onFailed listener", e); }
+        }
+    }
+
+    private void emitProgress(Job<T> job, Object progress) {
+        for (BiConsumer<Job<T>, Object> l : progressListeners) {
+            try { l.accept(job, progress); } catch (Throwable e) { log.warn("Error in worker onProgress listener", e); }
+        }
+    }
+
+    private void emitDrained() {
+        for (Runnable l : drainedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in worker onDrained listener", e); }
+        }
+    }
+
+    private void emitPaused() {
+        for (Runnable l : pausedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in worker onPaused listener", e); }
+        }
+    }
+
+    private void emitResumed() {
+        for (Runnable l : resumedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in worker onResumed listener", e); }
+        }
+    }
+
+    private void emitError(Throwable error) {
+        for (Consumer<Throwable> l : errorListeners) {
+            try { l.accept(error); } catch (Throwable e) { log.warn("Error in worker onError listener", e); }
+        }
     }
 
     @Override
@@ -743,6 +903,66 @@ public class OxmqWorker<T> implements Worker<T> {
             if (interceptors != null) {
                 this.interceptors.addAll(interceptors);
             }
+            return this;
+        }
+
+        private final Map<String, CustomBackoffStrategy<T>> customBackoffStrategies = new HashMap<>();
+        private final List<Consumer<Job<T>>> activeListeners = new ArrayList<>();
+        private final List<BiConsumer<Job<T>, Object>> completedListeners = new ArrayList<>();
+        private final List<BiConsumer<Job<T>, Throwable>> failedListeners = new ArrayList<>();
+        private final List<BiConsumer<Job<T>, Object>> progressListeners = new ArrayList<>();
+        private final List<Runnable> drainedListeners = new ArrayList<>();
+        private final List<Runnable> pausedListeners = new ArrayList<>();
+        private final List<Runnable> resumedListeners = new ArrayList<>();
+        private final List<Consumer<Throwable>> errorListeners = new ArrayList<>();
+
+        public Builder<T> backoffStrategy(String name, CustomBackoffStrategy<T> strategy) {
+            this.customBackoffStrategies.put(name, strategy);
+            return this;
+        }
+
+        public Builder<T> backoffStrategy(String name, BiFunction<Integer, Throwable, Duration> strategy) {
+            this.customBackoffStrategies.put(name, (attempts, err, job) -> strategy.apply(attempts, err));
+            return this;
+        }
+
+        public Builder<T> onActive(Consumer<Job<T>> listener) {
+            if (listener != null) this.activeListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onCompleted(BiConsumer<Job<T>, Object> listener) {
+            if (listener != null) this.completedListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onFailed(BiConsumer<Job<T>, Throwable> listener) {
+            if (listener != null) this.failedListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onProgress(BiConsumer<Job<T>, Object> listener) {
+            if (listener != null) this.progressListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onDrained(Runnable listener) {
+            if (listener != null) this.drainedListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onPaused(Runnable listener) {
+            if (listener != null) this.pausedListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onResumed(Runnable listener) {
+            if (listener != null) this.resumedListeners.add(listener);
+            return this;
+        }
+
+        public Builder<T> onError(Consumer<Throwable> listener) {
+            if (listener != null) this.errorListeners.add(listener);
             return this;
         }
 

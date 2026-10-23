@@ -263,6 +263,140 @@ public interface Queue<T> extends Closeable {
      */
     java.util.concurrent.CompletableFuture<Object> waitUntilFinishedAsync(String jobId, QueueEvents queueEvents);
 
+    /**
+     * Retrieves jobs for given states with range pagination and ordering.
+     * Mirrors BullMQ's queue.getJobs(types, start, end, asc).
+     */
+    List<Job<T>> getJobs(List<JobState> states, int start, int end, boolean asc);
+
+    /**
+     * Retrieves waiting jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getWaiting(int start, int end) {
+        return getJobs(List.of(JobState.WAITING), start, end, true);
+    }
+
+    /**
+     * Retrieves active jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getActive(int start, int end) {
+        return getJobs(List.of(JobState.ACTIVE), start, end, true);
+    }
+
+    /**
+     * Retrieves delayed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getDelayed(int start, int end) {
+        return getJobs(List.of(JobState.DELAYED), start, end, true);
+    }
+
+    /**
+     * Retrieves completed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getCompleted(int start, int end) {
+        return getJobs(List.of(JobState.COMPLETED), start, end, false);
+    }
+
+    /**
+     * Retrieves failed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getFailed(int start, int end) {
+        return getJobs(List.of(JobState.FAILED), start, end, false);
+    }
+
+    /**
+     * Retrieves jobs waiting for children within the specified range [start, end].
+     */
+    default List<Job<T>> getWaitingChildren(int start, int end) {
+        return getJobs(List.of(JobState.WAITING_CHILDREN), start, end, true);
+    }
+
+    /**
+     * Retrieves prioritized jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getPrioritized(int start, int end) {
+        return getJobs(List.of(JobState.PRIORITIZED), start, end, true);
+    }
+
+    /**
+     * Retrieves paused jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getPaused(int start, int end) {
+        return getJobs(List.of(JobState.PAUSED), start, end, true);
+    }
+
+    /**
+     * Gets job counts breakdown for the specified states.
+     */
+    java.util.Map<JobState, Long> getJobCounts(JobState... states);
+
+    /**
+     * Retrieves the remaining time-to-live (in ms) of the queue rate limiter.
+     */
+    Long getRateLimitTtl();
+
+    /**
+     * Sets the global concurrency limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param concurrency maximum concurrent active jobs across the cluster
+     */
+    void setGlobalConcurrency(int concurrency);
+
+    /**
+     * Retrieves the global concurrency limit configured on this queue, or null if not set.
+     */
+    Integer getGlobalConcurrency();
+
+    /**
+     * Removes the global concurrency limit from this queue.
+     *
+     * @return true if the limit was removed, false if none was set
+     */
+    boolean removeGlobalConcurrency();
+
+    /**
+     * Sets the global rate limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param max      maximum jobs processed per duration window
+     * @param duration time window duration
+     */
+    default void setGlobalRateLimit(int max, java.time.Duration duration) {
+        if (duration == null) {
+            throw new IllegalArgumentException("duration must not be null");
+        }
+        setGlobalRateLimit(max, duration.toMillis());
+    }
+
+    /**
+     * Sets the global rate limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param max            maximum jobs processed per duration window
+     * @param durationMillis time window duration in milliseconds
+     */
+    void setGlobalRateLimit(int max, long durationMillis);
+
+    /**
+     * Retrieves the global rate limit settings configured on this queue, or null if not set.
+     */
+    io.oxmq.model.GlobalRateLimit getGlobalRateLimit();
+
+    /**
+     * Removes the global rate limit settings from this queue.
+     *
+     * @return true if rate limit was removed, false if none was set
+     */
+    boolean removeGlobalRateLimit();
+
+    /**
+     * Removes the active rate limit token bucket key from Redis.
+     *
+     * @return true if the rate limit key was deleted, false if absent
+     */
+    boolean removeRateLimitKey();
+
     @Override
     void close();
 }

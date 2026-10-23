@@ -89,6 +89,70 @@ public interface Worker<T> extends Closeable {
     }
 
     /**
+     * Registers a listener invoked whenever a job starts executing on this worker.
+     * Mirrors BullMQ's worker.on('active', job).
+     */
+    default Worker<T> onActive(java.util.function.Consumer<io.oxmq.model.Job<T>> listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever a job completes successfully on this worker.
+     * Mirrors BullMQ's worker.on('completed', job, result).
+     */
+    default Worker<T> onCompleted(java.util.function.BiConsumer<io.oxmq.model.Job<T>, Object> listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever a job fails on this worker.
+     * Mirrors BullMQ's worker.on('failed', job, err).
+     */
+    default Worker<T> onFailed(java.util.function.BiConsumer<io.oxmq.model.Job<T>, Throwable> listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever a job reports progress on this worker.
+     * Mirrors BullMQ's worker.on('progress', job, progress).
+     */
+    default Worker<T> onProgress(java.util.function.BiConsumer<io.oxmq.model.Job<T>, Object> listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever the worker has processed all available jobs (polling returned empty).
+     * Mirrors BullMQ's worker.on('drained').
+     */
+    default Worker<T> onDrained(Runnable listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever this worker is paused.
+     * Mirrors BullMQ's worker.on('paused').
+     */
+    default Worker<T> onPaused(Runnable listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked whenever this worker is resumed.
+     * Mirrors BullMQ's worker.on('resumed').
+     */
+    default Worker<T> onResumed(Runnable listener) {
+        return this;
+    }
+
+    /**
+     * Registers a listener invoked on unexpected worker execution or background loop errors.
+     * Mirrors BullMQ's worker.on('error', err).
+     */
+    default Worker<T> onError(java.util.function.Consumer<Throwable> listener) {
+        return this;
+    }
+
+    /**
      * Gracefully stops the worker, waiting for active jobs to complete.
      */
     @Override

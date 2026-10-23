@@ -45,6 +45,14 @@ public class Job<T> {
     private transient Supplier<Map<String, Object>> childrenValuesSupplier;
 
     @JsonIgnore
+    private transient Supplier<Map<String, String>> ignoredChildrenFailuresSupplier;
+
+    private Map<String, String> ignoredChildrenFailures;
+
+    @JsonIgnore
+    private transient volatile boolean discarded = false;
+
+    @JsonIgnore
     private transient volatile boolean cancelled = false;
 
     @JsonIgnore
@@ -215,6 +223,58 @@ public class Job<T> {
 
     public void setChildrenValuesSupplier(Supplier<Map<String, Object>> childrenValuesSupplier) {
         this.childrenValuesSupplier = childrenValuesSupplier;
+    }
+
+    /**
+     * Flags this actively executing job so that if processing fails, it will NOT be retried
+     * even if attempts remain. Mirrors BullMQ's job.discard().
+     */
+    public void discard() {
+        this.discarded = true;
+    }
+
+    public boolean isDiscarded() {
+        return discarded;
+    }
+
+    /**
+     * In a parent-child DAG workflow where the parent has ignoreDependencyOnFailure set to true,
+     * returns a map of failed child job keys to their respective failure reasons.
+     * Mirrors BullMQ's job.getIgnoredChildrenFailures().
+     */
+    public Map<String, String> getIgnoredChildrenFailures() {
+        if (ignoredChildrenFailures == null && ignoredChildrenFailuresSupplier != null) {
+            ignoredChildrenFailures = ignoredChildrenFailuresSupplier.get();
+        }
+        return ignoredChildrenFailures != null ? ignoredChildrenFailures : Map.of();
+    }
+
+    public void setIgnoredChildrenFailures(Map<String, String> ignoredChildrenFailures) {
+        this.ignoredChildrenFailures = ignoredChildrenFailures;
+    }
+
+    public void setIgnoredChildrenFailuresSupplier(Supplier<Map<String, String>> ignoredChildrenFailuresSupplier) {
+        this.ignoredChildrenFailuresSupplier = ignoredChildrenFailuresSupplier;
+    }
+
+    public String getTraceparent() {
+        if (opts != null && opts.getTraceparent() != null) {
+            return opts.getTraceparent();
+        }
+        if (opts != null && opts.getTelemetry() != null && opts.getTelemetry().get("traceparent") != null) {
+            return opts.getTelemetry().get("traceparent").toString();
+        }
+        return null;
+    }
+
+    public String getTracestate() {
+        if (opts != null && opts.getTracestate() != null) {
+            return opts.getTracestate();
+        }
+        if (opts != null && opts.getTelemetry() != null && opts.getTelemetry().get("tracestate") != null) {
+            return opts.getTelemetry().get("tracestate").toString();
+        }
+        return null;
     }
 
     public void setProgressUpdater(BiConsumer<Integer, Object> progressUpdater) {

@@ -48,5 +48,6 @@ data/
 **/data/
 downloads/
 **/downloads/
+release-artifacts/
 *.download
 

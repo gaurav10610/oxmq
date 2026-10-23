@@ -259,6 +259,57 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void setGlobalConcurrency(int concurrency) {
+        syncCommands().hset(queueKeys.getKey("meta"), "concurrency", String.valueOf(concurrency));
+    }
+
+    @Override
+    public Integer getGlobalConcurrency() {
+        String val = syncCommands().hget(queueKeys.getKey("meta"), "concurrency");
+        return val != null ? Integer.parseInt(val) : null;
+    }
+
+    @Override
+    public boolean removeGlobalConcurrency() {
+        Long removed = syncCommands().hdel(queueKeys.getKey("meta"), "concurrency");
+        return removed != null && removed > 0;
+    }
+
+    @Override
+    public void setGlobalRateLimit(int max, long durationMillis) {
+        java.util.Map<String, String> fields = java.util.Map.of(
+            "max", String.valueOf(max),
+            "duration", String.valueOf(durationMillis)
+        );
+        syncCommands().hset(queueKeys.getKey("meta"), fields);
+    }
+
+    @Override
+    public io.oxmq.model.GlobalRateLimit getGlobalRateLimit() {
+        String maxStr = syncCommands().hget(queueKeys.getKey("meta"), "max");
+        String durStr = syncCommands().hget(queueKeys.getKey("meta"), "duration");
+        if (maxStr != null && durStr != null) {
+            try {
+                return new io.oxmq.model.GlobalRateLimit(Integer.parseInt(maxStr), Long.parseLong(durStr));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public boolean removeGlobalRateLimit() {
+        Long removed = syncCommands().hdel(queueKeys.getKey("meta"), "max", "duration");
+        return removed != null && removed > 0;
+    }
+
+    @Override
+    public boolean removeRateLimitKey() {
+        Long removed = syncCommands().del(queueKeys.getKey("limiter"));
+        return removed != null && removed > 0;
+    }
+
+    @Override
     public Long removeOrphanedJobs(List<String> candidateJobIds) {
         return bullScripts.removeOrphanedJobs(binaryConnection(), queueKeys, candidateJobIds);
     }
@@ -266,6 +317,61 @@ public class RedisQueueBackend implements QueueBackend {
     @Override
     public void trimEvents(long maxLength) {
         syncCommands().xtrim(queueKeys.getKey("events"), maxLength);
+    }
+
+    @Override
+    public List<Object> getJobs(int start, int end, boolean asc, int maxIterations, String... states) {
+        return bullScripts.getJobs(binaryConnection(), queueKeys, start, end, asc, maxIterations, states);
+    }
+
+    @Override
+    public List<Object> paginate(String key, int pageStart, int pageEnd, String cursor, int offset, int maxIterations, boolean fetchJobs) {
+        return bullScripts.paginate(binaryConnection(), key, pageStart, pageEnd, cursor, offset, maxIterations, fetchJobs);
+    }
+
+    @Override
+    public List<Object> getMetrics(String type, int start, int end) {
+        return bullScripts.getMetrics(binaryConnection(), queueKeys, type, start, end);
+    }
+
+    @Override
+    public Long getRateLimitTtl(int maxJobs) {
+        return bullScripts.getRateLimitTtl(binaryConnection(), queueKeys, maxJobs);
+    }
+
+    @Override
+    public String getStateV2(String jobId) {
+        return bullScripts.getStateV2(binaryConnection(), queueKeys, jobId);
+    }
+
+    @Override
+    public boolean isJobInList(String listKey, String jobId) {
+        return bullScripts.isJobInList(binaryConnection(), listKey, jobId);
+    }
+
+    @Override
+    public boolean releaseLock(String jobId, String token) {
+        return bullScripts.releaseLock(binaryConnection(), queueKeys, jobId, token);
+    }
+
+    @Override
+    public int moveToWaitingChildren(String jobId, String token, String childKey, long timestamp) {
+        return bullScripts.moveToWaitingChildren(binaryConnection(), queueKeys, jobId, token, childKey, timestamp);
+    }
+
+    @Override
+    public int moveJobFromActiveToWait(String jobId, String token) {
+        return bullScripts.moveJobFromActiveToWait(binaryConnection(), queueKeys, jobId, token);
+    }
+
+    @Override
+    public int saveStacktrace(String jobId, String stacktrace, String failedReason) {
+        return bullScripts.saveStacktrace(binaryConnection(), queueKeys, jobId, stacktrace, failedReason);
+    }
+
+    @Override
+    public String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp) {
+        return bullScripts.updateJobScheduler(binaryConnection(), queueKeys, jobSchedulerId, nextMillis, jsonData, opts, timestamp);
     }
 
     @Override

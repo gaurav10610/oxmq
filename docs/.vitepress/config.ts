@@ -26,30 +26,29 @@ export default withMermaid(
         { text: 'Bull-Board', link: '/interop/bull-board' },
         { text: 'Roadmap', link: '/ROADMAP' },
         {
-          text: 'v1.6.0',
+          text: 'v1.7.0',
           items: [
-            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0' },
+            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0' },
             { text: 'GitHub Repository', link: 'https://github.com/gaurav10610/oxmq' }
           ]
         }
       ],
       sidebar: [
         {
-          text: '🚀 Getting Started',
+          text: 'Getting Started',
           collapsed: false,
           items: [
             { text: 'What is OxMQ?', link: '/guide/what-is-oxmq' },
-            { text: 'Quickstart (Core)', link: '/guide/quickstart' },
+            { text: 'Quickstart Guide', link: '/guide/quickstart' },
             { text: 'Spring Boot 3+ Starter', link: '/guide/spring-boot' },
+            { text: 'Virtual Threads (Project Loom)', link: '/guide/virtual-threads' },
             { text: 'Context Isolation & Namespacing', link: '/guide/namespacing' },
-            { text: 'Virtual Threads (Loom)', link: '/guide/virtual-threads' },
-            { text: 'Plugins & Interceptors', link: '/guide/plugins' },
             { text: 'Configuration Reference', link: '/guide/configuration' },
             { text: 'Full Manual (Getting Started)', link: '/GETTING_STARTED' }
           ]
         },
         {
-          text: '⚙️ Core Concepts',
+          text: 'Core Concepts',
           collapsed: false,
           items: [
             { text: 'Queues & Batching', link: '/concepts/queues' },
@@ -60,40 +59,53 @@ export default withMermaid(
           ]
         },
         {
-          text: '💡 Patterns & Recipes',
+          text: 'Design Patterns',
           collapsed: false,
           items: [
-            { text: 'Request-Reply (waitUntilFinished)', link: '/patterns/request-reply' },
-            { text: 'Rate Limiting & Group Keys', link: '/patterns/rate-limiting' },
-            { text: 'Scheduling & Cron Jobs', link: '/patterns/scheduling-cron' },
+            { text: 'Request-Reply Synchronization', link: '/patterns/request-reply' },
+            { text: 'Rate Limiting & Concurrency', link: '/patterns/rate-limiting' },
             { text: 'Retries & Backoff Policies', link: '/patterns/retries-backoff' },
             { text: 'Debounce & Deduplication', link: '/patterns/debounce-deduplication' },
-            { text: 'Batch Ingestion Architecture', link: '/patterns/batch-dequeue' },
-            { text: 'OxGuard 365 (Enterprise DSPM)', link: '/guide/oxguard-365' }
+            { text: 'Scheduling & Cron Jobs', link: '/patterns/scheduling-cron' },
+            { text: 'High-Throughput Batch Dequeue', link: '/patterns/batch-dequeue' }
           ]
         },
         {
-          text: '🌐 Interoperability & UI',
+          text: 'Plugins & Enterprise',
           collapsed: false,
           items: [
-            { text: 'BullMQ Wire Compatibility', link: '/interop/bullmq-wire-protocol' },
-            { text: 'Bull-Board Dashboard Setup', link: '/interop/bull-board' }
+            { text: 'Plugins & Interceptors Guide', link: '/guide/plugins' },
+            { text: 'OxGuard 365 Enterprise Showcase', link: '/guide/oxguard-365' },
+            { text: 'Multi-Tenant Scaling Strategy', link: '/operations/oxguard-365-multi-tenant-strategy' }
           ]
         },
         {
-          text: '🛠️ Operations & Internals',
+          text: 'Architecture & Under the Hood',
           collapsed: false,
           items: [
-            { text: 'Redis Key Topology', link: '/operations/redis-topology' },
-            { text: 'Memory Optimization & Tuning', link: '/operations/memory-optimization' },
-            { text: 'Multi-Tenant Scaling Strategy', link: '/operations/oxguard-365-multi-tenant-strategy' },
+            { text: 'Architecture & Engine Internals', link: '/ARCHITECTURE' },
             { text: '49 Lua Scripts Catalog', link: '/operations/lua-scripts-catalog' },
+            { text: 'Redis Key Topology & Wire Format', link: '/operations/redis-topology' },
+            { text: 'Memory Optimization & Tuning', link: '/operations/memory-optimization' },
+            { text: 'BullMQ Wire Compatibility', link: '/interop/bullmq-wire-protocol' },
+            { text: 'Architectural Comparison (OxMQ vs BullMQ)', link: '/COMPARISON' }
+          ]
+        },
+        {
+          text: 'Operations & Observability',
+          collapsed: false,
+          items: [
+            { text: 'Bull-Board Web UI Dashboard', link: '/interop/bull-board' },
             { text: 'Scale & DAG Benchmarks', link: '/operations/benchmarks' },
             { text: 'Benchmarking Architecture', link: '/benchmarks/benchmarks-architecture' },
-            { text: 'Architecture & Internals', link: '/ARCHITECTURE' },
-            { text: 'Comparison (OxMQ vs BullMQ)', link: '/COMPARISON' },
             { text: 'Disaster Recovery & Chaos Resilience', link: '/operations/disaster-recovery' },
-            { text: 'Production Troubleshooting', link: '/operations/troubleshooting' },
+            { text: 'Production Troubleshooting', link: '/operations/troubleshooting' }
+          ]
+        },
+        {
+          text: 'Project & Community',
+          collapsed: false,
+          items: [
             { text: 'Strategic Roadmap', link: '/ROADMAP' },
             { text: 'Attribution & License', link: '/attribution' }
           ]

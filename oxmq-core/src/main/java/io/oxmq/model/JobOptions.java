@@ -31,6 +31,9 @@ public class JobOptions {
     private boolean continueParentOnFailure = false;
     private boolean ignoreDependencyOnFailure = false;
     private String groupKey;
+    private String traceparent;
+    private String tracestate;
+    private Map<String, Object> telemetry;
 
     public JobOptions() {}
 
@@ -268,6 +271,30 @@ public class JobOptions {
         this.groupKey = groupKey;
     }
 
+    public String getTraceparent() {
+        return traceparent;
+    }
+
+    public void setTraceparent(String traceparent) {
+        this.traceparent = traceparent;
+    }
+
+    public String getTracestate() {
+        return tracestate;
+    }
+
+    public void setTracestate(String tracestate) {
+        this.tracestate = tracestate;
+    }
+
+    public Map<String, Object> getTelemetry() {
+        return telemetry;
+    }
+
+    public void setTelemetry(Map<String, Object> telemetry) {
+        this.telemetry = telemetry;
+    }
+
     public Map<String, Object> toMap() {
         Map<String, Object> map = new HashMap<>();
         if (jobId != null) map.put("jobId", jobId);
@@ -304,11 +331,16 @@ public class JobOptions {
         if (continueParentOnFailure) map.put("continueParentOnFailure", true);
         if (ignoreDependencyOnFailure) map.put("ignoreDependencyOnFailure", true);
         if (groupKey != null) map.put("groupKey", groupKey);
+        if (traceparent != null) map.put("traceparent", traceparent);
+        if (tracestate != null) map.put("tracestate", tracestate);
+        if (telemetry != null) map.put("telemetry", telemetry);
         if (backoff != null) {
             if (backoff instanceof BackoffStrategy.Exponential exp) {
                 map.put("backoff", Map.of("type", "exponential", "delay", exp.initialDelayMs()));
             } else if (backoff instanceof BackoffStrategy.Fixed fixed) {
                 map.put("backoff", Map.of("type", "fixed", "delay", fixed.delayMs()));
+            } else if (backoff instanceof BackoffStrategy.Custom custom) {
+                map.put("backoff", Map.of("type", custom.name()));
             } else {
                 map.put("backoff", Map.of("type", "fixed", "delay", backoff.calculateDelayMs(1)));
             }
@@ -484,6 +516,21 @@ public class JobOptions {
 
         public Builder groupKey(String groupKey) {
             options.setGroupKey(groupKey);
+            return this;
+        }
+
+        public Builder traceparent(String traceparent) {
+            options.setTraceparent(traceparent);
+            return this;
+        }
+
+        public Builder tracestate(String tracestate) {
+            options.setTracestate(tracestate);
+            return this;
+        }
+
+        public Builder telemetry(Map<String, Object> telemetry) {
+            options.setTelemetry(telemetry);
             return this;
         }
 
