@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gaurav10610.github.io/oxmq/sitemap.xml
