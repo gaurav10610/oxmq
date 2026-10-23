@@ -158,6 +158,10 @@ For complete documentation, in-depth architectural specifications, and operation
 - **[Disaster Recovery & Chaos Resilience](https://gaurav10610.github.io/oxmq/operations/disaster-recovery)**: Reconnection, checkpoints, and Kubernetes termination hooks.
 - **[Production Troubleshooting](https://gaurav10610.github.io/oxmq/operations/troubleshooting)**: Diagnostic runbooks and solutions.
 
+### Enterprise Showcase
+- **[OxDoc 365 (Enterprise Document AI Pipeline)](https://gaurav10610.github.io/oxmq/guide/oxdoc-365)**: 5-tier multi-tenant SaaS document intelligence showcase modeling Microsoft Graph RU quotas, AIMD adaptive rate limiting, and DAG extraction pipelines.
+- **[Multi-Tenant Dynamic Scaling Strategy](https://gaurav10610.github.io/oxmq/operations/oxdoc-365-multi-tenant-strategy)**: Architecture for 5 concurrent tenant tiers and zero-downtime chaos resilience.
+
 ---
 
 ## License & Attribution

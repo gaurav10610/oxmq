@@ -510,7 +510,7 @@ Packaged inside `oxmq-spring-boot-starter/src/main/resources/dashboards/oxmq-gra
 - **Execution Latency Percentiles**: $p50$, $p95$, and $p99$ execution durations per queue.
 
 #### 2. System Metrics & Resource Isolation Dashboard (`oxmq-system-metrics.json`)
-Packaged inside `oxmq-examples/oxguard-365/docker/grafana/dashboards/oxmq-system-metrics.json`:
+Packaged inside `oxmq-examples/oxdoc-365/docker/grafana/dashboards/oxmq-system-metrics.json`:
 - **Isolated JVM Heap Memory Pools**: Real-time memory consumption broken down by **Eden Space**, **Survivor Space**, and **Old Gen / Tenured Space** (verified peak usage: $< 110\text{ MB}$ under 5,000-job load).
 - **Non-Heap & Metaspace**: Classloader and Metaspace memory tracking to ensure zero memory leaks.
 - **Process CPU & Worker Concurrency**: Host and process CPU utilization paired with active worker thread counts.

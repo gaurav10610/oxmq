@@ -105,8 +105,8 @@ spec:
     spec:
       terminationGracePeriodSeconds: 45
       containers:
-        - name: oxguard-worker
-          image: ghcr.io/gaurav10610/oxguard-365:1.5.0
+        - name: oxdoc-worker
+          image: ghcr.io/gaurav10610/oxdoc-365:1.7.0
           lifecycle:
             preStop:
               exec:
@@ -194,7 +194,7 @@ We built an end-to-end automated benchmark script:
    - **Total Workload: 5,000 files, 150 embedded threats**.
 4. **Failure Injections During Ingestion**:
    - **Chaos Storm**: Injected 25x HTTP 429 bursts and 15x HTTP 503 faults via `/mock-admin/chaos`.
-   - **Abrupt Redis Crash**: Stopped `oxguard-redis` (`docker stop oxguard-redis`) for 4 seconds mid-scan.
+   - **Abrupt Redis Crash**: Stopped `oxdoc-redis` (`docker stop oxdoc-redis`) for 4 seconds mid-scan.
    - **Worker Pod SIGTERM**: Sent `kill -15` to the active worker; verified graceful checkpoint flush and resumption from token upon restart.
 
 ### Benchmark Results:

@@ -50,7 +50,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
                 <configuration>
-                    <mainClass>io.oxmq.oxguard.mockserver.MockOffice365Application</mainClass>
+                    <mainClass>io.oxmq.mockserver.MockOffice365Application</mainClass>
                     <classifier>exec</classifier>
                 </configuration>
                 <executions>

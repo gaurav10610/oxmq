@@ -93,8 +93,8 @@ The server generates and serves real physical files on disk under `./data/m365-s
 mvn spring-boot:run -pl oxmq-examples/mock-office365-server
 ```
 
-### Via Docker Compose (Included in OxGuard Stack)
+### Via Docker Compose (Included in OxDoc Stack)
 ```bash
-./oxmq-examples/oxguard-365/docker/start-oxguard.sh
+./start-oxdoc.sh
 ```
 Mock server is accessible at `http://localhost:8081`.
