@@ -26,9 +26,9 @@ export default withMermaid(
         { text: 'Bull-Board', link: '/interop/bull-board' },
         { text: 'Roadmap', link: '/ROADMAP' },
         {
-          text: 'v1.6.0',
+          text: 'v1.7.0',
           items: [
-            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0' },
+            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0' },
             { text: 'GitHub Repository', link: 'https://github.com/gaurav10610/oxmq' }
           ]
         }

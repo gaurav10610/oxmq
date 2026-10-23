@@ -25,14 +25,14 @@ docker run -d --name oxmq-redis -p 6379:6379 redis:7-alpine
     <dependency>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 </dependencies>
 ```
 
 ```kotlin [Gradle (Maven Central)]
 dependencies {
-    implementation("io.github.gaurav10610:oxmq-core:1.6.0")
+    implementation("io.github.gaurav10610:oxmq-core:1.7.0")
 }
 ```
 
@@ -48,7 +48,7 @@ dependencies {
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-core</artifactId>
-        <version>1.6.0</version>
+        <version>1.7.0</version>
     </dependency>
 </dependencies>
 ```
@@ -60,7 +60,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.6.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-core:1.7.0")
 }
 ```
 

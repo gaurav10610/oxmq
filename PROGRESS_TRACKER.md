@@ -1,7 +1,7 @@
 # 📊 OxMQ Master Progress Tracker
 
 **Project:** `OxMQ` — Distributed Job & Workflow Engine for Java 17+ and Java 21+  
-**Target Release:** `v1.4.0` GA  
+**Target Release:** `v1.7.0` GA  
 **License:** Apache 2.0 (100% Open Source, No Paywalls)  
 **Last Updated:** October 2026  
 
@@ -21,10 +21,12 @@
 | **M8: 100% BullMQ v6 Parity & Pluggable Backends** | Official BullMQ v6.3.15 Lua parity (49/49 verified scripts), Pluggable `QueueBackend` (`RedisQueueBackend`), dynamic `DelayedException`, custom retry backoffs, child dependency options | 🟢 Done | `100%` | `v1.2.0` |
 | **M9: Native Context Isolation & Full Parity** | Context Isolation, multi-service prefixing (`OxmqContextHolder`), `waitUntilFinished` request-reply, `KeepJobs` retention, `JobState`, `FlowProducer.addBulk` | 🟢 Done | `100%` | `v1.3.0` |
 | **M10: In-Flight Cancellation & Scale Hardening** | In-flight cancellation (`CancellationToken`, `Thread.interrupt()`), Redis Cluster DAG tagging (`FlowProducer.forCluster`), `maxBatchBytes` heap guardrail, non-pinning Loom locks | 🟢 Done | `100%` | `v1.4.0` |
-| **M11: Zero-Friction DX & Tooling** | `oxmq-spring-boot-starter-ui` (Embedded Dashboard), `oxmq-testcontainers` (JUnit 5 extension), OpenTelemetry Distributed Tracing | ⚪ Planned | `0%` | `v1.5.0` |
-| **M12: Enterprise Reliability & Outbox** | `oxmq-outbox` (Transactional Outbox for Spring/JPA), DLQ Webhook/Slack Alerting & Replay | ⚪ Planned | `0%` | `v1.6.0` |
-| **M13: Kotlin & Cloud-Native** | `oxmq-kotlin` (Coroutines DSL), GraalVM Native Image (AOT) hints, Quarkus extension | ⚪ Planned | `0%` | `v1.7.0` |
-| **M14: AI Orchestration & Durable Sagas** | AI Dual-Rate Limiter (RPM + TPM token buckets), SSE Progress Streaming, Checkpointed Step Sagas | ⚪ Planned | `0%` | `v2.0.0` |
+| **M11: Native Interceptors & Multi-Tenant Quotas** | `JobInterceptor` SPI, `GroupRateLimiterPlugin`, `RateLimitSentinelPlugin`, `PriorityQuotaGovernorPlugin`, pre-configured Grafana dashboards, OxGuard 365 showcase | 🟢 Done | `100%` | `v1.5.0` |
+| **M12: Adaptive Rate Limiting & Cloud Resilience** | `AdaptiveRateLimiterPlugin` (AIMD dynamic limits), `CheckpointStatePlugin` (cursor delta tokens), `mock-office365-server` Cloud Chaos Engine, Kubernetes manifests, disaster recovery benchmark | 🟢 Done | `100%` | `v1.6.0` |
+| **M13: 100% BullMQ Parity & Distributed Tracing** | Queue pagination (`getJobs`), programmatic `job.discard()`, ignored children failures, pluggable backoff registry, queue metadata concurrency/rate limits, OpenTelemetry W3C tracing, upstream Lua sync, enterprise docs overhaul | 🟢 Done | `100%` | `v1.7.0` |
+| **M14: Enterprise Reliability & Outbox** | `oxmq-outbox` (Transactional Outbox for Spring/JPA), DLQ Webhook/Slack Alerting & Replay | ⚪ Planned | `0%` | `v1.8.0` |
+| **M15: Kotlin & Cloud-Native** | `oxmq-kotlin` (Coroutines DSL), GraalVM Native Image (AOT) hints, Quarkus extension | ⚪ Planned | `0%` | `v1.9.0` |
+| **M16: AI Orchestration & Durable Sagas** | AI Dual-Rate Limiter (RPM + TPM token buckets), SSE Progress Streaming, Checkpointed Step Sagas | ⚪ Planned | `0%` | `v2.0.0` |
 
 ---
 

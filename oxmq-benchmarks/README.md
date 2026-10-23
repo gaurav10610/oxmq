@@ -1,7 +1,7 @@
 # ⚡ OxMQ Microbenchmarks & Scale Profiling (`oxmq-benchmarks`)
 
 <p align="center">
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.6.0"><img src="https://img.shields.io/badge/Release-v1.6.0-blue.svg" alt="Release v1.6.0"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/Release-v1.7.0-blue.svg" alt="Release v1.7.0"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
   <a href="https://openjdk.org/projects/loom/"><img src="https://img.shields.io/badge/Project%20Loom-Virtual%20Threads-brightgreen.svg" alt="Loom Virtual Threads"></a>
 </p>
