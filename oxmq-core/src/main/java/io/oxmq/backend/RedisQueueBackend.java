@@ -269,6 +269,61 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public List<Object> getJobs(int start, int end, boolean asc, int maxIterations, String... states) {
+        return bullScripts.getJobs(binaryConnection(), queueKeys, start, end, asc, maxIterations, states);
+    }
+
+    @Override
+    public List<Object> paginate(String key, int pageStart, int pageEnd, String cursor, int offset, int maxIterations, boolean fetchJobs) {
+        return bullScripts.paginate(binaryConnection(), key, pageStart, pageEnd, cursor, offset, maxIterations, fetchJobs);
+    }
+
+    @Override
+    public List<Object> getMetrics(String type, int start, int end) {
+        return bullScripts.getMetrics(binaryConnection(), queueKeys, type, start, end);
+    }
+
+    @Override
+    public Long getRateLimitTtl(int maxJobs) {
+        return bullScripts.getRateLimitTtl(binaryConnection(), queueKeys, maxJobs);
+    }
+
+    @Override
+    public String getStateV2(String jobId) {
+        return bullScripts.getStateV2(binaryConnection(), queueKeys, jobId);
+    }
+
+    @Override
+    public boolean isJobInList(String listKey, String jobId) {
+        return bullScripts.isJobInList(binaryConnection(), listKey, jobId);
+    }
+
+    @Override
+    public boolean releaseLock(String jobId, String token) {
+        return bullScripts.releaseLock(binaryConnection(), queueKeys, jobId, token);
+    }
+
+    @Override
+    public int moveToWaitingChildren(String jobId, String token, String childKey, long timestamp) {
+        return bullScripts.moveToWaitingChildren(binaryConnection(), queueKeys, jobId, token, childKey, timestamp);
+    }
+
+    @Override
+    public int moveJobFromActiveToWait(String jobId, String token) {
+        return bullScripts.moveJobFromActiveToWait(binaryConnection(), queueKeys, jobId, token);
+    }
+
+    @Override
+    public int saveStacktrace(String jobId, String stacktrace, String failedReason) {
+        return bullScripts.saveStacktrace(binaryConnection(), queueKeys, jobId, stacktrace, failedReason);
+    }
+
+    @Override
+    public String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp) {
+        return bullScripts.updateJobScheduler(binaryConnection(), queueKeys, jobSchedulerId, nextMillis, jsonData, opts, timestamp);
+    }
+
+    @Override
     public void close() {
         if (ownsConnectionManager && connectionManager != null) {
             connectionManager.close();

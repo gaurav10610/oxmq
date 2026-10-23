@@ -157,6 +157,46 @@ worker.cancelAllJobs("Node entering maintenance drain");
 
 ---
 
+## 📡 Worker-Level Event Emitter (`worker.on(...)`)
+
+In addition to cluster-wide Redis Streams events (`QueueEvents`), individual `Worker` instances expose typed local lifecycle listeners matching BullMQ's EventEmitter API (`worker.on('active')`, `worker.on('completed')`, etc.):
+
+```java
+OxmqWorker<EmailTask> worker = OxmqWorker.<EmailTask>builder()
+        .queueName("emails")
+        .redisUri("redis://localhost:6379")
+        .processor(job -> sendEmail(job.getData()))
+        // 1. Fluent Builder Event Binding:
+        .onActive(job -> log.info("Job {} is now active on worker {}", job.getId(), worker.getId()))
+        .onCompleted((job, result) -> log.info("Job {} completed successfully with: {}", job.getId(), result))
+        .onFailed((job, error) -> log.error("Job {} failed with error: {}", job.getId(), error.getMessage()))
+        .onProgress((job, progress) -> log.debug("Job {} reported progress: {}", job.getId(), progress))
+        .onDrained(() -> log.info("Queue is drained; no remaining jobs waiting"))
+        .onPaused(() -> log.warn("Worker has been paused"))
+        .onResumed(() -> log.info("Worker has resumed processing"))
+        .onError(err -> log.error("Internal worker error: {}", err.getMessage()))
+        .build();
+
+// 2. Programmatic Runtime Event Registration:
+worker.onActive(job -> metricsService.recordJobStart(job.getId()));
+worker.onCompleted((job, result) -> metricsService.recordJobSuccess(job.getId()));
+worker.onFailed((job, err) -> alertService.notifyFailure(job.getId(), err));
+```
+
+### Supported Worker Events:
+| Event Callback | Arguments | Trigger Condition |
+| :--- | :--- | :--- |
+| `onActive` | `Job<T> job` | Fired when a worker successfully locks and begins processing a job. |
+| `onCompleted` | `Job<T> job, Object result` | Fired when job processing returns successfully and transitions in Redis. |
+| `onFailed` | `Job<T> job, Throwable error` | Fired when job processing throws an exception or fails execution. |
+| `onProgress` | `Job<T> job, Object progress` | Fired when `job.updateProgress(...)` is invoked. |
+| `onDrained` | None | Fired when the waiting queue has zero remaining jobs during polling. |
+| `onPaused` | None | Fired when worker transitions to paused state. |
+| `onResumed` | None | Fired when worker resumes polling. |
+| `onError` | `Throwable error` | Fired on unhandled background worker loop or Redis connection errors. |
+
+---
+
 ## 🧠 Zero-Allocation Poller & Resource Efficiency
 
 OxMQ workers are engineered for high-throughput zero-churn consumption:

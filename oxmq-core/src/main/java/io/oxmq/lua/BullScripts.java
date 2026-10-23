@@ -1014,6 +1014,211 @@ public class BullScripts {
         return List.of();
     }
 
+    public int moveToWaitingChildren(StatefulRedisConnection<String, byte[]> connection,
+                                     QueueKeys keys, String jobId, String token,
+                                     String childKey, long timestamp) {
+        String[] redisKeys = new String[] {
+            keys.getKey("active"),
+            keys.getKey("waiting-children"),
+            keys.toJobKey(jobId),
+            keys.toJobKey(jobId) + ":dependencies",
+            keys.toJobKey(jobId) + ":failed-children",
+            keys.getKey("stalled"),
+            keys.getKey("events")
+        };
+        byte[] tokenBytes = (token != null ? token : "0").getBytes(StandardCharsets.UTF_8);
+        byte[] childKeyBytes = (childKey != null ? childKey : "").getBytes(StandardCharsets.UTF_8);
+        byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, LuaScript.MOVE_TO_WAITING_CHILDREN,
+            ScriptOutputType.INTEGER, redisKeys, tokenBytes, childKeyBytes, tsBytes, jobIdBytes, prefixBytes);
+
+        return result != null ? result.intValue() : -1;
+    }
+
+    public boolean releaseLock(StatefulRedisConnection<String, byte[]> connection,
+                               QueueKeys keys, String jobId, String token) {
+        String[] redisKeys = new String[] {
+            keys.toJobKey(jobId) + ":lock"
+        };
+        byte[] tokenBytes = token.getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, LuaScript.RELEASE_LOCK,
+            ScriptOutputType.INTEGER, redisKeys, tokenBytes);
+
+        return result != null && result == 1L;
+    }
+
+    public int moveJobFromActiveToWait(StatefulRedisConnection<String, byte[]> connection,
+                                       QueueKeys keys, String jobId, String token) {
+        String[] redisKeys = new String[] {
+            keys.getKey("active"),
+            keys.getKey("wait"),
+            keys.getKey("stalled"),
+            keys.getKey("paused"),
+            keys.getKey("meta"),
+            keys.getKey("limiter"),
+            keys.getKey("prioritized"),
+            keys.getKey("marker"),
+            keys.getKey("events")
+        };
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+        byte[] tokenBytes = (token != null ? token : "0").getBytes(StandardCharsets.UTF_8);
+        byte[] jobKeyBytes = keys.toJobKey(jobId).getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, LuaScript.MOVE_JOB_FROM_ACTIVE_TO_WAIT,
+            ScriptOutputType.INTEGER, redisKeys, jobIdBytes, tokenBytes, jobKeyBytes);
+
+        return result != null ? result.intValue() : 0;
+    }
+
+    public int saveStacktrace(StatefulRedisConnection<String, byte[]> connection,
+                              QueueKeys keys, String jobId, String stacktrace, String failedReason) {
+        String[] redisKeys = new String[] {
+            keys.toJobKey(jobId)
+        };
+        byte[] stackBytes = (stacktrace != null ? stacktrace : "").getBytes(StandardCharsets.UTF_8);
+        byte[] reasonBytes = (failedReason != null ? failedReason : "").getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, LuaScript.SAVE_STACKTRACE,
+            ScriptOutputType.INTEGER, redisKeys, stackBytes, reasonBytes);
+
+        return result != null ? result.intValue() : -1;
+    }
+
+    public String updateJobScheduler(StatefulRedisConnection<String, byte[]> connection,
+                                     QueueKeys keys, String jobSchedulerId, long nextMillis,
+                                     String jsonData, Map<String, Object> opts, long timestamp) {
+        String[] redisKeys = new String[] {
+            keys.getKey("repeat"),
+            keys.getKey("delayed"),
+            keys.getKey("wait"),
+            keys.getKey("paused"),
+            keys.getKey("meta"),
+            keys.getKey("prioritized"),
+            keys.getKey("marker"),
+            keys.getKey("id"),
+            keys.getKey("events"),
+            keys.getKey("pc"),
+            keys.toKey("repeat:" + jobSchedulerId),
+            keys.getKey("active")
+        };
+        byte[] nextMillisBytes = String.valueOf(nextMillis).getBytes(StandardCharsets.UTF_8);
+        byte[] schedulerIdBytes = jobSchedulerId.getBytes(StandardCharsets.UTF_8);
+        byte[] dataBytes = jsonData != null ? jsonData.getBytes(StandardCharsets.UTF_8) : "{}".getBytes(StandardCharsets.UTF_8);
+        byte[] packedOpts = BullMsgPack.pack(BullMsgPack.encodeOpts(opts != null ? opts : Map.of()));
+        byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] producerIdBytes = "".getBytes(StandardCharsets.UTF_8);
+
+        Object result = scriptManager.evalBinary(connection, LuaScript.UPDATE_JOB_SCHEDULER,
+            ScriptOutputType.VALUE, redisKeys, nextMillisBytes, schedulerIdBytes, dataBytes, packedOpts, tsBytes, prefixBytes, producerIdBytes);
+
+        return parseJobIdResult(result, "updateJobScheduler");
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Object> getJobs(StatefulRedisConnection<String, byte[]> connection,
+                                QueueKeys keys, int start, int end, boolean asc,
+                                int maxIterations, String... states) {
+        String[] redisKeys = new String[] {
+            keys.toKey("")
+        };
+        byte[][] args = new byte[4 + states.length][];
+        args[0] = String.valueOf(start).getBytes(StandardCharsets.UTF_8);
+        args[1] = String.valueOf(end).getBytes(StandardCharsets.UTF_8);
+        args[2] = (asc ? "1" : "0").getBytes(StandardCharsets.UTF_8);
+        args[3] = String.valueOf(maxIterations > 0 ? maxIterations : 1000).getBytes(StandardCharsets.UTF_8);
+        for (int i = 0; i < states.length; i++) {
+            args[4 + i] = states[i].getBytes(StandardCharsets.UTF_8);
+        }
+
+        Object result = scriptManager.evalBinary(connection, LuaScript.GET_JOBS,
+            ScriptOutputType.MULTI, redisKeys, args);
+
+        return result instanceof List<?> list ? (List<Object>) list : List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Object> paginate(StatefulRedisConnection<String, byte[]> connection,
+                                 String targetKey, int pageStart, int pageEnd,
+                                 String cursor, int offset, int maxIterations, boolean fetchJobs) {
+        String[] redisKeys = new String[] { targetKey };
+        byte[][] args = new byte[][] {
+            String.valueOf(pageStart).getBytes(StandardCharsets.UTF_8),
+            String.valueOf(pageEnd).getBytes(StandardCharsets.UTF_8),
+            (cursor != null ? cursor : "0").getBytes(StandardCharsets.UTF_8),
+            String.valueOf(offset).getBytes(StandardCharsets.UTF_8),
+            String.valueOf(maxIterations > 0 ? maxIterations : 100).getBytes(StandardCharsets.UTF_8),
+            (fetchJobs ? "1" : "0").getBytes(StandardCharsets.UTF_8)
+        };
+        Object result = scriptManager.evalBinary(connection, LuaScript.PAGINATE,
+            ScriptOutputType.MULTI, redisKeys, args);
+
+        return result instanceof List<?> list ? (List<Object>) list : List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Object> getMetrics(StatefulRedisConnection<String, byte[]> connection,
+                                   QueueKeys keys, String type, int start, int end) {
+        String[] redisKeys = new String[] {
+            keys.getKey("metrics:" + type),
+            keys.getKey("metrics:" + type + ":data")
+        };
+        byte[] startBytes = String.valueOf(start).getBytes(StandardCharsets.UTF_8);
+        byte[] endBytes = String.valueOf(end).getBytes(StandardCharsets.UTF_8);
+
+        Object result = scriptManager.evalBinary(connection, LuaScript.GET_METRICS,
+            ScriptOutputType.MULTI, redisKeys, startBytes, endBytes);
+
+        return result instanceof List<?> list ? (List<Object>) list : List.of();
+    }
+
+    public Long getRateLimitTtl(StatefulRedisConnection<String, byte[]> connection,
+                                QueueKeys keys, int maxJobs) {
+        String[] redisKeys = new String[] {
+            keys.getKey("limiter"),
+            keys.getKey("meta")
+        };
+        byte[] maxBytes = String.valueOf(maxJobs).getBytes(StandardCharsets.UTF_8);
+
+        return scriptManager.evalBinary(connection, LuaScript.GET_RATE_LIMIT_TTL,
+            ScriptOutputType.INTEGER, redisKeys, maxBytes);
+    }
+
+    public String getStateV2(StatefulRedisConnection<String, byte[]> connection,
+                             QueueKeys keys, String jobId) {
+        String[] redisKeys = new String[] {
+            keys.getKey("completed"),
+            keys.getKey("failed"),
+            keys.getKey("delayed"),
+            keys.getKey("active"),
+            keys.getKey("wait"),
+            keys.getKey("paused"),
+            keys.getKey("waiting-children"),
+            keys.getKey("prioritized")
+        };
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+
+        Object result = scriptManager.evalBinary(connection, LuaScript.GET_STATE_V2,
+            ScriptOutputType.STATUS, redisKeys, jobIdBytes);
+
+        return result != null ? result.toString() : "unknown";
+    }
+
+    public boolean isJobInList(StatefulRedisConnection<String, byte[]> connection,
+                               String listKey, String jobId) {
+        String[] redisKeys = new String[] { listKey };
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, LuaScript.IS_JOB_IN_LIST,
+            ScriptOutputType.INTEGER, redisKeys, jobIdBytes);
+
+        return result != null && result == 1L;
+    }
+
     public LuaScriptManager getScriptManager() {
         return scriptManager;
     }

@@ -138,7 +138,14 @@ public class FlowProducer implements Closeable {
             optsMap.put("parentKey", parentKey);
         }
         if (parentObj != null) {
-            optsMap.put("parent", parentObj);
+            Map<String, Object> effectiveParentObj = new HashMap<>(parentObj);
+            if (node.getOpts() != null) {
+                if (node.getOpts().isFailParentOnFailure()) effectiveParentObj.put("fpof", true);
+                if (node.getOpts().isContinueParentOnFailure()) effectiveParentObj.put("cpof", true);
+                if (node.getOpts().isIgnoreDependencyOnFailure()) effectiveParentObj.put("idof", true);
+                if (node.getOpts().isRemoveDependencyOnFailure()) effectiveParentObj.put("rdof", true);
+            }
+            optsMap.put("parent", effectiveParentObj);
         }
 
         if (node.getChildren().isEmpty()) {
@@ -175,10 +182,15 @@ public class FlowProducer implements Closeable {
                     node.getName(), parentId, node.getChildren().size());
 
             String nodeParentKey = queueKeys.toJobKey(parentId);
-            Map<String, Object> childParentObj = Map.of(
-                "id", parentId,
-                "queueKey", queueKeys.getQualifiedName()
-            );
+            Map<String, Object> childParentObj = new HashMap<>();
+            childParentObj.put("id", parentId);
+            childParentObj.put("queueKey", queueKeys.getQualifiedName());
+            if (node.getOpts() != null) {
+                if (node.getOpts().isFailParentOnFailure()) childParentObj.put("fpof", true);
+                if (node.getOpts().isContinueParentOnFailure()) childParentObj.put("cpof", true);
+                if (node.getOpts().isIgnoreDependencyOnFailure()) childParentObj.put("idof", true);
+                if (node.getOpts().isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
+            }
 
             // Recursively add all children
             for (FlowJob<?> child : node.getChildren()) {

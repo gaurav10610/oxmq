@@ -62,6 +62,12 @@ features:
   - icon: 🧠
     title: Memory & Socket Efficiency
     details: Zero-allocation poller hot-path, ReentrantLock non-pinning locks, lazy DAG child evaluation, Lettuce connection multiplexing, and bounded 8KB stack trace guardrails.
+  - icon: 📑
+    title: Range Pagination & Queue Inspection
+    details: High-performance atomic multi-state range pagination (getJobs), ergonomic state getters (getWaiting, getActive, etc.), filtered job counts, and rate limit window TTL inspection.
+  - icon: 🌐
+    title: OpenTelemetry W3C Distributed Tracing
+    details: Native TraceContext propagation supporting W3C traceparent and tracestate headers across queues, workers, and parent-child DAG workflows with child span creation.
 ---
 
 ## ⚡ Quick Examples

@@ -45,6 +45,62 @@ queue.add("poll-status", statusPayload, options);
 
 ---
 
+## 🧩 Pluggable Custom Backoff Strategies
+
+When default fixed or exponential backoff does not meet specialized requirements (such as decorrelated jitter, fibonacci delays, or error-code-specific backoffs), you can define and register **Custom Backoff Strategies**:
+
+### 1. Configure Job with Custom Strategy Name:
+```java
+JobOptions options = JobOptions.builder()
+    .attempts(5)
+    .backoff(BackoffStrategy.custom("jitteredExponential"))
+    .build();
+
+queue.add("process-order", orderData, options);
+```
+
+### 2. Register Strategy on Worker:
+```java
+OxmqWorker<OrderData> worker = OxmqWorker.<OrderData>builder()
+    .queueName("process-order")
+    .redisUri("redis://localhost:6379")
+    // Register custom strategy handler: (attemptsMade, throwable, job) -> delayMillis
+    .backoffStrategy("jitteredExponential", (attemptsMade, err, job) -> {
+        // Dynamic jitter calculation:
+        long baseDelay = (long) Math.min(1000 * Math.pow(2, attemptsMade - 1), 60000);
+        long jitter = ThreadLocalRandom.current().nextLong(500);
+        
+        // Return delay in milliseconds (or return -1 to abort retries and fail immediately)
+        return baseDelay + jitter;
+    })
+    .processor(job -> process(job.getData()))
+    .build();
+```
+
+*Note*: If a custom backoff strategy returns `-1` (or negative delay), OxMQ immediately marks the job as unrecoverable and transitions it to `FAILED` without retrying.
+
+---
+
+## 🗑️ Programmatic Job Discarding (`job.discard()`)
+
+In addition to throwing `UnrecoverableError`, processors can call `job.discard()` at any point before or during failure handling:
+
+```java
+OxmqWorker<PaymentPayload> worker = OxmqWorker.<PaymentPayload>builder()
+    .queueName("payments")
+    .processor(job -> {
+        PaymentPayload payment = job.getData();
+        if (payment.isCardStolen()) {
+            job.discard(); // Aborts all retries; job will immediately transition to FAILED
+            throw new IllegalStateException("Card flagged as stolen");
+        }
+        return charge(payment);
+    })
+    .build();
+```
+
+---
+
 ## 🚫 Bypassing Retries (`UnrecoverableError`)
 
 Some failures should never be retried (e.g. invalid user input, permanent authentication 401/403, missing required fields). Throwing `UnrecoverableError` immediately transitions the job to `FAILED` without exhausting remaining attempts:

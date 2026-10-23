@@ -263,6 +263,78 @@ public interface Queue<T> extends Closeable {
      */
     java.util.concurrent.CompletableFuture<Object> waitUntilFinishedAsync(String jobId, QueueEvents queueEvents);
 
+    /**
+     * Retrieves jobs for given states with range pagination and ordering.
+     * Mirrors BullMQ's queue.getJobs(types, start, end, asc).
+     */
+    List<Job<T>> getJobs(List<JobState> states, int start, int end, boolean asc);
+
+    /**
+     * Retrieves waiting jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getWaiting(int start, int end) {
+        return getJobs(List.of(JobState.WAITING), start, end, true);
+    }
+
+    /**
+     * Retrieves active jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getActive(int start, int end) {
+        return getJobs(List.of(JobState.ACTIVE), start, end, true);
+    }
+
+    /**
+     * Retrieves delayed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getDelayed(int start, int end) {
+        return getJobs(List.of(JobState.DELAYED), start, end, true);
+    }
+
+    /**
+     * Retrieves completed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getCompleted(int start, int end) {
+        return getJobs(List.of(JobState.COMPLETED), start, end, false);
+    }
+
+    /**
+     * Retrieves failed jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getFailed(int start, int end) {
+        return getJobs(List.of(JobState.FAILED), start, end, false);
+    }
+
+    /**
+     * Retrieves jobs waiting for children within the specified range [start, end].
+     */
+    default List<Job<T>> getWaitingChildren(int start, int end) {
+        return getJobs(List.of(JobState.WAITING_CHILDREN), start, end, true);
+    }
+
+    /**
+     * Retrieves prioritized jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getPrioritized(int start, int end) {
+        return getJobs(List.of(JobState.PRIORITIZED), start, end, true);
+    }
+
+    /**
+     * Retrieves paused jobs within the specified range [start, end].
+     */
+    default List<Job<T>> getPaused(int start, int end) {
+        return getJobs(List.of(JobState.PAUSED), start, end, true);
+    }
+
+    /**
+     * Gets job counts breakdown for the specified states.
+     */
+    java.util.Map<JobState, Long> getJobCounts(JobState... states);
+
+    /**
+     * Retrieves the remaining time-to-live (in ms) of the queue rate limiter.
+     */
+    Long getRateLimitTtl();
+
     @Override
     void close();
 }
