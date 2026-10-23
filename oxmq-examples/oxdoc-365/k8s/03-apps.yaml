@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-office365
+  namespace: oxdoc-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mock-office365
+  template:
+    metadata:
+      labels:
+        app: mock-office365
+    spec:
+      containers:
+        - name: mock-server
+          image: oxmq/mock-office365-server:1.7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          readinessProbe:
+            httpGet:
+              path: /mock-admin/stats
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-office365
+  namespace: oxdoc-system
+spec:
+  ports:
+    - port: 8081
+      targetPort: 8081
+  selector:
+    app: mock-office365
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oxdoc-365
+  namespace: oxdoc-system
+  labels:
+    app: oxdoc-365
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: oxdoc-365
+  template:
+    metadata:
+      labels:
+        app: oxdoc-365
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/actuator/prometheus"
+        prometheus.io/port: "8080"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: oxdoc-engine
+          image: oxmq/oxdoc-365:1.7.0
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: oxdoc-config
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oxdoc-365
+  namespace: oxdoc-system
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+  selector:
+    app: oxdoc-365

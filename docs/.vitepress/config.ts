@@ -75,8 +75,8 @@ export default withMermaid(
           collapsed: false,
           items: [
             { text: 'Plugins & Interceptors Guide', link: '/guide/plugins' },
-            { text: 'OxGuard 365 Enterprise Showcase', link: '/guide/oxguard-365' },
-            { text: 'Multi-Tenant Scaling Strategy', link: '/operations/oxguard-365-multi-tenant-strategy' }
+            { text: 'OxDoc 365 Enterprise Showcase', link: '/guide/oxdoc-365' },
+            { text: 'Multi-Tenant Scaling Strategy', link: '/operations/oxdoc-365-multi-tenant-strategy' }
           ]
         },
         {

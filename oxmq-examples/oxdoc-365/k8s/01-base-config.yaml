@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oxdoc-system
+  labels:
+    app.kubernetes.io/name: oxdoc-365
+    app.kubernetes.io/part-of: oxmq-ecosystem
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oxdoc-config
+  namespace: oxdoc-system
+data:
+  SPRING_PROFILES_ACTIVE: "prod"
+  SERVER_SHUTDOWN: "graceful"
+  SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: "30s"
+  OXMQ_REDIS_URL: "redis://oxdoc-redis:6379"
+  OXMQ_WORKER_CONCURRENCY: "25"
+  OXMQ_WORKER_DRAIN_TIMEOUT: "30s"
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://oxdoc-postgres:5432/oxdoc"
+  OXDOC_AZURE_GRAPH_BASE_URL: "http://mock-office365:8081/v1.0"
+  OXDOC_AZURE_LOGIN_BASE_URL: "http://mock-office365:8081"
+  OXDOC_MOCK_ADMIN_BASE_URL: "http://mock-office365:8081/mock-admin"

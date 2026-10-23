@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: oxdoc-365
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oxdoc
+    username: oxdoc
+    password: oxdoc
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+server:
+  port: 8080
+  shutdown: graceful
+
+oxmq:
+  redis:
+    url: redis://localhost:6379
+  worker:
+    concurrency: 25
+    lock-duration: 45s
+    stalled-interval: 30s
+    drain-timeout: 30s
+    virtual-threads: false # Java 17 LTS uses tuned platform thread pool
+
+oxdoc:
+  client:
+    mode: LIVE # LiveGraphClient connects to Microsoft Graph v1.0 REST API
+  tenants:
+    onboarded:
+      - tenant-smb-250
+      - tenant-mid-2500
+      - tenant-ent-10k
+      - tenant-large-35k
+      - tenant-global-100k
+  azure:
+    tenant-id: "tenant-mid-2500"
+    client-id: "oxdoc-365-enterprise-app"
+    client-secret: "secret-token-xyz"
+    graph-base-url: "http://localhost:8081/v1.0" # Mock M365 Server (or https://graph.microsoft.com/v1.0 in cloud)
+    login-base-url: "http://localhost:8081"       # Mock M365 Server (or https://login.microsoftonline.com in cloud)
+  mock-admin:
+    base-url: "http://localhost:8081/mock-admin"
+  webhook:
+    client-state: "oxdoc-secret-state-token"
+    notification-url: "http://localhost:8080/api/v1/webhooks/graph"
+  rate-limit:
+    max-requests-per-second: 500
+    headroom-yield-threshold: 0.25 # 25% remaining token capacity yields backward crawl
+  adaptive-tuning:
+    enabled: true
+    evaluation-interval-ms: 15000 # 15s background evaluation cycle
+    damping-window-ms: 30000     # 30s damping freeze after downgrade
+    clean-windows-for-upgrade: 2  # 2 clean intervals required to step up tier
+  overrides: {}                  # Optional static overrides: e.g. { "tenant-custom": "ENTERPRISE" }
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true

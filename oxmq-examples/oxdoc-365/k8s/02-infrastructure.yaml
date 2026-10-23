@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oxdoc-redis
+  namespace: oxdoc-system
+spec:
+  serviceName: oxdoc-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oxdoc-redis
+  template:
+    metadata:
+      labels:
+        app: oxdoc-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+          ports:
+            - containerPort: 6379
+              name: redis
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oxdoc-redis
+  namespace: oxdoc-system
+spec:
+  ports:
+    - port: 6379
+      targetPort: 6379
+  selector:
+    app: oxdoc-redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: oxdoc-postgres
+  namespace: oxdoc-system
+spec:
+  serviceName: oxdoc-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oxdoc-postgres
+  template:
+    metadata:
+      labels:
+        app: oxdoc-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: "oxdoc"
+            - name: POSTGRES_USER
+              value: "oxdoc"
+            - name: POSTGRES_PASSWORD
+              value: "oxdoc"
+          ports:
+            - containerPort: 5432
+              name: postgres
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "oxdoc"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oxdoc-postgres
+  namespace: oxdoc-system
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: oxdoc-postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oxdoc-bullboard
+  namespace: oxdoc-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oxdoc-bullboard
+  template:
+    metadata:
+      labels:
+        app: oxdoc-bullboard
+    spec:
+      containers:
+        - name: bull-board
+          image: ghcr.io/felixmosh/bull-board:latest
+          args:
+            - "--redis"
+            - "redis://oxdoc-redis:6379"
+            - "--prefix"
+            - "oxdoc-365"
+            - "--queues"
+            - "tenant-discovery-queue,drive-delta-sync-queue,content-categorization-queue,document-extraction-queue,catalog-index-queue"
+          ports:
+            - containerPort: 3000
+              name: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oxdoc-bullboard
+  namespace: oxdoc-system
+spec:
+  ports:
+    - port: 3000
+      targetPort: 3000
+  selector:
+    app: oxdoc-bullboard

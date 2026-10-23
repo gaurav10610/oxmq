@@ -149,10 +149,10 @@ dependencies {
 ```
 
 ### Option 3: Pre-built Release JARs
-Direct download links from [GitHub Releases v1.5.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.5.0):
-- [`oxmq-core-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxmq-core-1.5.0.jar)
-- [`oxmq-spring-boot-starter-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxmq-spring-boot-starter-1.5.0.jar)
-- [`oxguard-365-1.5.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.5.0/oxguard-365-1.5.0.jar)
+Direct download links from [GitHub Releases v1.7.0](https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0):
+- [`oxmq-core-1.7.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.7.0/oxmq-core-1.7.0.jar)
+- [`oxmq-spring-boot-starter-1.7.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.7.0/oxmq-spring-boot-starter-1.7.0.jar)
+- [`oxdoc-365-1.7.0.jar`](https://github.com/gaurav10610/oxmq/releases/download/v1.7.0/oxdoc-365-1.7.0.jar)
 
 ---
 

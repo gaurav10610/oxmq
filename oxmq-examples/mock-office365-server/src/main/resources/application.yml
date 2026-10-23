@@ -7,7 +7,7 @@ spring:
   main:
     banner-mode: console
 
-oxguard:
+oxdoc:
   mock-server:
     enabled: true
     port: 8081
@@ -15,5 +15,5 @@ oxguard:
     total-files: 5000
     simulate-429-burst: false
   webhook:
-    client-state: "oxguard-secret-state-token"
+    client-state: "oxdoc-secret-state-token"
     notification-url: "http://localhost:8080/api/v1/webhooks/graph"
