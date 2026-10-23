@@ -205,24 +205,45 @@ function openModalWithSvg(svg: SVGSVGElement, containerEl: HTMLElement) {
   imageSrc.value = ''
   
   const heading = findNearestHeading(containerEl)
-  title.value = heading || 'Mermaid Architecture Diagram'
+  title.value = heading || 'Architecture Diagram'
 
-  // Clone SVG element to preserve inline properties and scale
+  // Clone SVG element to preserve styles, defs, and markers
   const cloned = svg.cloneNode(true) as SVGSVGElement
-  cloned.removeAttribute('id')
 
-  // Ensure valid viewBox for proportional vector scaling
-  if (!cloned.getAttribute('viewBox')) {
-    const w = cloned.getAttribute('width') || '800'
-    const h = cloned.getAttribute('height') || '600'
-    cloned.setAttribute('viewBox', `0 0 ${parseFloat(w)} ${parseFloat(h)}`)
+  // 1. CRITICAL: Preserve the original ID so that scoped <style> rules `#${id}` match
+  if (svg.id) {
+    cloned.id = svg.id
   }
 
-  cloned.style.maxWidth = '100%'
-  cloned.style.maxHeight = '78vh'
-  cloned.style.width = 'auto'
-  cloned.style.height = 'auto'
+  // 2. Extract natural coordinate dimensions from viewBox or width/height attributes
+  let nativeWidth = 960
+  let nativeHeight = 600
+  const viewBox = svg.getAttribute('viewBox') || cloned.getAttribute('viewBox')
+  if (viewBox) {
+    const parts = viewBox.trim().split(/[\s,]+/)
+    if (parts.length === 4) {
+      nativeWidth = parseFloat(parts[2]) || 960
+      nativeHeight = parseFloat(parts[3]) || 600
+    }
+    cloned.setAttribute('viewBox', viewBox)
+  } else {
+    const w = parseFloat(svg.getAttribute('width') || cloned.getAttribute('width') || '')
+    const h = parseFloat(svg.getAttribute('height') || cloned.getAttribute('height') || '')
+    if (w && h) {
+      nativeWidth = w
+      nativeHeight = h
+      cloned.setAttribute('viewBox', `0 0 ${w} ${h}`)
+    }
+  }
+
+  // 3. Set explicit responsive vector dimensions on cloned SVG
+  cloned.setAttribute('width', '100%')
+  cloned.setAttribute('height', 'auto')
   cloned.style.display = 'block'
+  cloned.style.width = '100%'
+  cloned.style.maxWidth = `${Math.min(Math.max(nativeWidth, 600), 1400)}px`
+  cloned.style.height = 'auto'
+  cloned.style.maxHeight = '72vh'
   cloned.style.margin = '0 auto'
 
   svgContent.value = cloned.outerHTML
@@ -270,20 +291,24 @@ function handleGlobalClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   if (!target) return
 
+  // Safeguard against non-Element nodes (e.g. text nodes)
+  const el = (target instanceof Element ? target : target.parentElement) as HTMLElement | null
+  if (!el) return
+
   // 1. Mermaid diagram check
-  const mermaidContainer = target.closest('.mermaid') as HTMLElement | null
+  const mermaidContainer = el.closest('.mermaid') as HTMLElement | null
   if (mermaidContainer) {
-    const svg = mermaidContainer.querySelector('svg')
+    const svg = (el.tagName.toLowerCase() === 'svg' ? el : el.closest('svg')) || mermaidContainer.querySelector('svg')
     if (svg) {
       e.preventDefault()
       e.stopPropagation()
-      openModalWithSvg(svg, mermaidContainer)
+      openModalWithSvg(svg as SVGSVGElement, mermaidContainer)
       return
     }
   }
 
   // 2. Image check inside documentation content
-  const img = target.closest('.vp-doc img:not(.logo):not(.vp-icon)') as HTMLImageElement | null
+  const img = el.closest('.vp-doc img:not(.logo):not(.vp-icon)') as HTMLImageElement | null
   if (img) {
     e.preventDefault()
     e.stopPropagation()
@@ -436,23 +461,20 @@ onUnmounted(() => {
 
 /* SVG Rendering Container */
 .oxmq-svg-container {
-  background: var(--vp-c-bg, #ffffff);
+  background: var(--vp-c-bg-elv, #ffffff);
   border: 1px solid var(--vp-c-divider, rgba(255, 255, 255, 0.15));
-  padding: 28px 36px;
+  padding: 24px 32px;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
-  max-width: 88vw;
+  max-width: 90vw;
   max-height: 80vh;
   overflow: auto;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  box-sizing: border-box;
 }
 
 .oxmq-svg-container :deep(svg) {
   display: block;
-  max-width: 100%;
-  height: auto;
+  margin: 0 auto;
 }
 
 /* Image Rendering */
