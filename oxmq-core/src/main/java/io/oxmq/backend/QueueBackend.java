@@ -89,6 +89,20 @@ public interface QueueBackend extends Closeable {
 
     boolean isMaxed();
 
+    void setGlobalConcurrency(int concurrency);
+
+    Integer getGlobalConcurrency();
+
+    boolean removeGlobalConcurrency();
+
+    void setGlobalRateLimit(int max, long durationMillis);
+
+    io.oxmq.model.GlobalRateLimit getGlobalRateLimit();
+
+    boolean removeGlobalRateLimit();
+
+    boolean removeRateLimitKey();
+
     Long removeOrphanedJobs(List<String> candidateJobIds);
 
     void trimEvents(long maxLength);

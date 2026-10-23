@@ -10,6 +10,37 @@ OxMQ implements BullMQ's **sliding window token bucket rate limiter** directly i
 
 Enforce a maximum number of processed jobs across an entire worker cluster within a sliding time window:
 
+### 1. Dynamic Queue-Level Controls (BullMQ Native Parity)
+
+Configure and modify cluster-wide limits dynamically directly on the `Queue` without redeploying or restarting workers:
+
+```java
+// Dynamically configure global rate limit (e.g. max 50 jobs per 1 second)
+queue.setGlobalRateLimit(50, Duration.ofSeconds(1));
+
+// Inspect active rate limit
+GlobalRateLimit rl = queue.getGlobalRateLimit();
+log.info("Active limit: {} jobs / {} ms", rl.max(), rl.durationMillis());
+
+// Inspect remaining TTL on current window
+long ttlMs = queue.getRateLimitTtl();
+
+// Clear active rate limit token bucket early
+queue.removeRateLimitKey();
+
+// Remove rate limit configuration from queue metadata
+queue.removeGlobalRateLimit();
+
+// Cluster-wide concurrency cap
+queue.setGlobalConcurrency(10);
+boolean isMaxed = queue.isMaxed();
+queue.removeGlobalConcurrency();
+```
+
+Behind the scenes, `setGlobalRateLimit` writes `max` and `duration` directly to `bull:<queue>:meta`. BullMQ's `moveToActive-11.lua` checks this hash atomically on every single polling roundtrip across all worker nodes.
+
+### 2. Static Worker-Level Configuration
+
 ::: code-group
 
 ```java [Pure Java]

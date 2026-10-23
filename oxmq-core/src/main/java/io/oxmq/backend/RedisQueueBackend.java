@@ -259,6 +259,57 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public void setGlobalConcurrency(int concurrency) {
+        syncCommands().hset(queueKeys.getKey("meta"), "concurrency", String.valueOf(concurrency));
+    }
+
+    @Override
+    public Integer getGlobalConcurrency() {
+        String val = syncCommands().hget(queueKeys.getKey("meta"), "concurrency");
+        return val != null ? Integer.parseInt(val) : null;
+    }
+
+    @Override
+    public boolean removeGlobalConcurrency() {
+        Long removed = syncCommands().hdel(queueKeys.getKey("meta"), "concurrency");
+        return removed != null && removed > 0;
+    }
+
+    @Override
+    public void setGlobalRateLimit(int max, long durationMillis) {
+        java.util.Map<String, String> fields = java.util.Map.of(
+            "max", String.valueOf(max),
+            "duration", String.valueOf(durationMillis)
+        );
+        syncCommands().hset(queueKeys.getKey("meta"), fields);
+    }
+
+    @Override
+    public io.oxmq.model.GlobalRateLimit getGlobalRateLimit() {
+        String maxStr = syncCommands().hget(queueKeys.getKey("meta"), "max");
+        String durStr = syncCommands().hget(queueKeys.getKey("meta"), "duration");
+        if (maxStr != null && durStr != null) {
+            try {
+                return new io.oxmq.model.GlobalRateLimit(Integer.parseInt(maxStr), Long.parseLong(durStr));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public boolean removeGlobalRateLimit() {
+        Long removed = syncCommands().hdel(queueKeys.getKey("meta"), "max", "duration");
+        return removed != null && removed > 0;
+    }
+
+    @Override
+    public boolean removeRateLimitKey() {
+        Long removed = syncCommands().del(queueKeys.getKey("limiter"));
+        return removed != null && removed > 0;
+    }
+
+    @Override
     public Long removeOrphanedJobs(List<String> candidateJobIds) {
         return bullScripts.removeOrphanedJobs(binaryConnection(), queueKeys, candidateJobIds);
     }

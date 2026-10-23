@@ -684,6 +684,7 @@ For multi-service architectures, Bull-Board visualizes custom prefixes using `di
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
 | **Redis Key Topology** | Standard `{prefix}:{queue}:*` hierarchy with hash-tags | Standard `{prefix}:{queue}:*` hierarchy |
 | **Queue Range Pagination** | Built-in `getJobs`, `getWaiting`, `getActive`, `getJobCounts` | Built-in `getJobs`, `getJobCounts` |
+| **Global Concurrency & Rate Limit Metadata** | Built-in `setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed` | Built-in `setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed` |
 | **Custom Backoff Registry** | Dynamic `BackoffStrategy.custom(...)` + worker registry | Custom backoff strategies via worker settings |
 | **Job Discarding** | `job.discard()` (aborts retries and fails immediately) | `job.discard()` |
 | **Ignored Children Failures** | `job.getIgnoredChildrenFailures()` on parent DAG jobs | `job.getIgnoredChildrenFailures()` |

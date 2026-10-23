@@ -168,6 +168,24 @@ if (remainingTtlMs > 0) {
 }
 ```
 
+### 🌐 Global Queue Concurrency & Rate Limit Metadata (BullMQ Native Parity)
+
+OxMQ natively matches BullMQ v6 queue metadata controls stored directly in `bull:<queue>:meta` and enforced atomically by `moveToActive-11.lua` and `isMaxed-2.lua`:
+
+```java
+// 1. Cluster-wide global concurrency cap
+queue.setGlobalConcurrency(25);                  // Max 25 concurrent active jobs across the entire cluster
+Integer concurrency = queue.getGlobalConcurrency(); // 25
+boolean maxed = queue.isMaxed();                 // true if activeCount >= concurrency
+queue.removeGlobalConcurrency();                 // Remove cluster concurrency limit
+
+// 2. Cluster-wide global rate limiting
+queue.setGlobalRateLimit(100, Duration.ofSeconds(1)); // Max 100 jobs per 1 second across all workers
+GlobalRateLimit rl = queue.getGlobalRateLimit();      // GlobalRateLimit[max=100, durationMillis=1000]
+queue.removeRateLimitKey();                           // Clear active rate limit token bucket early
+queue.removeGlobalRateLimit();                        // Remove rate limit configuration from queue meta
+```
+
 ### Retrieve Job Execution Logs (`getJobLogs`)
 
 Retrieve chronological diagnostic logs added by workers during task execution:

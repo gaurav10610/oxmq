@@ -335,6 +335,68 @@ public interface Queue<T> extends Closeable {
      */
     Long getRateLimitTtl();
 
+    /**
+     * Sets the global concurrency limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param concurrency maximum concurrent active jobs across the cluster
+     */
+    void setGlobalConcurrency(int concurrency);
+
+    /**
+     * Retrieves the global concurrency limit configured on this queue, or null if not set.
+     */
+    Integer getGlobalConcurrency();
+
+    /**
+     * Removes the global concurrency limit from this queue.
+     *
+     * @return true if the limit was removed, false if none was set
+     */
+    boolean removeGlobalConcurrency();
+
+    /**
+     * Sets the global rate limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param max      maximum jobs processed per duration window
+     * @param duration time window duration
+     */
+    default void setGlobalRateLimit(int max, java.time.Duration duration) {
+        if (duration == null) {
+            throw new IllegalArgumentException("duration must not be null");
+        }
+        setGlobalRateLimit(max, duration.toMillis());
+    }
+
+    /**
+     * Sets the global rate limit for this queue across all workers in the cluster.
+     * Enforced atomically by BullMQ's {@code moveToActive-11.lua}.
+     *
+     * @param max            maximum jobs processed per duration window
+     * @param durationMillis time window duration in milliseconds
+     */
+    void setGlobalRateLimit(int max, long durationMillis);
+
+    /**
+     * Retrieves the global rate limit settings configured on this queue, or null if not set.
+     */
+    io.oxmq.model.GlobalRateLimit getGlobalRateLimit();
+
+    /**
+     * Removes the global rate limit settings from this queue.
+     *
+     * @return true if rate limit was removed, false if none was set
+     */
+    boolean removeGlobalRateLimit();
+
+    /**
+     * Removes the active rate limit token bucket key from Redis.
+     *
+     * @return true if the rate limit key was deleted, false if absent
+     */
+    boolean removeRateLimitKey();
+
     @Override
     void close();
 }

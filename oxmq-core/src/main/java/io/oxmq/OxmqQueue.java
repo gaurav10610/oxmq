@@ -809,6 +809,41 @@ public class OxmqQueue<T> implements Queue<T> {
         return backend.getRateLimitTtl(0);
     }
 
+    @Override
+    public void setGlobalConcurrency(int concurrency) {
+        backend.setGlobalConcurrency(concurrency);
+    }
+
+    @Override
+    public Integer getGlobalConcurrency() {
+        return backend.getGlobalConcurrency();
+    }
+
+    @Override
+    public boolean removeGlobalConcurrency() {
+        return backend.removeGlobalConcurrency();
+    }
+
+    @Override
+    public void setGlobalRateLimit(int max, long durationMillis) {
+        backend.setGlobalRateLimit(max, durationMillis);
+    }
+
+    @Override
+    public io.oxmq.model.GlobalRateLimit getGlobalRateLimit() {
+        return backend.getGlobalRateLimit();
+    }
+
+    @Override
+    public boolean removeGlobalRateLimit() {
+        return backend.removeGlobalRateLimit();
+    }
+
+    @Override
+    public boolean removeRateLimitKey() {
+        return backend.removeRateLimitKey();
+    }
+
     private static String toStr(Object obj) {
         if (obj == null) return null;
         if (obj instanceof byte[] b) return new String(b, StandardCharsets.UTF_8);

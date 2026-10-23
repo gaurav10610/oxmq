@@ -390,4 +390,45 @@ class BullMqNativeParityIntegrationTest {
         // Clean up
         cmdConn.sync().del(jobKey, keys.getKey("completed"), listKey);
     }
+
+    @Test
+    @DisplayName("BullMQ Global Concurrency & Global Rate Limit queue metadata parity")
+    void testGlobalConcurrencyAndGlobalRateLimitQueueMeta() throws Exception {
+        String queueName = "global-meta-" + System.currentTimeMillis();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .payloadClass(String.class)
+                .build();
+
+        // 1. Test setGlobalConcurrency
+        queue.setGlobalConcurrency(3);
+        assertEquals(3, queue.getGlobalConcurrency());
+        assertFalse(queue.isMaxed());
+
+        // 2. Test removeGlobalConcurrency
+        assertTrue(queue.removeGlobalConcurrency());
+        assertNull(queue.getGlobalConcurrency());
+
+        // 3. Test setGlobalRateLimit
+        queue.setGlobalRateLimit(5, Duration.ofSeconds(2));
+        io.oxmq.model.GlobalRateLimit rl = queue.getGlobalRateLimit();
+        assertNotNull(rl);
+        assertEquals(5, rl.max());
+        assertEquals(2000L, rl.durationMillis());
+        assertEquals(Duration.ofSeconds(2), rl.duration());
+
+        // 4. Test removeRateLimitKey
+        String limiterKey = "bull:" + queueName + ":limiter";
+        connectionManager.getCommandConnection().sync().set(limiterKey, "5");
+        assertTrue(queue.removeRateLimitKey());
+        assertNull(connectionManager.getCommandConnection().sync().get(limiterKey));
+
+        // 5. Test removeGlobalRateLimit
+        assertTrue(queue.removeGlobalRateLimit());
+        assertNull(queue.getGlobalRateLimit());
+
+        // Clean up
+        queue.obliterate();
+    }
 }
