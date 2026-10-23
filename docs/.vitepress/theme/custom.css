@@ -1,0 +1,150 @@
+/* ==========================================================================
+   OxMQ Documentation :: Full-Width Layout & Interactive Media Styling
+   ========================================================================== */
+
+:root {
+  --vp-layout-max-width: 100% !important;
+}
+
+/* Expand Documentation Layout to Full Available Width */
+.VPDoc {
+  width: 100% !important;
+}
+
+.VPDoc .container {
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 24px !important;
+}
+
+@media (min-width: 960px) {
+  .VPDoc .container {
+    padding: 0 32px !important;
+  }
+}
+
+.VPDoc:not(.has-sidebar) .container {
+  max-width: 100% !important;
+}
+
+.VPDoc .content {
+  max-width: 100% !important;
+  padding: 0 !important;
+  flex-grow: 1 !important;
+}
+
+.VPDoc:not(.has-sidebar) .content {
+  max-width: 100% !important;
+}
+
+.VPDoc .content-container {
+  max-width: 100% !important;
+  margin: 0 !important;
+}
+
+.VPDoc.has-aside .content-container {
+  max-width: 100% !important;
+}
+
+.VPDoc.has-aside .content {
+  padding-right: 36px !important;
+}
+
+/* Preserve Neat Proportions on Landing Page */
+.VPHome .container {
+  max-width: 1152px !important;
+  margin: 0 auto !important;
+}
+
+/* ==========================================================================
+   Full-Width Tables, Code & Content Elements
+   ========================================================================== */
+
+.vp-doc table {
+  width: 100% !important;
+  display: table !important;
+  margin: 1.5rem 0 !important;
+}
+
+.vp-doc th,
+.vp-doc td {
+  padding: 10px 16px !important;
+}
+
+/* ==========================================================================
+   Mermaid Diagrams: Full Width & Clickable Zoom Indicator
+   ========================================================================== */
+
+.mermaid {
+  position: relative;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 2rem 0 !important;
+  padding: 1.75rem 1.25rem !important;
+  border-radius: 12px;
+  background-color: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  cursor: zoom-in;
+  overflow-x: auto;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mermaid:hover {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+.mermaid::after {
+  content: '⛶ Click to open in modal';
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--vp-c-bg-elv);
+  color: var(--vp-c-text-2);
+  border: 1px solid var(--vp-c-divider);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(-2px);
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.mermaid:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mermaid svg {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+/* ==========================================================================
+   Document Images: Zoom Cue & Elevation
+   ========================================================================== */
+
+.vp-doc img:not(.logo):not(.vp-icon) {
+  cursor: zoom-in;
+  border-radius: 8px;
+  border: 1px solid var(--vp-c-divider);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  margin: 1.5rem auto;
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.vp-doc img:not(.logo):not(.vp-icon):hover {
+  border-color: var(--vp-c-brand-1);
+  box-shadow: 0 6px 28px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
