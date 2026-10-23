@@ -4,7 +4,7 @@ OxMQ executes the complete suite of **49 official BullMQ Lua scripts** directly 
 
 ---
 
-## ⚡ Why Lua Scripts in Redis?
+## Why Lua Scripts in Redis?
 
 1. **Strict Atomicity**: Redis executes Lua scripts as a single atomic unit. No other command can execute concurrently while a script runs, eliminating race conditions when claiming jobs or extending locks.
 2. **Minimal Network Overhead**: Instead of transferring entire payloads back and forth between Java and Redis to check timestamps or dependencies, the logic runs directly in the Redis memory engine.
@@ -12,7 +12,7 @@ OxMQ executes the complete suite of **49 official BullMQ Lua scripts** directly 
 
 ---
 
-## 📚 Categorized Script Inventory
+## Categorized Script Inventory
 
 ### 1. Job Creation & Enqueueing
 | Script Name | Purpose |
@@ -88,7 +88,7 @@ OxMQ executes the complete suite of **49 official BullMQ Lua scripts** directly 
 
 ---
 
-## 🔄 Upstream Synchronization & Optimizations (BullMQ v5 / v6 Parity)
+## Upstream Synchronization & Optimizations (BullMQ v5 / v6 Parity)
 
 OxMQ continuously tracks upstream BullMQ core commands and Redis optimizations:
 
@@ -99,5 +99,5 @@ OxMQ continuously tracks upstream BullMQ core commands and Redis optimizations:
 
 ---
 
-## 🙏 Attribution
+## Attribution
 All 49 official Lua scripts integrated into OxMQ are adapted directly from the open-source **[BullMQ](https://github.com/taskforcesh/bullmq)** project under the permissive **MIT License**.

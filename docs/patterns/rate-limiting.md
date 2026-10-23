@@ -1,4 +1,4 @@
-# Pattern: Rate Limiting & Group Keys
+# Rate Limiting & Concurrency Controls
 
 Rate limiting protects downstream services (such as third-party APIs with strict rate quotas like Stripe, Twilio, or OpenAI) from being overwhelmed by bursty queue traffic.
 
@@ -6,7 +6,7 @@ OxMQ implements BullMQ's **sliding window token bucket rate limiter** directly i
 
 ---
 
-## 🚦 Global Queue Rate Limiting
+## Global Queue Rate Limiting
 
 Enforce a maximum number of processed jobs across an entire worker cluster within a sliding time window:
 
@@ -79,7 +79,7 @@ public class StripeWebhookListener {
 
 ---
 
-## 🏢 Multi-Tenant Rate Limiting (`groupKey`)
+## Multi-Tenant Rate Limiting (`groupKey`)
 
 In SaaS applications, one noisy tenant should not exhaust the API rate quota for other tenants. 
 
@@ -112,7 +112,7 @@ queue.add(
 
 ---
 
-## 🚀 Enterprise Scaling: Beyond Basic Rate Limiting
+## Enterprise Scaling: Beyond Basic Rate Limiting
 
 While standard `groupKey` protects individual queues with static thresholds, enterprise multi-tenant architectures often require:
 - **Dynamic Tier Limits**: Scaling burst capacity based on active subscription tiers (e.g. 50 req/s for SMB vs 500 req/s for Enterprise).

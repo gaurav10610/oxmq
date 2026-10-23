@@ -70,7 +70,7 @@ features:
     details: Native TraceContext propagation supporting W3C traceparent and tracestate headers across queues, workers, and parent-child DAG workflows with child span creation.
 ---
 
-## ⚡ Quick Examples
+## Quick Examples
 
 ::: code-group
 
@@ -242,7 +242,7 @@ public class OxmqEnterprisePluginConfig {
 
 ---
 
-## 💼 Slashing Operational Overhead in Enterprise Architectures
+## Slashing Operational Overhead in Enterprise Architectures
 
 OxMQ was purpose-built to eliminate the real-world operational bottlenecks and high memory costs that plague conventional Java queue architectures:
 

@@ -4,7 +4,7 @@ A **Queue** in OxMQ is the primary interface for creating, managing, and inspect
 
 ---
 
-## 🏗️ Initializing a Queue
+## Initializing a Queue
 
 ::: code-group
 
@@ -44,7 +44,7 @@ public class OrderService {
 
 ---
 
-## 📤 Enqueuing Jobs
+## Enqueuing Jobs
 
 ### 1. Single Job (`add`)
 
@@ -84,7 +84,7 @@ System.out.println("Enqueued " + createdJobs.size() + " jobs in a single pipelin
 
 ---
 
-## 🔍 Inspecting Jobs & Queue Metrics
+## Inspecting Jobs & Queue Metrics
 
 ### Query Current Job State (`getJobState`)
 
@@ -131,7 +131,7 @@ Map<JobState, Long> filteredCounts = queue.getJobCounts(JobState.WAITING, JobSta
 System.out.println("Active jobs: " + filteredCounts.get(JobState.ACTIVE));
 ```
 
-### 📑 Range Pagination & Inspection (`getJobs`)
+### Range Pagination & Inspection (`getJobs`)
 
 OxMQ provides high-performance atomic range pagination across any combination of job lifecycle states using BullMQ's fast Lua range pipelines:
 
@@ -155,7 +155,7 @@ List<Job<OrderData>> prioritizedJobs = queue.getPrioritized(0, 20);
 List<Job<OrderData>> pausedJobs    = queue.getPaused(0, 10);
 ```
 
-### ⏱️ Rate Limit Window TTL (`getRateLimitTtl`)
+### Rate Limit Window TTL (`getRateLimitTtl`)
 
 Inspect the remaining time-to-live (in milliseconds) on the active sliding-window rate limit token bucket:
 
@@ -168,7 +168,7 @@ if (remainingTtlMs > 0) {
 }
 ```
 
-### 🌐 Global Queue Concurrency & Rate Limit Metadata (BullMQ Native Parity)
+### Global Concurrency & Rate Limit Metadata
 
 OxMQ natively matches BullMQ v6 queue metadata controls stored directly in `bull:<queue>:meta` and enforced atomically by `moveToActive-11.lua` and `isMaxed-2.lua`:
 
@@ -198,7 +198,7 @@ logs.forEach(System.out::println);
 
 ---
 
-## ⏸️ Queue Lifecycle Control
+## Queue Lifecycle Control
 
 ### Pausing & Resuming
 
@@ -246,7 +246,7 @@ queue.obliterate();
 
 ---
 
-## 🔄 Dynamic In-Flight Job Operations
+## Dynamic In-Flight Job Operations
 
 OxMQ allows mutating jobs already submitted to Redis:
 

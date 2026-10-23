@@ -4,7 +4,7 @@ A **Job** represents an individual unit of work in OxMQ. Jobs carry user-defined
 
 ---
 
-## 🧬 Job Anatomy
+## Job Anatomy & Data Model
 
 In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 
@@ -30,7 +30,7 @@ In Redis, every job is stored as a hash under the key `bull:<queue>:<jobId>`:
 
 ---
 
-## ⚙️ `JobOptions` Reference
+## JobOptions Reference
 
 Customize job execution behavior using the `JobOptions` builder:
 
@@ -74,7 +74,7 @@ JobOptions options = JobOptions.builder()
 
 ---
 
-## 🚦 Standardized Lifecycle States (`JobState`)
+## Job Lifecycle States (`JobState`)
 
 OxMQ models the complete lifecycle of a job via the **`JobState`** enum:
 
@@ -108,7 +108,7 @@ if (state.isCompleted()) {
 
 ---
 
-## ⏱️ Request-Reply: Awaiting Completion (`waitUntilFinished`)
+## Request-Reply Synchronization (`waitUntilFinished`)
 
 A producer or controller can await the final result of a background job directly from the `Job` instance:
 
@@ -135,7 +135,7 @@ future.thenAccept(result -> log.info("Async result received: {}", result));
 
 ---
 
-## 📈 Real-Time Progress & Execution Logs
+## Real-Time Progress & Execution Logs
 
 Workers can stream real-time progress and emit diagnostic logs directly from the execution loop:
 
@@ -173,7 +173,7 @@ logs.forEach(System.out::println);
 
 ---
 
-## 🔁 Automatic Retries & Backoff Calculation
+## Automatic Retries & Backoff Calculation
 
 When an exception is thrown inside a worker processor:
 1. OxMQ checks if `attemptsMade < attempts`.
@@ -186,7 +186,7 @@ When an exception is thrown inside a worker processor:
 
 ---
 
-## 🚫 Non-Recoverable Errors (`UnrecoverableError`)
+## Non-Recoverable Errors (`UnrecoverableError`)
 
 If an exception indicates a fatal condition that will never succeed on retry (e.g. malformed payload, account suspended), throw `UnrecoverableError`:
 
@@ -202,7 +202,7 @@ OxMQ catches `UnrecoverableError` and immediately moves the job to `FAILED`, byp
 
 ---
 
-## ⏸️ Worker-Driven Postponement (`DelayedException`)
+## Worker-Driven Postponement (`DelayedException`)
 
 In BullMQ v6, a worker can postpone execution without consuming an attempt count or marking the attempt as failed. In OxMQ, simply throw `DelayedException`:
 
@@ -219,7 +219,7 @@ Behind the scenes, OxMQ catches `DelayedException` and executes BullMQ's `moveTo
 
 ---
 
-## 🛑 Dynamic Job Parking (`WaitingException` & `WaitingChildrenException`)
+## Dynamic Job Parking (`WaitingException` & `WaitingChildrenException`)
 
 Workers can dynamically yield and park execution when waiting for external conditions or dependent child trees:
 
@@ -228,7 +228,7 @@ Workers can dynamically yield and park execution when waiting for external condi
 
 ---
 
-## 🗑️ Programmatic Job Discarding (`job.discard()`)
+## Programmatic Job Discarding (`job.discard()`)
 
 In BullMQ, workers can call `job.discard()` to instruct the queue to abandon any remaining retry attempts and fail the job immediately. OxMQ provides native parity with `job.discard()`:
 
@@ -255,7 +255,7 @@ When `job.discard()` is invoked:
 
 ---
 
-## 🌿 Inspecting Ignored Children Failures (`getIgnoredChildrenFailures()`)
+## Inspecting Ignored Children Failures (`getIgnoredChildrenFailures()`)
 
 In parent-child DAG workflows configured with `ignoreDependencyOnFailure(true)` (or `failParentOnFailure(false)`), parent jobs continue to execute even if one or more child jobs fail.
 
@@ -287,7 +287,7 @@ OxmqWorker<ReportAggregator> worker = OxmqWorker.<ReportAggregator>builder()
 
 ---
 
-## 🌐 OpenTelemetry W3C Distributed Tracing (`TraceContext`)
+## OpenTelemetry Distributed Tracing (`TraceContext`)
 
 OxMQ natively supports W3C distributed tracing standards (`traceparent` and `tracestate`), allowing distributed traces to flow seamlessly across microservice boundaries, queues, and DAG dependencies.
 

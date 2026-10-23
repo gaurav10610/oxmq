@@ -4,7 +4,7 @@ A **Worker** is the consumer engine in OxMQ responsible for claiming waiting job
 
 ---
 
-## 🏗️ Worker Architecture
+## Worker Architecture
 
 ```text
 +-------------------------------------------------------------------------+
@@ -35,7 +35,7 @@ A **Worker** is the consumer engine in OxMQ responsible for claiming waiting job
 
 ---
 
-## 🧵 Concurrency & Virtual Threads
+## Concurrency & Virtual Threads
 
 OxMQ allows configuring high concurrency without the risk of OS thread pool exhaustion:
 
@@ -59,7 +59,7 @@ The carrier OS thread is immediately free to process other jobs, allowing a sing
 
 ---
 
-## 🔒 Heartbeat Lock Watchdog & Auto-Extension
+## Heartbeat Lock Watchdog & Auto-Extension
 
 When a worker claims a job from Redis, it acquires an exclusive distributed lock:
 - **Default Lock TTL**: 30,000 ms (30 seconds).
@@ -68,7 +68,7 @@ When a worker claims a job from Redis, it acquires an exclusive distributed lock
 
 ---
 
-## 🛡️ Stalled Job Recovery Sentinel
+## Stalled Job Recovery Sentinel
 
 If a worker node crashes abruptly (e.g. `SIGKILL`, server crash, hardware power cut, OutOfMemory):
 1. The heartbeat timer stops extending the lock.
@@ -88,7 +88,7 @@ OxmqWorker.<Payload>builder()
 
 ---
 
-## 🛑 Worker Lifecycle & Graceful Shutdown
+## Worker Lifecycle & Graceful Shutdown
 
 Always shut down workers cleanly so in-flight tasks finish without stalling:
 
@@ -113,7 +113,7 @@ worker.resume();
 
 ---
 
-## 🛑 In-Flight Job Cancellation & Cooperative Interruption
+## In-Flight Job Cancellation & Cooperative Interruption
 
 In high-concurrency environments, users or orchestrators often need to abort in-flight jobs (e.g. user cancels an active video render, API timeout triggers task cancellation, or tenant disconnects).
 
@@ -157,7 +157,7 @@ worker.cancelAllJobs("Node entering maintenance drain");
 
 ---
 
-## 📡 Worker-Level Event Emitter (`worker.on(...)`)
+## Worker-Level Event Emitter (`worker.on(...)`)
 
 In addition to cluster-wide Redis Streams events (`QueueEvents`), individual `Worker` instances expose typed local lifecycle listeners matching BullMQ's EventEmitter API (`worker.on('active')`, `worker.on('completed')`, etc.):
 
@@ -197,7 +197,7 @@ worker.onFailed((job, err) -> alertService.notifyFailure(job.getId(), err));
 
 ---
 
-## 🧠 Zero-Allocation Poller & Resource Efficiency
+## Zero-Allocation Poller & Resource Efficiency
 
 OxMQ workers are engineered for high-throughput zero-churn consumption:
 - **Canonical Key Interning**: The polling loop maps standard BullMQ hash fields to `static final` interned String references, eliminating millions of transient String allocations per minute.
