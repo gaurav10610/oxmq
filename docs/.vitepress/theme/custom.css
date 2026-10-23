@@ -1,33 +1,68 @@
 /* ==========================================================================
-   OxMQ Documentation :: Full-Width Layout & Interactive Media Styling
+   OxMQ Documentation :: Enterprise Full-Width & Responsive Theme System
    ========================================================================== */
 
 :root {
+  --vp-sidebar-width: 288px !important;
   --vp-layout-max-width: 1600px !important;
 }
 
-/* Expand Documentation Layout to Full Available Width with Balanced Ultrawide Cap */
-.VPDoc {
-  width: 100% !important;
-}
-
-.VPDoc .container {
-  max-width: 1600px !important;
-  margin: 0 auto !important;
-  padding: 0 24px !important;
-  display: flex !important;
-  box-sizing: border-box !important;
-}
+/* ==========================================================================
+   1. Left Sidebar: Rock-Solid Minimum Width & Non-Negative Layout Sizing
+   ========================================================================== */
 
 @media (min-width: 960px) {
-  .VPDoc .container {
-    padding: 0 32px !important;
+  .VPSidebar {
+    width: var(--vp-sidebar-width, 288px) !important;
+    min-width: var(--vp-sidebar-width, 288px) !important;
+  }
+
+  .VPContent.has-sidebar {
+    padding-left: var(--vp-sidebar-width, 288px) !important;
   }
 }
 
-.VPDoc:not(.has-sidebar) .container {
-  max-width: 1600px !important;
-  margin: 0 auto !important;
+@media (min-width: 1440px) {
+  /* Prevent VitePress negative subtraction on 1440px - 1600px displays */
+  .VPSidebar {
+    padding-left: max(32px, calc((100% - (var(--vp-layout-max-width) - 64px)) / 2)) !important;
+    width: max(
+      var(--vp-sidebar-width, 288px),
+      calc((100% - (var(--vp-layout-max-width) - 64px)) / 2 + var(--vp-sidebar-width, 288px) - 32px)
+    ) !important;
+    min-width: var(--vp-sidebar-width, 288px) !important;
+  }
+
+  .VPContent.has-sidebar {
+    padding-left: max(
+      var(--vp-sidebar-width, 288px),
+      calc((100vw - var(--vp-layout-max-width)) / 2 + var(--vp-sidebar-width, 288px))
+    ) !important;
+    padding-right: max(0px, calc((100vw - var(--vp-layout-max-width)) / 2)) !important;
+  }
+}
+
+/* ==========================================================================
+   2. Main Documentation Grid: Proportional Flex & Spacing
+   ========================================================================== */
+
+.VPDoc {
+  width: 100% !important;
+  padding: 32px 0 96px !important;
+}
+
+@media (min-width: 960px) {
+  .VPDoc {
+    padding: 32px 0 0 !important;
+  }
+}
+
+.VPDoc .container {
+  max-width: 100% !important;
+  margin: 0 !important;
+  padding: 0 32px !important;
+  display: flex !important;
+  box-sizing: border-box !important;
 }
 
 .VPDoc .content {
@@ -37,27 +72,14 @@
   padding: 0 !important;
 }
 
-.VPDoc:not(.has-sidebar) .content {
-  max-width: 100% !important;
-}
-
-.VPDoc .content-container {
-  max-width: 100% !important;
-  margin: 0 !important;
-}
-
-.VPDoc.has-aside .content-container {
-  max-width: 100% !important;
-  margin: 0 !important;
-}
-
 .VPDoc.has-aside .content {
   padding-right: 48px !important;
 }
 
-.VPDoc .aside {
-  flex-shrink: 0 !important;
-  width: var(--vp-sidebar-width-small, 256px) !important;
+.VPDoc .content-container,
+.VPDoc.has-aside .content-container {
+  max-width: 100% !important;
+  margin: 0 !important;
 }
 
 /* Preserve Neat Proportions on Landing Page */
@@ -67,7 +89,50 @@
 }
 
 /* ==========================================================================
-   Full-Width Tables, Code & Content Elements
+   3. Right Aside & Outline Marker: Generous Width & Unclipped Indicator
+   ========================================================================== */
+
+.VPDoc .aside {
+  flex-shrink: 0 !important;
+  width: 280px !important;
+  max-width: 280px !important;
+  padding-left: 24px !important;
+}
+
+.aside-container {
+  width: 256px !important;
+  padding-left: 8px !important;
+  box-sizing: border-box !important;
+}
+
+.aside-content {
+  width: 100% !important;
+}
+
+.VPDocAsideOutline .content {
+  position: relative;
+  border-left: 2px solid var(--vp-c-divider);
+  padding-left: 14px;
+}
+
+.outline-marker {
+  width: 2.5px !important;
+  left: -2px !important;
+  border-radius: 2px;
+  background-color: var(--vp-c-brand-1) !important;
+}
+
+.outline-link {
+  font-size: 13px !important;
+  line-height: 22px !important;
+  padding: 4px 0 !important;
+  white-space: normal !important;
+  display: block !important;
+  word-break: break-word !important;
+}
+
+/* ==========================================================================
+   4. Tables & Code Blocks
    ========================================================================== */
 
 .vp-doc table {
@@ -81,7 +146,7 @@
 }
 
 /* ==========================================================================
-   Mermaid Diagrams: Natural Proportions & Clickable Zoom Indicator
+   5. Mermaid Diagrams: Natural Proportions & Clickable Zoom Indicator
    ========================================================================== */
 
 .mermaid {
@@ -139,7 +204,7 @@
 }
 
 /* ==========================================================================
-   Document Images: Zoom Cue & Elevation
+   6. Document Images: Zoom Cue & Elevation
    ========================================================================== */
 
 .vp-doc img:not(.logo):not(.vp-icon) {
