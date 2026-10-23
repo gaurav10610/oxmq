@@ -8,12 +8,43 @@ export default withMermaid(
     title: 'OxMQ',
     description: 'The Distributed Message Queue Engine for Java 17+ & Java 21 Loom (100% BullMQ Parity)',
     base,
+    sitemap: {
+      hostname: 'https://gaurav10610.github.io/oxmq/'
+    },
     head: [
       ['link', { rel: 'icon', type: 'image/png', href: `${base}assets/oxmq-icon.png` }],
       ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: `${base}assets/oxmq-icon.png` }],
       ['link', { rel: 'icon', type: 'image/png', sizes: '16x16', href: `${base}assets/oxmq-icon.png` }],
       ['link', { rel: 'shortcut icon', href: `${base}favicon.ico` }],
-      ['link', { rel: 'apple-touch-icon', href: `${base}assets/oxmq-icon.png` }]
+      ['link', { rel: 'apple-touch-icon', href: `${base}assets/oxmq-icon.png` }],
+      ['meta', { name: 'author', content: 'Gaurav Kumar Yadav' }],
+      ['meta', { name: 'keywords', content: 'OxMQ, BullMQ, Java, Spring Boot, Redis, Distributed Queue, Project Loom, Virtual Threads, Message Queue, Job Queue, Bull-Board, Redisson alternative, Java 21' }],
+      ['meta', { property: 'og:type', content: 'website' }],
+      ['meta', { property: 'og:site_name', content: 'OxMQ' }],
+      ['meta', { property: 'og:title', content: 'OxMQ - Virtual Thread-Native Distributed Queue for Java 17+ & 21' }],
+      ['meta', { property: 'og:description', content: 'The modern Java alternative to BullMQ. Powered by Project Loom Virtual Threads, official BullMQ Lua scripts, native Context Isolation, and Request-Reply workflows.' }],
+      ['meta', { property: 'og:image', content: 'https://gaurav10610.github.io/oxmq/assets/oxmq-icon.png' }],
+      ['meta', { property: 'og:url', content: 'https://gaurav10610.github.io/oxmq/' }],
+      ['meta', { name: 'twitter:card', content: 'summary' }],
+      ['meta', { name: 'twitter:title', content: 'OxMQ - Virtual Thread-Native Distributed Queue for Java 17+ & 21' }],
+      ['meta', { name: 'twitter:description', content: 'The modern Java alternative to BullMQ. Powered by Project Loom Virtual Threads, official BullMQ Lua scripts, and Spring Boot 3+.' }],
+      ['meta', { name: 'twitter:image', content: 'https://gaurav10610.github.io/oxmq/assets/oxmq-icon.png' }],
+      ['script', { type: 'application/ld+json' }, JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'SoftwareApplication',
+        'name': 'OxMQ',
+        'operatingSystem': 'Cross-platform (JVM)',
+        'applicationCategory': 'DeveloperApplication',
+        'description': 'Virtual Thread-native distributed message queue engine for Java 17+ and 21 with 100% BullMQ wire protocol parity.',
+        'softwareVersion': '1.7.0',
+        'license': 'https://github.com/gaurav10610/oxmq/blob/main/LICENSE',
+        'url': 'https://gaurav10610.github.io/oxmq/',
+        'author': {
+          '@type': 'Person',
+          'name': 'Gaurav Kumar Yadav',
+          'url': 'https://github.com/gaurav10610'
+        }
+      })]
     ],
     themeConfig: {
       logo: '/assets/oxmq-icon.png',
