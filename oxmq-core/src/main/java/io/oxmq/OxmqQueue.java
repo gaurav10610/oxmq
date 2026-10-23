@@ -214,6 +214,13 @@ public class OxmqQueue<T> implements Queue<T> {
         if (fields == null || fields.isEmpty()) {
             return null;
         }
+        return buildJobFromFields(jobId, fields, null);
+    }
+
+    private Job<T> buildJobFromFields(String jobId, Map<String, String> fields, JobState state) {
+        if (fields == null || fields.isEmpty()) {
+            return null;
+        }
 
         String jobName = fields.get("name");
         String dataStr = fields.get("data");
@@ -241,12 +248,17 @@ public class OxmqQueue<T> implements Queue<T> {
         if (failedStr != null) job.setFailedReason(failedStr);
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
 
-        String stateStr = getState(jobId);
-        job.setState(JobState.fromBullMqState(stateStr));
+        if (state != null) {
+            job.setState(state);
+        } else {
+            String stateStr = getState(jobId);
+            job.setState(JobState.fromBullMqState(stateStr));
+        }
 
         // Memory optimization: lazily load children values only when requested
         job.setChildrenValuesSupplier(() -> {
             try {
+                StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
                 Map<String, String> childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":processed");
                 if (childValsRaw == null || childValsRaw.isEmpty()) {
                     childValsRaw = conn.sync().hgetall(prefix + ":" + jobId + ":childrenValues");
@@ -264,6 +276,16 @@ public class OxmqQueue<T> implements Queue<T> {
                 }
             } catch (Exception ignored) {}
             return null;
+        });
+
+        // Memory optimization: lazily load ignored children failures when requested
+        job.setIgnoredChildrenFailuresSupplier(() -> {
+            try {
+                StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
+                Map<String, String> failures = conn.sync().hgetall(prefix + ":" + jobId + ":failed");
+                return failures != null ? failures : Map.of();
+            } catch (Exception ignored) {}
+            return Map.of();
         });
 
         return job;
@@ -686,6 +708,111 @@ public class OxmqQueue<T> implements Queue<T> {
             }
         }
         return events.waitUntilFinishedAsync(jobId);
+    }
+
+    @Override
+    public List<Job<T>> getJobs(List<JobState> states, int start, int end, boolean asc) {
+        if (states == null || states.isEmpty()) {
+            return List.of();
+        }
+        String[] stateStrings = new String[states.size()];
+        for (int i = 0; i < states.size(); i++) {
+            stateStrings[i] = states.get(i).getBullMqName();
+        }
+
+        List<Job<T>> result = new java.util.ArrayList<>();
+        try {
+            List<Object> rawResults = backend.getJobs(start, end, asc, 1000, stateStrings);
+            if (rawResults != null && !rawResults.isEmpty()) {
+                for (int sIdx = 0; sIdx < rawResults.size(); sIdx++) {
+                    JobState currentState = sIdx < states.size() ? states.get(sIdx) : null;
+                    Object stateObj = rawResults.get(sIdx);
+                    if (stateObj instanceof List<?> jobList) {
+                        for (Object jobObj : jobList) {
+                            if (jobObj instanceof List<?> jobTuple && jobTuple.size() >= 2) {
+                                String jobId = toStr(jobTuple.get(0));
+                                Map<String, String> fields = new java.util.HashMap<>();
+                                Object fieldsObj = jobTuple.get(1);
+                                if (fieldsObj instanceof List<?> rawFields) {
+                                    for (int f = 0; f < rawFields.size() - 1; f += 2) {
+                                        String k = toStr(rawFields.get(f));
+                                        String v = toStr(rawFields.get(f + 1));
+                                        if (k != null) {
+                                            fields.put(k, v);
+                                        }
+                                    }
+                                }
+                                if (fields.isEmpty() && connectionManager != null) {
+                                    fields = connectionManager.getCommandConnection().sync().hgetall(prefix + ":" + jobId);
+                                }
+                                Job<T> job = buildJobFromFields(jobId, fields, currentState);
+                                if (job != null) {
+                                    result.add(job);
+                                }
+                            }
+                        }
+                    }
+                }
+                return result;
+            }
+        } catch (Exception e) {
+            log.debug("Optimized getJobs script returned error, falling back to ranges: {}", e.getMessage());
+        }
+
+        // Fallback via getRanges
+        Map<JobState, List<String>> ranges = getRanges(states.toArray(new JobState[0]), start, end, asc);
+        if (ranges != null) {
+            for (JobState s : states) {
+                List<String> ids = ranges.get(s);
+                if (ids != null) {
+                    for (String id : ids) {
+                        Job<T> j = getJob(id);
+                        if (j != null) {
+                            j.setState(s);
+                            result.add(j);
+                        }
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public Map<JobState, Long> getJobCounts(JobState... states) {
+        if (states == null || states.length == 0) {
+            Map<String, Long> rawCounts = getJobCounts();
+            Map<JobState, Long> counts = new java.util.EnumMap<>(JobState.class);
+            for (Map.Entry<String, Long> entry : rawCounts.entrySet()) {
+                JobState s = JobState.fromBullMqState(entry.getKey());
+                if (s != null) {
+                    counts.put(s, entry.getValue());
+                }
+            }
+            return counts;
+        }
+
+        String[] typeNames = new String[states.length];
+        for (int i = 0; i < states.length; i++) {
+            typeNames[i] = states[i].getBullMqName();
+        }
+        List<Long> countsList = backend.getCounts(typeNames);
+        Map<JobState, Long> result = new java.util.EnumMap<>(JobState.class);
+        for (int i = 0; i < states.length; i++) {
+            result.put(states[i], i < countsList.size() && countsList.get(i) != null ? countsList.get(i) : 0L);
+        }
+        return result;
+    }
+
+    @Override
+    public Long getRateLimitTtl() {
+        return backend.getRateLimitTtl(0);
+    }
+
+    private static String toStr(Object obj) {
+        if (obj == null) return null;
+        if (obj instanceof byte[] b) return new String(b, StandardCharsets.UTF_8);
+        return obj.toString();
     }
 
     @Override

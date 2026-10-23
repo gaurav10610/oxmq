@@ -91,6 +91,9 @@ Until now, Java microservices have lacked a native, lightweight Redis distribute
 | **📡 Real-Time Streams & Events** | Redis Streams listener (`QueueEvents`) & progress updates | Live percentage updates (`job.updateProgress(n)`), step logs, dynamic listener unregistration (`events.off`), and stream events. |
 | **🌐 BullMQ v6 Parity & Wire-Compat** | 100% identical BullMQ v6 Redis schema, official Lua scripts, and data model | Zero custom Lua scripts, priority-preserving retries (`reprocessJob-9`), DAG child auto-reattachment (`moveJobsToWait-8`), and **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** support. |
 | **🔌 Pluggable Storage Backend** | `QueueBackend` interface & `RedisQueueBackend` | Architecture mirrors BullMQ v6 storage backend abstraction, decoupling queue API from Redis driver. |
+| **📑 Range Pagination & State Filtering** | `getJobs(states, start, end, asc)`, `getWaiting`, `getActive`, `getJobCounts` | High-throughput atomic multi-state inspection, single-state convenience getters, filtered job count breakdowns, and rate limit TTL queries. |
+| **🧩 Pluggable Custom Backoff & Discard** | `BackoffStrategy.custom(...)`, dynamic worker registry, and `job.discard()` | Full custom backoff calculation parity (jitter, fibonacci, error-based) and instant mid-flight retry abortion via programmatic discarding. |
+| **🌐 W3C Distributed Tracing (OTel)** | `TraceContext` (`traceparent`, `tracestate`) | Standards-compliant OpenTelemetry distributed tracing across queues, workers, and DAG hierarchies with child span generation. |
 | **📊 Dual Grafana Dashboards** | Pre-built queue operations and isolated system metrics dashboards | Real-time queue depth gauges, throughput meters, p99 latencies, isolated JVM Heap pools (Eden/Survivor/Old Gen), CPU, and adaptive capacity gauges. |
 | **🛡️ Disaster Recovery & Chaos Resilience** | Lettuce auto-reconnection, Kubernetes lifecycle hooks, and cloud chaos | Zero data loss on Redis crashes, pod SIGTERM graceful drain (`preStop: sleep 10`, `terminationGracePeriodSeconds: 45`), and cloud 429/503 chaos simulation. |
 | **🧠 Memory & Socket Optimization** | Canonical key interning, ReentrantLock non-pinning locks, lazy DAG evaluation, stream trimming (`maxLenEvents`), and watchdog connection multiplexing | **~70% lower GC churn**, 50% fewer sockets, bounded 8KB stack traces, and automatic queue-level retention inheritance. |
@@ -680,6 +683,12 @@ For multi-service architectures, Bull-Board visualizes custom prefixes using `di
 | **Context Isolation** | **Native Service-Level Namespacing** (`spring.application.name`) | Per-queue `prefix` configuration |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts** | **Official BullMQ Lua scripts** |
 | **Redis Key Topology** | Standard `{prefix}:{queue}:*` hierarchy with hash-tags | Standard `{prefix}:{queue}:*` hierarchy |
+| **Queue Range Pagination** | Built-in `getJobs`, `getWaiting`, `getActive`, `getJobCounts` | Built-in `getJobs`, `getJobCounts` |
+| **Custom Backoff Registry** | Dynamic `BackoffStrategy.custom(...)` + worker registry | Custom backoff strategies via worker settings |
+| **Job Discarding** | `job.discard()` (aborts retries and fails immediately) | `job.discard()` |
+| **Ignored Children Failures** | `job.getIgnoredChildrenFailures()` on parent DAG jobs | `job.getIgnoredChildrenFailures()` |
+| **Worker Event Emitter** | Fluent `worker.onActive`, `onCompleted`, `onFailed`, etc. | `worker.on('active')`, `worker.on('completed')`, etc. |
+| **Distributed Tracing** | Built-in W3C `TraceContext` (`traceparent`, `tracestate`) | BullMQ OpenTelemetry telemetry opts |
 | **DAG Workflows** | Built-in `FlowProducer` | Built-in `FlowProducer` |
 | **Rate Limiting** | Built-in token bucket with `groupKey` | Built-in token bucket with `groupKey` |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility | Native **Bull-Board UI** compatibility |

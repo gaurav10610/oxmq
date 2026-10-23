@@ -113,9 +113,10 @@ CompletableFuture<Object> future = queue.waitUntilFinishedAsync(job.getId(), que
 
 ### Aggregate Queue Counts (`getJobCounts`)
 
-Retrieve a snapshot of all job counts in the queue:
+Retrieve a snapshot of all job counts in the queue, or query counts for specific states:
 
 ```java
+// Snapshot of all states (waiting, active, delayed, completed, failed, paused, etc.)
 Map<String, Long> counts = queue.getJobCounts();
 System.out.printf("Waiting: %d | Active: %d | Delayed: %d | Completed: %d | Failed: %d%n",
         counts.get("waiting"),
@@ -124,6 +125,47 @@ System.out.printf("Waiting: %d | Active: %d | Delayed: %d | Completed: %d | Fail
         counts.get("completed"),
         counts.get("failed")
 );
+
+// Targeted query for specific states (returns typed Map<JobState, Long>)
+Map<JobState, Long> filteredCounts = queue.getJobCounts(JobState.WAITING, JobState.ACTIVE, JobState.FAILED);
+System.out.println("Active jobs: " + filteredCounts.get(JobState.ACTIVE));
+```
+
+### 📑 Range Pagination & Inspection (`getJobs`)
+
+OxMQ provides high-performance atomic range pagination across any combination of job lifecycle states using BullMQ's fast Lua range pipelines:
+
+```java
+// 1. Query across multiple states with offset range and ascending/descending ordering
+List<Job<OrderData>> jobs = queue.getJobs(
+    List.of(JobState.WAITING, JobState.ACTIVE),
+    0,   // start index
+    25,  // end index
+    true // asc (true = FIFO, false = LIFO)
+);
+
+// 2. Ergonomic single-state convenience methods:
+List<Job<OrderData>> waitingJobs   = queue.getWaiting(0, 10);
+List<Job<OrderData>> activeJobs    = queue.getActive(0, 10);
+List<Job<OrderData>> delayedJobs   = queue.getDelayed(0, 10);
+List<Job<OrderData>> completedJobs = queue.getCompleted(0, 50);
+List<Job<OrderData>> failedJobs    = queue.getFailed(0, 50);
+List<Job<OrderData>> waitingChildren = queue.getWaitingChildren(0, 20);
+List<Job<OrderData>> prioritizedJobs = queue.getPrioritized(0, 20);
+List<Job<OrderData>> pausedJobs    = queue.getPaused(0, 10);
+```
+
+### ⏱️ Rate Limit Window TTL (`getRateLimitTtl`)
+
+Inspect the remaining time-to-live (in milliseconds) on the active sliding-window rate limit token bucket:
+
+```java
+long remainingTtlMs = queue.getRateLimitTtl();
+if (remainingTtlMs > 0) {
+    System.out.printf("Queue is currently rate-limited. Window resets in %d ms%n", remainingTtlMs);
+} else {
+    System.out.println("Rate limit bucket is currently clear.");
+}
 ```
 
 ### Retrieve Job Execution Logs (`getJobLogs`)

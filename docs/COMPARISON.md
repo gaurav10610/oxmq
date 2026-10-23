@@ -27,6 +27,12 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Worker Postponement** | `DelayedException` (zero attempt consumption) | `DelayedError` (skipAttempt) |
 | **Priority Preservation on Retry**| Yes (`reprocessJob-9.lua`) | Yes (`reprocessJob-9.lua`) |
 | **Storage Backend Contract** | Pluggable `QueueBackend` (`RedisQueueBackend`) | Pluggable `IQueueBackend` (`RedisBackend`) |
+| **Queue Range Pagination & Inspection** | Built-in `getJobs(states, start, end, asc)`, `getWaiting`, `getActive`, `getJobCounts` | Built-in `getJobs(types, start, end, asc)`, `getJobCounts` |
+| **Pluggable Custom Backoff Registry** | Dynamic `BackoffStrategy.custom(...)` + worker registry | Custom backoff strategies via worker settings |
+| **Programmatic Job Discarding** | `job.discard()` (aborts retries and fails immediately) | `job.discard()` |
+| **Ignored Children Failures** | `job.getIgnoredChildrenFailures()` on parent DAG jobs | `job.getIgnoredChildrenFailures()` |
+| **Worker Event Emitter** | Fluent `worker.onActive`, `onCompleted`, `onFailed`, etc. | `worker.on('active')`, `worker.on('completed')`, etc. |
+| **Distributed Tracing (OpenTelemetry)** | Built-in W3C `TraceContext` (`traceparent`, `tracestate`) | BullMQ OpenTelemetry instrumentation / telemetry opts |
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility (Zero Node.js code) | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, `@OxmqBatchListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |

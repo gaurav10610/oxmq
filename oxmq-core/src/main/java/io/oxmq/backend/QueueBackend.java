@@ -93,6 +93,28 @@ public interface QueueBackend extends Closeable {
 
     void trimEvents(long maxLength);
 
+    List<Object> getJobs(int start, int end, boolean asc, int maxIterations, String... states);
+
+    List<Object> paginate(String key, int pageStart, int pageEnd, String cursor, int offset, int maxIterations, boolean fetchJobs);
+
+    List<Object> getMetrics(String type, int start, int end);
+
+    Long getRateLimitTtl(int maxJobs);
+
+    String getStateV2(String jobId);
+
+    boolean isJobInList(String listKey, String jobId);
+
+    boolean releaseLock(String jobId, String token);
+
+    int moveToWaitingChildren(String jobId, String token, String childKey, long timestamp);
+
+    int moveJobFromActiveToWait(String jobId, String token);
+
+    int saveStacktrace(String jobId, String stacktrace, String failedReason);
+
+    String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp);
+
     @Override
     void close();
 }

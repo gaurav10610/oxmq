@@ -9,10 +9,11 @@ import java.time.Duration;
 /**
  * Strategy for calculating retry delay on job failure.
  */
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type")
+@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = BackoffStrategy.Custom.class)
 @JsonSubTypes({
     @JsonSubTypes.Type(value = BackoffStrategy.Fixed.class, name = "fixed"),
-    @JsonSubTypes.Type(value = BackoffStrategy.Exponential.class, name = "exponential")
+    @JsonSubTypes.Type(value = BackoffStrategy.Exponential.class, name = "exponential"),
+    @JsonSubTypes.Type(value = BackoffStrategy.Custom.class, name = "custom")
 })
 public interface BackoffStrategy {
 
@@ -23,6 +24,23 @@ public interface BackoffStrategy {
      * @return delay in milliseconds
      */
     long calculateDelayMs(int attemptsMade);
+
+    /**
+     * Pluggable named custom backoff strategy resolved at runtime via the Worker's backoff registry.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnoreProperties(ignoreUnknown = true)
+    record Custom(@JsonProperty("type") @com.fasterxml.jackson.annotation.JsonAlias("name") String name) implements BackoffStrategy {
+        public Custom {
+            if (name == null || name.isBlank()) {
+                name = "custom";
+            }
+        }
+
+        @Override
+        public long calculateDelayMs(int attemptsMade) {
+            return 0; // Evaluated dynamically by the worker's registered backoff strategy function
+        }
+    }
 
     /**
      * Fixed backoff with constant delay.
@@ -83,5 +101,9 @@ public interface BackoffStrategy {
 
     static BackoffStrategy exponential(long initialDelayMs, long maxDelayMs) {
         return new Exponential(initialDelayMs, maxDelayMs);
+    }
+
+    static BackoffStrategy custom(String name) {
+        return new Custom(name);
     }
 }
