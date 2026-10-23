@@ -88,7 +88,7 @@ Tests parent-child dependency trees with fan-outs from 100 to 10,000 parallel ch
 #### 🔍 Inflection Point Analysis:
 * **The 2.4x DAG Speedup**:
   - Previously, resolving 10,000 DAG children took ~9.2 seconds (~1,084 jobs/s). With lazy child return-value suppliers, resolution takes only **3.78s (Java 17) to 4.29s (Java 21)**, achieving up to **2,645.1 jobs/s**!
-* **Ingestion Saturation Inflection Point ($N \ge 5,000$)**:
+* **Ingestion Saturation Inflection Point (N ≥ 5,000)**:
   - Ingestion rates peak at **~3,250 nodes/s**, saturating Redis's single-command TCP packet buffer.
 * **Redis Memory Asymptotic Stabilization**:
   - Per-node cost stabilizes at **~904 – 909 Bytes/node** across both runtimes.

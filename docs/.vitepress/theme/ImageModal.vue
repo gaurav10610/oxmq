@@ -220,7 +220,7 @@ function openModalWithSvg(svg: SVGSVGElement, containerEl: HTMLElement) {
 
   cloned.style.maxWidth = '100%'
   cloned.style.maxHeight = '78vh'
-  cloned.style.width = '100%'
+  cloned.style.width = 'auto'
   cloned.style.height = 'auto'
   cloned.style.display = 'block'
   cloned.style.margin = '0 auto'

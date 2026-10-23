@@ -15,6 +15,8 @@
   max-width: 100% !important;
   margin: 0 !important;
   padding: 0 24px !important;
+  display: flex !important;
+  box-sizing: border-box !important;
 }
 
 @media (min-width: 960px) {
@@ -28,9 +30,10 @@
 }
 
 .VPDoc .content {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
   max-width: 100% !important;
   padding: 0 !important;
-  flex-grow: 1 !important;
 }
 
 .VPDoc:not(.has-sidebar) .content {
@@ -44,10 +47,16 @@
 
 .VPDoc.has-aside .content-container {
   max-width: 100% !important;
+  margin: 0 !important;
 }
 
 .VPDoc.has-aside .content {
-  padding-right: 36px !important;
+  padding-right: 48px !important;
+}
+
+.VPDoc .aside {
+  flex-shrink: 0 !important;
+  width: var(--vp-sidebar-width-small, 256px) !important;
 }
 
 /* Preserve Neat Proportions on Landing Page */
@@ -62,7 +71,6 @@
 
 .vp-doc table {
   width: 100% !important;
-  display: table !important;
   margin: 1.5rem 0 !important;
 }
 
@@ -72,7 +80,7 @@
 }
 
 /* ==========================================================================
-   Mermaid Diagrams: Full Width & Clickable Zoom Indicator
+   Mermaid Diagrams: Natural Proportions & Clickable Zoom Indicator
    ========================================================================== */
 
 .mermaid {
@@ -89,6 +97,7 @@
   border: 1px solid var(--vp-c-divider);
   cursor: zoom-in;
   overflow-x: auto;
+  box-sizing: border-box !important;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -123,9 +132,10 @@
 }
 
 .mermaid svg {
-  width: 100% !important;
+  width: auto !important;
   max-width: 100% !important;
   height: auto !important;
+  display: block;
 }
 
 /* ==========================================================================

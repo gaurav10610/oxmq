@@ -22,11 +22,11 @@ queue.add("process-charge", paymentPayload, options);
 
 ### Delay Schedule:
 - Attempt 1: Fails
-- Attempt 2: After $1\text{s} \times 2^0 = 1\text{s}$
-- Attempt 3: After $1\text{s} \times 2^1 = 2\text{s}$
-- Attempt 4: After $1\text{s} \times 2^2 = 4\text{s}$
-- Attempt 5: After $1\text{s} \times 2^3 = 8\text{s}$
-- Exhausted $\rightarrow$ Moved to `bull:<queue>:failed`
+- Attempt 2: After `1s × 2⁰ = 1s`
+- Attempt 3: After `1s × 2¹ = 2s`
+- Attempt 4: After `1s × 2² = 4s`
+- Attempt 5: After `1s × 2³ = 8s`
+- Exhausted → Moved to `bull:<queue>:failed`
 
 ---
 

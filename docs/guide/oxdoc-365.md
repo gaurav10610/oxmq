@@ -29,9 +29,9 @@ For exhaustive, engineering-grade walkthroughs of specific subsystems inside the
 | **Monitored Scope** | 100,000+ Drives / Libraries | Parallel delta queries with persistent `@odata.deltaLink` checkpoints in Redis via `CheckpointStatePlugin`. |
 | **Inventory Footprint** | 50,000,000+ Documents | Partitioned PostgreSQL storage by `(tenant_id, drive_id)` + Redis cache. |
 | **Sustained Throughput**| 10,000+ documents / sec | Specialized OxMQ queue pipeline running on tuned Java 17 platform thread pools. |
-| **Forward Latency** | $\le 30$ seconds (event to index) | Priority 1 scheduling + debounced webhook processing. |
-| **Backward Impact** | Zero starvation of forward traffic | Dynamic token-bucket yielding ($<25\%$ capacity $\to$ backward deferral). |
-| **Runtime Memory** | $< 512$ MB JVM Heap per worker pod | Zero-copy streaming downloads (`@microsoft.graph.downloadUrl` bypass). |
+| **Forward Latency** | ≤ 30 seconds (event to index) | Priority 1 scheduling + debounced webhook processing. |
+| **Backward Impact** | Zero starvation of forward traffic | Dynamic token-bucket yielding (< 25% capacity → backward deferral). |
+| **Runtime Memory** | < 512 MB JVM Heap per worker pod | Zero-copy streaming downloads (`@microsoft.graph.downloadUrl` bypass). |
 
 ---
 
@@ -202,8 +202,12 @@ To prevent historical baseline crawling from interfering with real-time document
 
 ### 5.2 Dynamic Headroom Yielding
 Before a backward ingest worker invokes a Microsoft Graph API call, it inspects the tenant's remaining token-bucket capacity in Redis:
-$$\text{Available Quota Ratio} = \frac{\text{Remaining Tokens}}{\text{Bucket Capacity}}$$
-* If $\text{Available Quota Ratio} < 0.25$ (less than 25% quota remaining):
+
+::: info Headroom Evaluation Formula
+> **Available Quota Ratio** = `Remaining Tokens` / `Bucket Capacity`
+:::
+
+* If **Available Quota Ratio < 0.25** (less than 25% quota remaining):
   ```java
   // Yield capacity to high-priority forward events
   throw new DelayedException(5_000L, true); // Defer for 5 seconds without consuming retry attempt
@@ -221,7 +225,7 @@ JobOptions forwardJobOptions = JobOptions.builder()
         .build())
     .build();
 ```
-* **Impact:** A 1-minute editing session generating 20 save events is consolidated into **one** final ingestion pass, cutting API and processing load by $>95\%$.
+* **Impact:** A 1-minute editing session generating 20 save events is consolidated into **one** final ingestion pass, cutting API and processing load by > 95%.
 
 ---
 
@@ -276,7 +280,7 @@ flowchart LR
 1. **Content Fingerprint:** Computes SHA-256 on the fly; enables cross-drive deduplication and version tracking.
 2. **Document Normalization:** Automatically parses and indexes text word counts, reading duration, language detection (`en`), and preview summaries.
 3. **Structured Spreadsheet & Model Extraction:** Identifies tabular datasets (`.xlsx`, `.csv`) and computes schema dimensions and row density.
-4. **Binary & Embedding Archive Indexing:** Detects compressed dataset archives (`.bin`, `.tar.gz`, `.zip`) via Shannon entropy ($H > 7.5$) and tags them for specialized vectorization.
+4. **Binary & Embedding Archive Indexing:** Detects compressed dataset archives (`.bin`, `.tar.gz`, `.zip`) via Shannon entropy (H > 7.5) and tags them for specialized vectorization.
 
 ---
 
@@ -306,7 +310,7 @@ OxmqConfiguration config = OxmqConfiguration.builder()
       entropyCalculator.consume(buffer, bytesRead);
   }
   ```
-* **Resident Memory Footprint:** Bounded to $< 50\text{ MB}$ per thread regardless of whether the document being scanned is 100 KB or 10 GB.
+* **Resident Memory Footprint:** Bounded to < 50 MB per thread regardless of whether the document being scanned is 100 KB or 10 GB.
 
 ---
 
@@ -374,13 +378,13 @@ Microsoft provides a **100% free renewable Microsoft 365 Developer Subscription*
 
 ### 9.2 Register Azure AD App for OxDoc 365
 1. Sign in to the [Microsoft Entra Admin Center](https://entra.microsoft.com) using your newly created admin credentials.
-2. Go to **Identity** $\to$ **Applications** $\to$ **App registrations** $\to$ **New registration**:
+2. Go to **Identity** → **Applications** → **App registrations** → **New registration**:
    * Name: `OxDoc-365-Engine`
    * Supported account types: *Accounts in this organizational directory only (Single tenant)*
    * Redirect URI: Leave blank. Click **Register**.
 3. Note down the **Application (client) ID** and **Directory (tenant) ID**.
-4. Go to **Certificates & secrets** $\to$ **New client secret** $\to$ Generate secret and copy the **Value**.
-5. Go to **API permissions** $\to$ **Add a permission** $\to$ **Microsoft Graph** $\to$ **Application permissions**:
+4. Go to **Certificates & secrets** → **New client secret** → Generate secret and copy the **Value**.
+5. Go to **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions**:
    * `Sites.Read.All` (read all SharePoint site collections and document libraries)
    * `Files.Read.All` (read metadata and stream file contents across all drives)
    * `User.Read.All` (enumerate active tenant users and discover OneDrives)
@@ -454,7 +458,7 @@ To handle real-world permission constraints and dynamic load, OxDoc 365 incorpor
 * **Level 4 (Safe Baseline Fallback):** Defaults unresolvable tenants to Tier 1 (`SMB`: 250 seats, 25 RUs/s) as a conservative baseline.
 
 #### 2. Conservative AIMD Adaptive Capacity Controller
-* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s $\to$ `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
+* **Auto-Downgrade on HTTP 429:** When an HTTP 429 throttle occurs, the controller immediately steps down the tenant's tier by one level (e.g., `ENTERPRISE` 90 RUs/s → `MID_MARKET` 50 RUs/s), cutting traffic and granting recovery breathing room.
 * **Oscillation Damping Lock:** Prevents flapping ("yo-yo" throttling) by freezing upgrades for a damping window (`damping-window-ms`, default 60s) after any downgrade.
 * **Auto-Upgrade on Sustained Clean Work:** If a tenant sustains clean processing without throttles across consecutive evaluation windows (`clean-windows-for-upgrade = 2`), the controller steps up the tier by one level, adjusting OxMQ token bucket burst limits in real time without downtime or restart.
 
