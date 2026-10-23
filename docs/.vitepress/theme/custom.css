@@ -3,17 +3,17 @@
    ========================================================================== */
 
 :root {
-  --vp-layout-max-width: 100% !important;
+  --vp-layout-max-width: 1600px !important;
 }
 
-/* Expand Documentation Layout to Full Available Width */
+/* Expand Documentation Layout to Full Available Width with Balanced Ultrawide Cap */
 .VPDoc {
   width: 100% !important;
 }
 
 .VPDoc .container {
-  max-width: 100% !important;
-  margin: 0 !important;
+  max-width: 1600px !important;
+  margin: 0 auto !important;
   padding: 0 24px !important;
   display: flex !important;
   box-sizing: border-box !important;
@@ -26,7 +26,8 @@
 }
 
 .VPDoc:not(.has-sidebar) .container {
-  max-width: 100% !important;
+  max-width: 1600px !important;
+  margin: 0 auto !important;
 }
 
 .VPDoc .content {
@@ -132,7 +133,6 @@
 }
 
 .mermaid svg {
-  width: auto !important;
   max-width: 100% !important;
   height: auto !important;
   display: block;
