@@ -168,3 +168,6 @@ For complete documentation, in-depth architectural specifications, and operation
 
 OxMQ is licensed under the [Apache License 2.0](LICENSE).  
 Official Redis Lua scripts adapted directly from the open-source [BullMQ](https://github.com/taskforcesh/bullmq) project under the permissive [MIT License](oxmq-core/src/main/resources/lua/BULLMQ_ATTRIBUTION.md).
+
+### Author & Maintainer
+Created and maintained by **[Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)** ([GitHub: @gaurav10610](https://github.com/gaurav10610)). Contributions, discussions, and benchmark feedback are warmly welcome!

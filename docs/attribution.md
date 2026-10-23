@@ -39,3 +39,11 @@ SOFTWARE.
 ## ⚖️ OxMQ License
 
 OxMQ itself is open-source software licensed under the **Apache License, Version 2.0**.
+
+---
+
+## 👨‍💻 Author & Maintainer
+
+OxMQ is architected, developed, and maintained by **[Gaurav Kumar Yadav](https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/)** ([GitHub: @gaurav10610](https://github.com/gaurav10610)).
+
+Feel free to connect on LinkedIn or reach out for architecture reviews, enterprise integrations, and open-source contributions.

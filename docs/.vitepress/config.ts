@@ -143,14 +143,15 @@ export default withMermaid(
         }
       ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/gaurav10610/oxmq' }
+      { icon: 'github', link: 'https://github.com/gaurav10610/oxmq' },
+      { icon: 'linkedin', link: 'https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/' }
     ],
     search: {
       provider: 'local'
     },
     footer: {
       message: 'Released under the Apache 2.0 / MIT Open-Source Licenses.',
-      copyright: 'Copyright © 2026 Gaurav Kumar Yadav & OxMQ Contributors'
+      copyright: 'Copyright © 2026 <a href="https://www.linkedin.com/in/gaurav-kumar-yadav-6125817a/" target="_blank" rel="noopener">Gaurav Kumar Yadav</a> & OxMQ Contributors'
     }
   }
 }))
