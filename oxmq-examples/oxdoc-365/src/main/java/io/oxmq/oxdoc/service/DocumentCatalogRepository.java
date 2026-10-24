@@ -70,23 +70,33 @@ public class DocumentCatalogRepository {
 
     @Transactional
     public void saveDocument(IndexedDocumentRecord record) {
-        Optional<IndexedDocumentEntity> existing = docRepo.findByFileId(record.fileId());
-        if (existing.isPresent()) {
-            IndexedDocumentEntity entity = existing.get();
-            entity.setFileName(record.fileName());
-            entity.setFilePath(record.filePath());
-            entity.setFileSize(record.fileSize());
-            entity.setMimeType(record.mimeType());
-            entity.setAccessScope(record.accessScope());
-            entity.setHasUniquePermissions(record.hasUniquePermissions());
-            entity.setIndexingVerdict(record.indexingVerdict());
-            entity.setAnalysisDetails(record.analysisDetails());
-            entity.setSha256(record.sha256());
-            entity.setScanOrigin(record.scanOrigin());
-            entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
-            docRepo.save(entity);
-        } else {
-            docRepo.save(IndexedDocumentEntity.fromRecord(record));
+        try {
+            Optional<IndexedDocumentEntity> existing = docRepo.findByFileId(record.fileId());
+            if (existing.isPresent()) {
+                IndexedDocumentEntity entity = existing.get();
+                entity.setFileName(record.fileName());
+                entity.setFilePath(record.filePath());
+                entity.setFileSize(record.fileSize());
+                entity.setMimeType(record.mimeType());
+                entity.setAccessScope(record.accessScope());
+                entity.setHasUniquePermissions(record.hasUniquePermissions());
+                entity.setIndexingVerdict(record.indexingVerdict());
+                entity.setAnalysisDetails(record.analysisDetails());
+                entity.setSha256(record.sha256());
+                entity.setScanOrigin(record.scanOrigin());
+                entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
+                docRepo.save(entity);
+            } else {
+                docRepo.save(IndexedDocumentEntity.fromRecord(record));
+            }
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            // Concurrent insert race condition: update existing record safely
+            docRepo.findByFileId(record.fileId()).ifPresent(entity -> {
+                entity.setIndexingVerdict(record.indexingVerdict());
+                entity.setAnalysisDetails(record.analysisDetails());
+                entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
+                docRepo.save(entity);
+            });
         }
     }
 
