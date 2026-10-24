@@ -11,8 +11,8 @@
 
 <p align="center">
   <a href="https://gaurav10610.github.io/oxmq/"><img src="https://img.shields.io/badge/Documentation-GitHub%20Pages-blue.svg" alt="Documentation"></a>
-  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.7.0-C71A36.svg" alt="Maven Central v1.7.0"></a>
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.7.0"><img src="https://img.shields.io/badge/Release-v1.7.0-blue.svg" alt="Release v1.7.0"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.8.0-C71A36.svg" alt="Maven Central v1.8.0"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.8.0"><img src="https://img.shields.io/badge/Release-v1.8.0-blue.svg" alt="Release v1.8.0"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
@@ -55,7 +55,7 @@ By directly executing BullMQ's official 49 Lua scripts and adhering to canonical
 <dependency>
     <groupId>io.github.gaurav10610</groupId>
     <artifactId>oxmq-core</artifactId>
-    <version>1.7.0</version>
+    <version>1.8.0</version>
 </dependency>
 ```
 
