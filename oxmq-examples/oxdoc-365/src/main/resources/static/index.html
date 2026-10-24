@@ -95,22 +95,37 @@
             </div>
 
             <!-- Header Action Controls -->
-            <div class="flex flex-wrap items-center gap-2.5">
-                <a href="http://localhost:3000" target="_blank" class="btn-material px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1.5 shadow-2xs" title="Open Bull-Board Queue Monitor">
+            <div class="flex flex-wrap items-center gap-2">
+                <a href="http://localhost:3000" target="_blank" class="btn-material px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1 shadow-2xs" title="Open Bull-Board Queue Monitor">
                     <span>📊</span>
-                    <span>Bull-Board (:3000)</span>
+                    <span>Bull-Board</span>
                     <span class="text-[10px] text-slate-400">↗</span>
                 </a>
-                <a href="http://localhost:3001/d/oxmq-overview?refresh=5s" target="_blank" class="btn-material px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1.5 shadow-2xs" title="Open Grafana Telemetry Dashboard">
+                <a href="http://localhost:3001/d/oxmq-overview?refresh=5s" target="_blank" class="btn-material px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1 shadow-2xs" title="Open Grafana Queue Telemetry Dashboard">
                     <span>📈</span>
-                    <span>Grafana (:3001)</span>
+                    <span>Queues</span>
                     <span class="text-[10px] text-slate-400">↗</span>
                 </a>
-                <button onclick="triggerUploadModal()" class="btn-material px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs flex items-center space-x-1.5">
+                <a href="http://localhost:3001/d/oxmq-redis-telemetry?refresh=5s" target="_blank" class="btn-material px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1 shadow-2xs" title="Open Redis Operational & Memory Telemetry Dashboard">
+                    <span>🔴</span>
+                    <span>Redis</span>
+                    <span class="text-[10px] text-slate-400">↗</span>
+                </a>
+                <a href="http://localhost:3001/d/oxdoc-system-metrics?refresh=5s" target="_blank" class="btn-material px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1 shadow-2xs" title="Open System & JVM Metrics Dashboard">
+                    <span>🖥️</span>
+                    <span>System</span>
+                    <span class="text-[10px] text-slate-400">↗</span>
+                </a>
+                <a href="http://localhost:3001/d/oxdoc-tenant-intelligence?refresh=5s" target="_blank" class="btn-material px-2.5 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-300 flex items-center space-x-1 shadow-2xs" title="Open Multi-Tenant Intelligence & Content Security Dashboard">
+                    <span>🛡️</span>
+                    <span>Tenants</span>
+                    <span class="text-[10px] text-slate-400">↗</span>
+                </a>
+                <button onclick="triggerUploadModal()" class="btn-material px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs flex items-center space-x-1.5">
                     <span>⚡</span>
                     <span>Simulate P1 Webhook</span>
                 </button>
-                <button onclick="triggerCrawlAll()" class="btn-material px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs flex items-center space-x-1.5">
+                <button onclick="triggerCrawlAll()" class="btn-material px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs flex items-center space-x-1.5">
                     <span>🚀</span>
                     <span>Index All 5 Tenants (231k Files)</span>
                 </button>

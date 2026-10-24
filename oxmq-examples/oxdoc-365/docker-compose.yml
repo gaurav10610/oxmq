@@ -9,6 +9,17 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
 
+  oxdoc-redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: oxdoc-redis-exporter
+    restart: unless-stopped
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://oxdoc-redis:6379
+    depends_on:
+      - oxdoc-redis
+
   oxdoc-postgres:
     image: postgres:16-alpine
     container_name: oxdoc-postgres

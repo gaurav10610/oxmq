@@ -144,6 +144,15 @@ if [ ${REDIS_RETRY} -eq ${MAX_REDIS_RETRIES} ]; then
 fi
 echo -e " ${GREEN}[READY]${NC}"
 
+echo -n "  Waiting for Redis Exporter (9121) to respond..."
+REXP_RETRY=0
+until curl -s http://localhost:9121/metrics >/dev/null 2>&1 || [ ${REXP_RETRY} -eq 20 ]; do
+    echo -n "."
+    sleep 1
+    REXP_RETRY=$((REXP_RETRY + 1))
+done
+echo -e " ${GREEN}[READY]${NC}"
+
 echo -n "  Waiting for Bull-Board (3000) to respond..."
 BB_RETRY=0
 until curl -s http://localhost:3000/ >/dev/null 2>&1 || [ ${BB_RETRY} -eq 25 ]; do
@@ -211,8 +220,14 @@ if [ "${OPEN_BROWSER}" = true ]; then
     echo -e "  📈 Opening Grafana OxMQ Telemetry:           http://localhost:3001/d/oxmq-overview?refresh=5s"
     open_url "http://localhost:3001/d/oxmq-overview?refresh=5s"
     sleep 1
+    echo -e "  🔴 Opening Grafana Redis Telemetry:          http://localhost:3001/d/oxmq-redis-telemetry?refresh=5s"
+    open_url "http://localhost:3001/d/oxmq-redis-telemetry?refresh=5s"
+    sleep 1
     echo -e "  🖥️ Opening Grafana System Metrics:           http://localhost:3001/d/oxdoc-system-metrics?refresh=5s"
     open_url "http://localhost:3001/d/oxdoc-system-metrics?refresh=5s"
+    sleep 1
+    echo -e "  🛡️ Opening Grafana Tenant Intelligence:      http://localhost:3001/d/oxdoc-tenant-intelligence?refresh=5s"
+    open_url "http://localhost:3001/d/oxdoc-tenant-intelligence?refresh=5s"
 fi
 
 # 7. Execute Live Multi-Tenant Testing across All 5 Tenant Tiers
@@ -318,7 +333,9 @@ echo -e "${BOLD}${GREEN}========================================================
 echo -e "  🌐 ${BOLD}OxDoc 365 Dashboard:${NC}       ${CYAN}http://localhost:8080${NC}"
 echo -e "  📊 ${BOLD}Bull-Board Queue Monitor:${NC}  ${CYAN}http://localhost:3000${NC}"
 echo -e "  📈 ${BOLD}Grafana Queue Telemetry:${NC}   ${CYAN}http://localhost:3001/d/oxmq-overview${NC}"
+echo -e "  🔴 ${BOLD}Grafana Redis Telemetry:${NC}   ${CYAN}http://localhost:3001/d/oxmq-redis-telemetry${NC}"
 echo -e "  🖥️ ${BOLD}Grafana System Metrics:${NC}    ${CYAN}http://localhost:3001/d/oxdoc-system-metrics${NC}"
+echo -e "  🛡️ ${BOLD}Grafana Tenant Intel:${NC}      ${CYAN}http://localhost:3001/d/oxdoc-tenant-intelligence${NC}"
 echo -e "  🏢 ${BOLD}Mock Office 365 Server:${NC}    ${CYAN}http://localhost:8081${NC}"
 echo -e "  📄 ${BOLD}Logs:${NC}                      ${CYAN}tail -f ${LOG_FILE}${NC}"
 echo -e "\n  🛑 ${BOLD}To stop and tear down the entire stack, run:${NC}"

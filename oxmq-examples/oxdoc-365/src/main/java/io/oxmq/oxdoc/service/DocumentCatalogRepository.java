@@ -1,5 +1,7 @@
 package io.oxmq.oxdoc.service;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.oxmq.oxdoc.entity.IndexedDocumentEntity;
 import io.oxmq.oxdoc.entity.MonitoredDriveEntity;
 import io.oxmq.oxdoc.model.AccessScope;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,15 +29,37 @@ public class DocumentCatalogRepository {
     private final SpringDataIndexedDocumentRepository docRepo;
     private final SpringDataMonitoredDriveRepository driveRepo;
     private final TenantSubscriptionService tenantSubscriptionService;
+    private final MeterRegistry meterRegistry;
+
+    @Autowired
+    public DocumentCatalogRepository(
+            SpringDataIndexedDocumentRepository docRepo,
+            SpringDataMonitoredDriveRepository driveRepo,
+            TenantSubscriptionService tenantSubscriptionService,
+            @Autowired(required = false) MeterRegistry meterRegistry
+    ) {
+        this.docRepo = docRepo;
+        this.driveRepo = driveRepo;
+        this.tenantSubscriptionService = tenantSubscriptionService;
+        this.meterRegistry = meterRegistry;
+        if (meterRegistry != null) {
+            try {
+                Gauge.builder("oxdoc.catalog.documents.total", docRepo, SpringDataIndexedDocumentRepository::count)
+                        .description("Total documents stored in the knowledge catalog")
+                        .register(meterRegistry);
+                Gauge.builder("oxdoc.catalog.drives.total", driveRepo, SpringDataMonitoredDriveRepository::count)
+                        .description("Total monitored drives in inventory")
+                        .register(meterRegistry);
+            } catch (Exception ignored) {}
+        }
+    }
 
     public DocumentCatalogRepository(
             SpringDataIndexedDocumentRepository docRepo,
             SpringDataMonitoredDriveRepository driveRepo,
             TenantSubscriptionService tenantSubscriptionService
     ) {
-        this.docRepo = docRepo;
-        this.driveRepo = driveRepo;
-        this.tenantSubscriptionService = tenantSubscriptionService;
+        this(docRepo, driveRepo, tenantSubscriptionService, null);
     }
 
     @Transactional
@@ -106,6 +131,17 @@ public class DocumentCatalogRepository {
                 entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
                 docRepo.save(entity);
             });
+        }
+
+        if (meterRegistry != null) {
+            try {
+                meterRegistry.counter("oxdoc.documents.indexed",
+                        "tenant", record.tenantId() != null ? record.tenantId() : "unknown",
+                        "verdict", record.indexingVerdict() != null ? record.indexingVerdict().name() : "unknown",
+                        "scope", record.accessScope() != null ? record.accessScope().name() : "unknown",
+                        "origin", record.scanOrigin() != null ? record.scanOrigin().name() : "unknown"
+                ).increment();
+            } catch (Exception ignored) {}
         }
     }
 

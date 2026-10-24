@@ -11,3 +11,11 @@ scrape_configs:
         labels:
           application: 'oxdoc-365'
           framework: 'oxmq'
+
+  - job_name: 'redis'
+    scrape_interval: 2s
+    static_configs:
+      - targets: ['oxdoc-redis-exporter:9121']
+        labels:
+          service: 'redis'
+          instance: 'oxdoc-redis'

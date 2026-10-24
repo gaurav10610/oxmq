@@ -76,7 +76,7 @@ else
 fi
 
 # 2. Ram down Docker Containers, Networks, and Volumes
-CONTAINER_LIST="oxdoc-bullboard oxdoc-postgres oxdoc-redis oxdoc-prometheus oxdoc-grafana"
+CONTAINER_LIST="oxdoc-bullboard oxdoc-postgres oxdoc-redis oxdoc-redis-exporter oxdoc-prometheus oxdoc-grafana"
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     echo -e "\n${BLUE}▶ Tearing down Docker infrastructure (volumes & orphan containers)...${NC}"
@@ -95,7 +95,7 @@ fi
 
 # 3. Verify all stack ports are liberated
 echo -e "\n${BLUE}▶ Verifying all ports are free...${NC}"
-ALL_PORTS="8080 8081 3000 3001 5432 6379 9090"
+ALL_PORTS="8080 8081 3000 3001 5432 6379 9090 9121"
 STRAY_FOUND=false
 for p in ${ALL_PORTS}; do
     PIDS=$(lsof -ti :${p} 2>/dev/null || true)
