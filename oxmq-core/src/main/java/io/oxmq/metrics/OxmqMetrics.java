@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.composite.CompositeMeterRegistry;
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -12,6 +13,7 @@ import java.util.function.Supplier;
 
 /**
  * Native performance telemetry and metrics engine for OxMQ using Micrometer.
+ * Configured with Prometheus histogram buckets for cluster-wide quantile aggregation.
  */
 public class OxmqMetrics {
 
@@ -24,7 +26,7 @@ public class OxmqMetrics {
     }
 
     public OxmqMetrics(MeterRegistry registry) {
-        this.registry = registry != null ? registry : Metrics.globalRegistry;
+        this.registry = registry != null ? registry : new CompositeMeterRegistry();
     }
 
     public void recordJobEnqueued(String queueName) {
@@ -107,7 +109,7 @@ public class OxmqMetrics {
         return durationTimers.computeIfAbsent(queueName, q -> Timer.builder("oxmq.job.duration")
                 .description("Execution duration of processed jobs")
                 .tag("queue", q)
-                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
                 .register(registry));
     }
 
@@ -115,7 +117,7 @@ public class OxmqMetrics {
         return waitTimeTimers.computeIfAbsent(queueName, q -> Timer.builder("oxmq.job.wait_time")
                 .description("Time spent waiting in queue before execution")
                 .tag("queue", q)
-                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
                 .register(registry));
     }
 

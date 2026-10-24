@@ -29,4 +29,19 @@ public class OxmqMetricsTest {
         assertThat(registry.get("oxmq.job.duration").tag("queue", "emails").timer().count()).isEqualTo(2L);
         assertThat(registry.get("oxmq.job.wait_time").tag("queue", "emails").timer().count()).isEqualTo(1L);
     }
+
+    @Test
+    void testDisabledMetricsWithNullRegistry() {
+        OxmqMetrics metrics = new OxmqMetrics(null);
+
+        // All calls should execute as safe, zero-cost no-ops
+        metrics.recordJobEnqueued("queue-disabled");
+        metrics.recordJobCompleted("queue-disabled", Duration.ofMillis(50));
+        metrics.recordJobFailed("queue-disabled", Duration.ofMillis(10), "IllegalStateException");
+        metrics.recordJobRetried("queue-disabled");
+        metrics.recordJobStalled("queue-disabled");
+        metrics.recordJobWaitTime("queue-disabled", Duration.ofMillis(15));
+
+        assertThat(metrics.getRegistry()).isNotNull();
+    }
 }

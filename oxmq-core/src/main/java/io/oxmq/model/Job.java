@@ -286,6 +286,13 @@ public class Job<T> {
         return null;
     }
 
+    /**
+     * Resolves the W3C TraceContext representation for this job.
+     */
+    public io.oxmq.tracing.TraceContext getTraceContext() {
+        return io.oxmq.tracing.TraceContext.extract(this);
+    }
+
     public void setProgressUpdater(BiConsumer<Integer, Object> progressUpdater) {
         this.progressUpdater = progressUpdater;
     }
