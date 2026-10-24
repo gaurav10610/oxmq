@@ -58,7 +58,8 @@ oxmq/
 ├── oxmq-spring-boot-starter/             # Spring Boot 3 auto-configuration, @OxmqListener, Actuator health
 ├── oxmq-benchmarks/                      # JMH microbenchmarks for throughput & latency
 ├── oxmq-examples/                        # Example projects and showcase applications
-│   ├── cloudbridge/                      # Flagship showcase: Multi-cloud asset sync (Java 21 Loom)
+│   ├── oxdoc-365/                        # Flagship showcase: Enterprise document AI pipeline & adaptive rate limiting
+│   ├── mock-office365-server/            # Decoupled mock Microsoft Graph API server
 │   └── oxmq-spring-boot-java17-example/  # Spring Boot 3 on Java 17 LTS baseline (annotation-driven)
 └── docs/                                 # Technical architecture, guides, and comparison docs
 ```

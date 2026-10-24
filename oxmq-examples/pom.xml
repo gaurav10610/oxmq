@@ -22,7 +22,6 @@
     </properties>
 
     <modules>
-        <module>cloudbridge</module>
         <module>oxmq-spring-boot-java17-example</module>
         <module>mock-office365-server</module>
         <module>oxdoc-365</module>

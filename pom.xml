@@ -102,11 +102,6 @@
                 <artifactId>oxmq-spring-boot-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
-            <dependency>
-                <groupId>io.github.gaurav10610</groupId>
-                <artifactId>cloudbridge</artifactId>
-                <version>${project.version}</version>
-            </dependency>
 
             <!-- Redis Client -->
             <dependency>
