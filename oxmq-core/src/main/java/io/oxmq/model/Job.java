@@ -32,6 +32,7 @@ public class Job<T> {
     private Object returnvalue;
     private String failedReason;
     private String parentKey;
+    private String repeatJobKey;
     private String queueName;
     private Map<String, Object> childrenValues;
 
@@ -200,6 +201,14 @@ public class Job<T> {
 
     public void setParentKey(String parentKey) {
         this.parentKey = parentKey;
+    }
+
+    public String getRepeatJobKey() {
+        return repeatJobKey;
+    }
+
+    public void setRepeatJobKey(String repeatJobKey) {
+        this.repeatJobKey = repeatJobKey;
     }
 
     public String getQueueName() {

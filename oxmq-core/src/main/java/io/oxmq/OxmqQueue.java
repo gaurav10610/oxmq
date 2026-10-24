@@ -498,7 +498,8 @@ public class OxmqQueue<T> implements Queue<T> {
         Objects.requireNonNull(schedulerId, "schedulerId must not be null");
         Objects.requireNonNull(jobName, "jobName must not be null");
         Objects.requireNonNull(cronPattern, "cronPattern must not be null");
-        long nextMillis = System.currentTimeMillis();
+        long now = System.currentTimeMillis();
+        long nextMillis = io.oxmq.util.CronEvaluator.parse(cronPattern).nextExecution(now, null);
         String serializedData = serializer.serialize(data);
         JobOptions options = opts != null ? opts : JobOptions.defaults();
         return backend.addJobScheduler(schedulerId, nextMillis, jobName, serializedData, options.toMap(), null, cronPattern, null);

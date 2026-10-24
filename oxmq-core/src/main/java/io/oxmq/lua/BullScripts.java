@@ -401,8 +401,21 @@ public class BullScripts {
             ScriptOutputType.INTEGER, redisKeys, prefixBytes, graceBytes, limitBytes, setBytes);
     }
 
+    private byte[] packFieldsToUpdate(Map<String, Object> fieldsToUpdate) {
+        if (fieldsToUpdate == null || fieldsToUpdate.isEmpty()) {
+            return new byte[0];
+        }
+        List<Object> flatList = new ArrayList<>(fieldsToUpdate.size() * 2);
+        for (Map.Entry<String, Object> entry : fieldsToUpdate.entrySet()) {
+            flatList.add(entry.getKey());
+            flatList.add(entry.getValue());
+        }
+        return BullMsgPack.pack(flatList);
+    }
+
     public Object moveToDelayed(StatefulRedisConnection<String, byte[]> connection,
-                                QueueKeys keys, String jobId, String token, long delayMs, boolean skipAttempt) {
+                                QueueKeys keys, String jobId, String token, long delayMs, boolean skipAttempt,
+                                Map<String, Object> fieldsToUpdate) {
         String[] redisKeys = new String[] {
             keys.getKey("marker"),
             keys.getKey("active"),
@@ -424,22 +437,28 @@ public class BullScripts {
         byte[] tokenBytes = (token != null ? token : "0").getBytes(StandardCharsets.UTF_8);
         byte[] delayBytes = String.valueOf(delayMs).getBytes(StandardCharsets.UTF_8);
         byte[] skipAttemptBytes = (skipAttempt ? "1" : "0").getBytes(StandardCharsets.UTF_8);
-        byte[] emptyFieldsBytes = new byte[0];
+        byte[] fieldsBytes = packFieldsToUpdate(fieldsToUpdate);
         byte[] fetchNextBytes = "".getBytes(StandardCharsets.UTF_8);
         byte[] optsBytes = BullMsgPack.pack(Map.of());
 
         return scriptManager.evalBinary(connection, LuaScript.MOVE_TO_DELAYED,
             ScriptOutputType.INTEGER, redisKeys, prefixBytes, tsBytes, jobIdBytes,
-            tokenBytes, delayBytes, skipAttemptBytes, emptyFieldsBytes, fetchNextBytes, optsBytes);
+            tokenBytes, delayBytes, skipAttemptBytes, fieldsBytes, fetchNextBytes, optsBytes);
+    }
+
+    public Object moveToDelayed(StatefulRedisConnection<String, byte[]> connection,
+                                QueueKeys keys, String jobId, String token, long delayMs, boolean skipAttempt) {
+        return moveToDelayed(connection, keys, jobId, token, delayMs, skipAttempt, null);
     }
 
     public Object moveToDelayed(StatefulRedisConnection<String, byte[]> connection,
                                 QueueKeys keys, String jobId, String token, long delayMs) {
-        return moveToDelayed(connection, keys, jobId, token, delayMs, false);
+        return moveToDelayed(connection, keys, jobId, token, delayMs, false, null);
     }
 
     public int retryJob(StatefulRedisConnection<String, byte[]> connection,
-                        QueueKeys keys, String jobId, String token, boolean lifo) {
+                        QueueKeys keys, String jobId, String token, boolean lifo,
+                        Map<String, Object> fieldsToUpdate) {
         String[] redisKeys = new String[] {
             keys.getKey("active"),
             keys.getKey("wait"),
@@ -460,13 +479,18 @@ public class BullScripts {
         byte[] pushCmdBytes = (lifo ? "RPUSH" : "LPUSH").getBytes(StandardCharsets.UTF_8);
         byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
         byte[] tokenBytes = (token != null ? token : "0").getBytes(StandardCharsets.UTF_8);
-        byte[] emptyFieldsBytes = new byte[0];
+        byte[] fieldsBytes = packFieldsToUpdate(fieldsToUpdate);
 
         Long result = scriptManager.evalBinary(connection, LuaScript.RETRY_JOB,
             ScriptOutputType.INTEGER, redisKeys, prefixBytes, tsBytes, pushCmdBytes,
-            jobIdBytes, tokenBytes, emptyFieldsBytes);
+            jobIdBytes, tokenBytes, fieldsBytes);
 
         return result != null ? result.intValue() : -1;
+    }
+
+    public int retryJob(StatefulRedisConnection<String, byte[]> connection,
+                        QueueKeys keys, String jobId, String token, boolean lifo) {
+        return retryJob(connection, keys, jobId, token, lifo, null);
     }
 
     public int reprocessJob(StatefulRedisConnection<String, byte[]> connection,
