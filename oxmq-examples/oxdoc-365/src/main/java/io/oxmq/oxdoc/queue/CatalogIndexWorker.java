@@ -79,6 +79,9 @@ public class CatalogIndexWorker {
             analysis = DocumentAnalysisResult.searchable("sha256-uncomputed", 0.0, 100L, 1, "en", "DOCUMENT", "Default analysis");
         }
 
+        io.oxmq.tracing.TraceContext traceCtx = job.getTraceContext();
+        String traceId = traceCtx != null ? traceCtx.traceId() : org.slf4j.MDC.get("traceId");
+
         IndexedDocumentRecord record = new IndexedDocumentRecord(
                 payload.itemId(),
                 payload.driveId(),
@@ -93,7 +96,8 @@ public class CatalogIndexWorker {
                 analysis.details(),
                 analysis.sha256(),
                 payload.scanOrigin(),
-                System.currentTimeMillis()
+                System.currentTimeMillis(),
+                traceId
         );
 
         // Save to repository

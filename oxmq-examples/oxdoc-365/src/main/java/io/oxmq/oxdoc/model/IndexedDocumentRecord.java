@@ -17,5 +17,27 @@ public record IndexedDocumentRecord(
         String analysisDetails,
         String sha256,
         ScanOrigin scanOrigin,
-        long indexedAtTimestamp
-) {}
+        long indexedAtTimestamp,
+        String traceId
+) {
+    public IndexedDocumentRecord(
+            String fileId,
+            String driveId,
+            String tenantId,
+            String fileName,
+            String filePath,
+            long fileSize,
+            String mimeType,
+            AccessScope accessScope,
+            boolean hasUniquePermissions,
+            IndexingVerdict indexingVerdict,
+            String analysisDetails,
+            String sha256,
+            ScanOrigin scanOrigin,
+            long indexedAtTimestamp
+    ) {
+        this(fileId, driveId, tenantId, fileName, filePath, fileSize, mimeType, accessScope,
+                hasUniquePermissions, indexingVerdict, analysisDetails, sha256, scanOrigin,
+                indexedAtTimestamp, null);
+    }
+}
