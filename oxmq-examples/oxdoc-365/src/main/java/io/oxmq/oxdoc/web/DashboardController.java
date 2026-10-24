@@ -190,24 +190,28 @@ public class DashboardController {
     public ResponseEntity<List<IndexedDocumentRecord>> getFiles(
             @RequestParam(value = "tenantId", required = false) String tenantId,
             @RequestParam(value = "scope", required = false) String scope,
+            @RequestParam(value = "exposure", required = false) String exposure,
             @RequestParam(value = "verdict", required = false) String verdict,
+            @RequestParam(value = "threat", required = false) String threat,
             @RequestParam(value = "origin", required = false) String origin
     ) {
-        List<IndexedDocumentRecord> files = repository.getDocumentsByTenant(tenantId);
+        List<IndexedDocumentRecord> files = repository.getRecentDocuments(tenantId, 100);
 
-        if (scope != null && !scope.isBlank()) {
+        String effectiveScope = (scope != null && !scope.isBlank()) ? scope : exposure;
+        if (effectiveScope != null && !effectiveScope.isBlank() && !"all".equalsIgnoreCase(effectiveScope)) {
             files = files.stream()
-                    .filter(f -> f.accessScope().name().equalsIgnoreCase(scope))
+                    .filter(f -> f.accessScope().name().equalsIgnoreCase(effectiveScope))
                     .toList();
         }
 
-        if (verdict != null && !verdict.isBlank()) {
+        String effectiveVerdict = (verdict != null && !verdict.isBlank()) ? verdict : threat;
+        if (effectiveVerdict != null && !effectiveVerdict.isBlank() && !"all".equalsIgnoreCase(effectiveVerdict)) {
             files = files.stream()
-                    .filter(f -> f.indexingVerdict().name().equalsIgnoreCase(verdict))
+                    .filter(f -> f.indexingVerdict().name().equalsIgnoreCase(effectiveVerdict))
                     .toList();
         }
 
-        if (origin != null && !origin.isBlank()) {
+        if (origin != null && !origin.isBlank() && !"all".equalsIgnoreCase(origin)) {
             files = files.stream()
                     .filter(f -> f.scanOrigin().name().equalsIgnoreCase(origin))
                     .toList();

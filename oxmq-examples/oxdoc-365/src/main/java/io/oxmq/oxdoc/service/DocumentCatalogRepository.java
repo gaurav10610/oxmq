@@ -116,6 +116,17 @@ public class DocumentCatalogRepository {
         return getAllDocuments();
     }
 
+    public List<IndexedDocumentRecord> getRecentDocuments(String tenantId, int limit) {
+        if (tenantId == null || tenantId.isBlank() || "all".equalsIgnoreCase(tenantId)) {
+            return docRepo.findTop100ByOrderByIndexedAtTimestampDesc().stream()
+                    .map(IndexedDocumentEntity::toRecord)
+                    .collect(Collectors.toList());
+        }
+        return docRepo.findTop100ByTenantIdOrderByIndexedAtTimestampDesc(tenantId).stream()
+                .map(IndexedDocumentEntity::toRecord)
+                .collect(Collectors.toList());
+    }
+
     public List<IndexedDocumentRecord> getDocumentsByTenant(String tenantId) {
         if (tenantId == null || tenantId.isBlank() || "all".equalsIgnoreCase(tenantId)) {
             return getAllDocuments();

@@ -360,14 +360,24 @@ public class LiveGraphClient implements GraphClient {
 
     @Override
     public DeltaSyncResult fetchDeltaChanges(String tenantId, String driveId, String deltaToken) {
-        String url = (deltaToken != null && !deltaToken.isBlank())
-                ? deltaToken
-                : graphBaseUrl + "/drives/" + driveId + "/root/delta?$select=id,name,size,file,folder,parentReference,@microsoft.graph.downloadUrl";
+        String url;
+        if (deltaToken != null && !deltaToken.isBlank()) {
+            if (deltaToken.startsWith("http://") || deltaToken.startsWith("https://")) {
+                url = deltaToken;
+            } else if (deltaToken.startsWith("$")) {
+                url = graphBaseUrl + "/drives/" + driveId + "/root/delta?" + deltaToken;
+            } else {
+                url = graphBaseUrl + "/drives/" + driveId + "/root/delta?token=" + deltaToken;
+            }
+        } else {
+            url = graphBaseUrl + "/drives/" + driveId + "/root/delta?$select=id,name,size,file,folder,parentReference,@microsoft.graph.downloadUrl";
+        }
 
         HttpResponse<String> response = executeGraphRequest(url, tenantId);
         List<DriveItem> updatedItems = new ArrayList<>();
         List<String> deletedItemIds = new ArrayList<>();
         String nextDeltaToken = null;
+        String nextLink = null;
 
         try {
             JsonNode root = objectMapper.readTree(response.body());
@@ -413,14 +423,15 @@ public class LiveGraphClient implements GraphClient {
 
             if (root.has("@odata.deltaLink")) {
                 nextDeltaToken = root.get("@odata.deltaLink").asText();
-            } else if (root.has("@odata.nextLink")) {
-                nextDeltaToken = root.get("@odata.nextLink").asText();
+            }
+            if (root.has("@odata.nextLink")) {
+                nextLink = root.get("@odata.nextLink").asText();
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed parsing delta response", e);
         }
 
-        return new DeltaSyncResult(updatedItems, deletedItemIds, nextDeltaToken);
+        return new DeltaSyncResult(updatedItems, deletedItemIds, nextDeltaToken, nextLink);
     }
 
     @Override
