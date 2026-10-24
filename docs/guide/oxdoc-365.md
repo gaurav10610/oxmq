@@ -41,6 +41,11 @@ The screenshot below captures OxDoc 365 indexing across all 5 official Microsoft
 </p>
 *Figure 1: OxDoc 365 Live Dashboard displaying the 5 active tenant profiles, real-time ingestion velocity, security and exposure verdicts, and live SSE event stream.*
 
+<p align="center">
+  <img src="/assets/oxdoc-hierarchy-tree.png" alt="OxDoc 365 Multi-Tenant Document Hierarchy Tree" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
+</p>
+*Figure 2: Interactive Enterprise Drive Hierarchy view displaying active Microsoft 365 tenants (e.g., Fabrikam Financial), SharePoint document libraries, user OneDrives, nested folder paths, and real-time classification verdicts.*
+
 ---
 
 ## 2. Microsoft Graph API Mechanics & Quota Hierarchy (100% Verified)

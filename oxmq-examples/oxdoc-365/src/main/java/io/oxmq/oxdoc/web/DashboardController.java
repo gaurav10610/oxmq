@@ -7,7 +7,9 @@ import io.oxmq.oxdoc.connector.MockAdminClient;
 import io.oxmq.oxdoc.connector.MockGraphClient;
 import io.oxmq.oxdoc.model.AccessScope;
 import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
+import io.oxmq.oxdoc.model.DriveType;
 import io.oxmq.oxdoc.model.IndexedDocumentRecord;
+import io.oxmq.oxdoc.model.MonitoredDrive;
 import io.oxmq.oxdoc.model.ScanOrigin;
 import io.oxmq.oxdoc.model.TenantDiscoveryPayload;
 import io.oxmq.oxdoc.model.TenantProfile;
@@ -21,9 +23,11 @@ import io.oxmq.spring.OxmqTemplate;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -220,6 +224,93 @@ public class DashboardController {
         return ResponseEntity.ok(files);
     }
 
+    /**
+     * Returns the structured multi-tenant hierarchy (Tenants -> Drives -> Folders -> Files)
+     * for interactive exploration in the OxDoc 365 dashboard.
+     */
+    @GetMapping("/hierarchy")
+    public ResponseEntity<Map<String, Object>> getHierarchy(
+            @RequestParam(value = "tenantId", required = false) String tenantId
+    ) {
+        boolean filterTenant = tenantId != null && !tenantId.isBlank() && !"all".equalsIgnoreCase(tenantId);
+        List<TenantProfile> profiles = filterTenant
+                ? Collections.singletonList(tenantSubscriptionService.getTenantProfile(tenantId))
+                : tenantSubscriptionService.getAllTenants();
+
+        List<Map<String, Object>> tenantList = new ArrayList<>();
+        for (TenantProfile p : profiles) {
+            if (p == null) continue;
+            Map<String, Object> tMap = new LinkedHashMap<>();
+            tMap.put("tenantId", p.tenantId());
+            tMap.put("organizationName", p.organizationName());
+            tMap.put("tier", p.tier().name());
+            tMap.put("tierDisplayName", p.tier().getDisplayName());
+            tMap.put("seatCount", p.seatCount());
+            tMap.put("burstLimitRUsPerSec", cooldownService.getTenantBurstLimit(p.tenantId()));
+
+            Map<String, Object> tenantMetrics = repository.getMetrics(p.tenantId());
+            long docCount = tenantMetrics.get("totalDocuments") instanceof Number n ? n.longValue() : 0L;
+            List<MonitoredDrive> drives = repository.getDrivesByTenantId(p.tenantId());
+            tMap.put("totalDocuments", docCount);
+            tMap.put("totalDrives", drives.size());
+
+            List<IndexedDocumentRecord> recentDocs = repository.getRecentDocuments(p.tenantId(), 200);
+
+            List<Map<String, Object>> spSites = new ArrayList<>();
+            List<Map<String, Object>> userODs = new ArrayList<>();
+
+            for (MonitoredDrive drive : drives) {
+                Map<String, Object> driveMap = new LinkedHashMap<>();
+                driveMap.put("driveId", drive.driveId());
+                driveMap.put("name", drive.name());
+                driveMap.put("driveType", drive.driveType().name());
+
+                List<IndexedDocumentRecord> driveDocs = recentDocs.stream()
+                        .filter(d -> drive.driveId().equals(d.driveId()))
+                        .toList();
+                driveMap.put("totalFiles", driveDocs.size());
+
+                long publicCount = driveDocs.stream()
+                        .filter(d -> d.accessScope() == AccessScope.PUBLIC_ANONYMOUS)
+                        .count();
+                driveMap.put("publicExposureCount", publicCount);
+
+                Map<String, List<IndexedDocumentRecord>> byFolder = driveDocs.stream()
+                        .collect(Collectors.groupingBy(d -> {
+                            String pth = d.filePath();
+                            if (pth == null || pth.isBlank() || "/".equals(pth)) return "Root Library";
+                            int lastSlash = pth.lastIndexOf('/');
+                            return lastSlash > 0 ? pth.substring(0, lastSlash) : pth;
+                        }, LinkedHashMap::new, Collectors.toList()));
+
+                if (byFolder.isEmpty()) {
+                    byFolder.put("Root Library", Collections.emptyList());
+                }
+
+                List<Map<String, Object>> folderList = new ArrayList<>();
+                for (Map.Entry<String, List<IndexedDocumentRecord>> entry : byFolder.entrySet()) {
+                    Map<String, Object> fMap = new LinkedHashMap<>();
+                    fMap.put("folderPath", entry.getKey());
+                    fMap.put("files", entry.getValue());
+                    folderList.add(fMap);
+                }
+                driveMap.put("folders", folderList);
+
+                if (drive.driveType() == DriveType.SHAREPOINT_LIBRARY) {
+                    spSites.add(driveMap);
+                } else {
+                    userODs.add(driveMap);
+                }
+            }
+
+            tMap.put("sharepointSites", spSites);
+            tMap.put("oneDrives", userODs);
+            tenantList.add(tMap);
+        }
+
+        return ResponseEntity.ok(Map.of("tenants", tenantList));
+    }
+
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamEvents() {
         return metricsService.subscribe();
@@ -303,7 +394,7 @@ public class DashboardController {
                 "status", "ALL_DISPATCHED",
                 "tenants", dispatched,
                 "totalTenants", dispatched.size(),
-                "message", "Dispatched concurrent discovery across all 5 enterprise tenant accounts (5,000 files)"
+                "message", "Dispatched concurrent discovery across all 5 enterprise tenant accounts (231,000+ files)"
         ));
     }
 

@@ -54,6 +54,15 @@ public class DocumentCatalogRepository {
                 .collect(Collectors.toList());
     }
 
+    public List<MonitoredDrive> getDrivesByTenantId(String tenantId) {
+        if (tenantId == null || tenantId.isBlank() || "all".equalsIgnoreCase(tenantId)) {
+            return getAllDrives();
+        }
+        return driveRepo.findByTenantId(tenantId).stream()
+                .map(MonitoredDriveEntity::toModel)
+                .collect(Collectors.toList());
+    }
+
     public Optional<MonitoredDrive> getDrive(String driveId) {
         if (driveId == null) return Optional.empty();
         return driveRepo.findById(driveId).map(MonitoredDriveEntity::toModel);
@@ -198,6 +207,12 @@ public class DocumentCatalogRepository {
         map.put("forwardScans", fwd);
         map.put("backwardScans", bwd);
         map.put("totalDrives", totalDrives);
+
+        Map<String, Long> perTenantCounts = new LinkedHashMap<>();
+        for (String tId : List.of("tenant-smb-250", "tenant-mid-2500", "tenant-ent-10k", "tenant-large-35k", "tenant-global-100k")) {
+            perTenantCounts.put(tId, docRepo.countByTenantId(tId));
+        }
+        map.put("perTenantCounts", perTenantCounts);
 
         if (filterTenant) {
             io.oxmq.oxdoc.model.TenantProfile profile = tenantSubscriptionService.getTenantProfile(tenantId);

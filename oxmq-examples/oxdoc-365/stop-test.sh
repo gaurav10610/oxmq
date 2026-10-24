@@ -86,6 +86,8 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
             docker rm -f "${container}" >/dev/null 2>&1 || true
         fi
     done
+    docker rm -f oxguard-grafana oxguard-bullboard oxguard-prometheus oxguard-redis oxguard-postgres 2>/dev/null || true
+    docker volume rm oxguard-365_oxguard_pgdata oxguard_pgdata 2>/dev/null || true
     echo -e "${GREEN}  ✔ All Docker containers, networks, and data volumes destroyed.${NC}"
 else
     echo -e "${YELLOW}  ⚠️ Docker daemon not accessible; skipped container teardown.${NC}"

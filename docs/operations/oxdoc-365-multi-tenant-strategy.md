@@ -178,22 +178,27 @@ sequenceDiagram
 <p align="center">
   <img src="/assets/oxdoc-multitenant-dashboard.png" alt="OxDoc 365 Live Dashboard" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
 </p>
-*Figure 1: OxDoc 365 Multi-Tenant Dashboard running live across all 5 tiers.*
+*Figure 1: OxDoc 365 Multi-Tenant Dashboard running live across all 5 tiers with Material Design 3 and real-time SSE streaming.*
+
+<p align="center">
+  <img src="/assets/oxdoc-hierarchy-tree.png" alt="OxDoc 365 Interactive Enterprise Drive Hierarchy" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
+</p>
+*Figure 2: Interactive Enterprise Drive Hierarchy view displaying active Microsoft 365 tenants (e.g., Fabrikam Financial), SharePoint document libraries, user OneDrives, nested folder paths, and real-time classification verdicts.*
 
 <p align="center">
   <img src="/assets/bullboard-multitenant-queues.png" alt="Bull-Board Multi-Tenant Queues" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
 </p>
-*Figure 2: Official Bull-Board visualizing OxMQ multi-tenant queues and completed jobs.*
+*Figure 3: Official Bull-Board visualizing OxMQ multi-tenant queues and completed jobs.*
 
 <p align="center">
   <img src="/assets/grafana-oxmq-telemetry.png" alt="Grafana OxMQ Telemetry" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
 </p>
-*Figure 3: Grafana OxMQ Telemetry dashboard tracking throughput, latency, and queue depth.*
+*Figure 4: Grafana OxMQ Telemetry dashboard tracking throughput, latency, and queue depth.*
 
 <p align="center">
   <img src="/assets/grafana-system-metrics.png" alt="Grafana System Metrics" style="border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); width: 100%;">
 </p>
-*Figure 4: Grafana System Metrics tracking Project Loom virtual threads and JVM heap memory stability.*
+*Figure 5: Grafana System Metrics tracking Project Loom virtual threads and JVM heap memory stability.*
 
 ---
 

@@ -99,6 +99,12 @@ for port in 8080 8081; do
     fi
 done
 
+# Clean any legacy oxguard containers, volumes, and previous mock storage for a 100% clean slate
+docker rm -f oxguard-grafana oxguard-bullboard oxguard-prometheus oxguard-redis oxguard-postgres 2>/dev/null || true
+docker volume rm oxguard-365_oxguard_pgdata oxguard_pgdata 2>/dev/null || true
+rm -rf "${SCRIPT_DIR}/data/m365-storage" "${REPO_ROOT}/data/m365-storage" 2>/dev/null || true
+rm -f "${LOG_FILE}" "${MOCK_LOG_FILE}" 2>/dev/null || true
+
 # If an independent oxmq-redis container is holding 6379, stop it so oxdoc-redis can bind cleanly
 if docker ps -q -f name="^/oxmq-redis$" | grep -q .; then
     echo -e "  Pausing root oxmq-redis container on port 6379 for OxDoc 365 stack..."
