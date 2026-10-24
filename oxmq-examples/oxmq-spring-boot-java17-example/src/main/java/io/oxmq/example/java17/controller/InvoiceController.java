@@ -4,7 +4,9 @@ import io.oxmq.example.java17.model.AuditLogEvent;
 import io.oxmq.example.java17.model.InvoiceRequest;
 import io.oxmq.example.java17.model.NotificationEvent;
 import io.oxmq.model.Job;
+import io.oxmq.model.JobOptions;
 import io.oxmq.spring.OxmqTemplate;
+import io.oxmq.tracing.TraceContext;
 import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,9 +43,12 @@ public class InvoiceController {
 
     @PostMapping("/invoices")
     public ResponseEntity<Map<String, Object>> submitInvoice(@RequestBody InvoiceRequest request) {
-        Job<InvoiceRequest> job = oxmqTemplate.send(invoiceQueue, "process-invoice", request);
+        TraceContext ctx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
+        JobOptions opts = JobOptions.builder().traceparent(ctx.asTraceparent()).build();
+        Job<InvoiceRequest> job = oxmqTemplate.send(invoiceQueue, "process-invoice", request, opts);
         return ResponseEntity.ok(Map.of(
                 "jobId", job.getId(),
+                "traceId", ctx.traceId(),
                 "queue", invoiceQueue,
                 "invoiceId", request.invoiceId(),
                 "status", "QUEUED"

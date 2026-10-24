@@ -174,6 +174,13 @@ public class OxmqQueue<T> implements Queue<T> {
         merged.setKeepLastIfActive(opts.isKeepLastIfActive() || defaultJobOptions.isKeepLastIfActive());
         merged.setKeepLogs(opts.getKeepLogs() > 0 ? opts.getKeepLogs() : defaultJobOptions.getKeepLogs());
         merged.setGroupKey(opts.getGroupKey() != null ? opts.getGroupKey() : defaultJobOptions.getGroupKey());
+        merged.setTraceparent(opts.getTraceparent() != null ? opts.getTraceparent() : defaultJobOptions.getTraceparent());
+        merged.setTracestate(opts.getTracestate() != null ? opts.getTracestate() : defaultJobOptions.getTracestate());
+        merged.setTelemetry(opts.getTelemetry() != null ? opts.getTelemetry() : defaultJobOptions.getTelemetry());
+        merged.setFailParentOnFailure(opts.isFailParentOnFailure() || defaultJobOptions.isFailParentOnFailure());
+        merged.setRemoveDependencyOnFailure(opts.isRemoveDependencyOnFailure() || defaultJobOptions.isRemoveDependencyOnFailure());
+        merged.setContinueParentOnFailure(opts.isContinueParentOnFailure() || defaultJobOptions.isContinueParentOnFailure());
+        merged.setIgnoreDependencyOnFailure(opts.isIgnoreDependencyOnFailure() || defaultJobOptions.isIgnoreDependencyOnFailure());
 
         if (opts.getKeepCompletedJobs() != null) {
             merged.setKeepCompletedJobs(opts.getKeepCompletedJobs());

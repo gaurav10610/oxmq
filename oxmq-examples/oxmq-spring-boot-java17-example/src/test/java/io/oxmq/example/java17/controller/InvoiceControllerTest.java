@@ -54,7 +54,8 @@ public class InvoiceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("QUEUED"))
                 .andExpect(jsonPath("$.invoiceId").value("http-inv-101"))
-                .andExpect(jsonPath("$.jobId").isNotEmpty());
+                .andExpect(jsonPath("$.jobId").isNotEmpty())
+                .andExpect(jsonPath("$.traceId").isNotEmpty());
     }
 
     @Test

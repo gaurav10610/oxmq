@@ -12,11 +12,13 @@ import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import io.oxmq.spring.actuator.OxmqHealthIndicator;
 import io.oxmq.spring.postprocessor.OxmqListenerAnnotationBeanPostProcessor;
+import io.oxmq.tracing.TracingJobInterceptor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
@@ -92,6 +94,16 @@ public class OxmqAutoConfiguration {
         }
         MeterRegistry registry = meterRegistryProvider.getIfAvailable();
         return new OxmqMetrics(registry);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "oxmq.tracing", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public TracingJobInterceptor oxmqTracingJobInterceptor(OxmqProperties properties) {
+        return new TracingJobInterceptor(
+                properties.getTracing().getTraceIdKey(),
+                properties.getTracing().getSpanIdKey()
+        );
     }
 
     @Bean

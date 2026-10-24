@@ -11,6 +11,7 @@ import io.oxmq.oxdoc.service.TenantSubscriptionService;
 import io.oxmq.spring.OxmqTemplate;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
+import io.oxmq.tracing.TraceContext;
 import java.util.ArrayList;
 import java.util.List;
 import org.slf4j.Logger;
@@ -64,10 +65,12 @@ public class TenantDiscoveryWorker {
             repository.saveDrive(drive);
 
             // Backward historical baseline crawl dispatched at Priority 10 with exponential backoff
+            TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
             JobOptions options = JobOptions.builder()
                     .priority(10)
                     .attempts(3)
                     .backoff(new io.oxmq.model.BackoffStrategy.Exponential(1000L))
+                    .traceparent(traceCtx.asTraceparent())
                     .build();
 
             DriveDeltaSyncPayload deltaPayload = new DriveDeltaSyncPayload(

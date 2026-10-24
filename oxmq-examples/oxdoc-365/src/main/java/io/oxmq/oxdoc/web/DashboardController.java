@@ -20,6 +20,7 @@ import io.oxmq.oxdoc.service.LiveMetricsService;
 import io.oxmq.oxdoc.service.TenantCooldownService;
 import io.oxmq.oxdoc.service.TenantSubscriptionService;
 import io.oxmq.spring.OxmqTemplate;
+import io.oxmq.tracing.TraceContext;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -346,10 +347,12 @@ public class DashboardController {
     ) {
         log.info("Manually triggering tenant discovery and backward crawl for [{}]", tenantId);
 
+        TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
         JobOptions options = JobOptions.builder()
                 .priority(5)
                 .attempts(3)
                 .backoff(new BackoffStrategy.Exponential(1000L))
+                .traceparent(traceCtx.asTraceparent())
                 .build();
 
         oxmqTemplate.send(
@@ -362,6 +365,7 @@ public class DashboardController {
         return ResponseEntity.ok(Map.of(
                 "status", "DISPATCHED",
                 "tenantId", tenantId,
+                "traceId", traceCtx.traceId(),
                 "message", "Baseline historical discovery job queued for tenant: " + tenantId,
                 "timestamp", System.currentTimeMillis()
         ));
@@ -375,10 +379,12 @@ public class DashboardController {
         log.info("Triggering concurrent baseline crawl across all official Microsoft 365 tenant accounts");
         List<String> dispatched = new ArrayList<>();
         for (TenantProfile profile : tenantSubscriptionService.getAllTenants()) {
+            TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
             JobOptions options = JobOptions.builder()
                     .priority(5)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
+                    .traceparent(traceCtx.asTraceparent())
                     .build();
 
             oxmqTemplate.send(
@@ -450,9 +456,11 @@ public class DashboardController {
         else if (accessScope == AccessScope.PRIVATE) scopeStr = "private";
         mockAdminClient.uploadForwardFile(driveId, fileName, scopeStr, fileBytes, "application/octet-stream");
 
+        TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
         JobOptions options = JobOptions.builder()
                 .priority(1)
                 .attempts(3)
+                .traceparent(traceCtx.asTraceparent())
                 .deduplication(DeduplicationOptions.builder()
                                 .id("forward-upload-" + driveId)
                                 .ttl(Duration.ofSeconds(15))
@@ -472,6 +480,7 @@ public class DashboardController {
         return ResponseEntity.ok(Map.of(
                 "status", "ENQUEUED",
                 "tenantId", tenantId,
+                "traceId", traceCtx.traceId(),
                 "message", "Simulated forward file upload queued with Priority 1 and 15s debounce",
                 "fileName", fileName,
                 "scope", accessScope.name()

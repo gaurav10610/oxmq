@@ -93,6 +93,34 @@ public record TraceContext(String version, String traceId, String spanId, String
     }
 
     /**
+     * Extracts TraceContext from SLF4J MDC using the default keys ("traceId", "spanId").
+     * If traceId is present, creates a valid TraceContext. If spanId is missing, generates a fresh span ID.
+     */
+    public static TraceContext fromMdc() {
+        return fromMdc("traceId", "spanId");
+    }
+
+    /**
+     * Extracts TraceContext from SLF4J MDC using custom keys.
+     */
+    public static TraceContext fromMdc(String traceIdKey, String spanIdKey) {
+        String traceId = org.slf4j.MDC.get(traceIdKey != null ? traceIdKey : "traceId");
+        if (traceId == null || traceId.isBlank()) {
+            return null;
+        }
+        traceId = traceId.trim();
+        String spanId = org.slf4j.MDC.get(spanIdKey != null ? spanIdKey : "spanId");
+        if (spanId != null && !spanId.isBlank()) {
+            spanId = spanId.trim();
+        } else {
+            byte[] spanBytes = new byte[8];
+            RANDOM.nextBytes(spanBytes);
+            spanId = HexFormat.of().formatHex(spanBytes);
+        }
+        return new TraceContext("00", traceId, spanId, "01", null);
+    }
+
+    /**
      * Injects this TraceContext into a JobOptions.Builder.
      */
     public void inject(JobOptions.Builder builder) {
@@ -100,6 +128,18 @@ public record TraceContext(String version, String traceId, String spanId, String
             builder.traceparent(asTraceparent());
             if (tracestate != null) {
                 builder.tracestate(tracestate);
+            }
+        }
+    }
+
+    /**
+     * Injects this TraceContext into a JobOptions instance.
+     */
+    public void inject(JobOptions options) {
+        if (options != null) {
+            options.setTraceparent(asTraceparent());
+            if (tracestate != null) {
+                options.setTracestate(tracestate);
             }
         }
     }

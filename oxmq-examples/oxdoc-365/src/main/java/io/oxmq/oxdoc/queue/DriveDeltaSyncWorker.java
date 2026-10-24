@@ -18,6 +18,7 @@ import io.oxmq.plugin.CheckpointStatePlugin;
 import io.oxmq.spring.OxmqTemplate;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
+import io.oxmq.tracing.TraceContext;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -165,11 +166,14 @@ public class DriveDeltaSyncWorker {
                     item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin()
             );
 
+            TraceContext parentTrace = TraceContext.fromMdc() != null ? TraceContext.fromMdc() : TraceContext.generateNew();
+
             // Parent Flow Job (Aggregator node in waiting-children state with bounded exponential backoff)
             JobOptions parentOptions = JobOptions.builder()
                     .priority(priority)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
+                    .traceparent(parentTrace.asTraceparent())
                     .build();
 
             FlowJob<DocumentCatalogPayload> parentFlow = FlowJob.of(
@@ -193,6 +197,7 @@ public class DriveDeltaSyncWorker {
                             .priority(priority)
                             .attempts(3)
                             .backoff(new BackoffStrategy.Exponential(1000L))
+                            .traceparent(parentTrace.createChildSpan().asTraceparent())
                             .failParentOnFailure(false)
                             .build()
             );
@@ -206,6 +211,7 @@ public class DriveDeltaSyncWorker {
                             .priority(priority)
                             .attempts(3)
                             .backoff(new BackoffStrategy.Exponential(1000L))
+                            .traceparent(parentTrace.createChildSpan().asTraceparent())
                             .failParentOnFailure(false)
                             .build()
             );

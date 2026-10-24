@@ -23,7 +23,17 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,oxmq
+        include: health,info,metrics,prometheus,oxmq
   endpoint:
     health:
       show-details: always
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-},%X{spanId:-}] [%15.15t] %-40.40logger{39} : %m%n"

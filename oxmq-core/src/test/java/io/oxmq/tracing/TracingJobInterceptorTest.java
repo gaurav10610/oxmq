@@ -48,4 +48,29 @@ public class TracingJobInterceptorTest {
         assertThat(MDC.get("traceId")).isNull();
         assertThat(MDC.get("spanId")).isNull();
     }
+
+    @Test
+    void testTraceContextFromMdcAndChildSpan() {
+        MDC.put("traceId", "4bf92f3577b34da6a3ce929d0e0e4736");
+        MDC.put("spanId", "00f067aa0ba902b7");
+
+        try {
+            TraceContext extracted = TraceContext.fromMdc();
+            assertThat(extracted).isNotNull();
+            assertThat(extracted.traceId()).isEqualTo("4bf92f3577b34da6a3ce929d0e0e4736");
+            assertThat(extracted.spanId()).isEqualTo("00f067aa0ba902b7");
+
+            TraceContext child = extracted.createChildSpan();
+            assertThat(child.traceId()).isEqualTo(extracted.traceId());
+            assertThat(child.spanId()).isNotEqualTo(extracted.spanId());
+            assertThat(child.spanId()).hasSize(16);
+
+            JobOptions.Builder b = JobOptions.builder();
+            child.inject(b);
+            JobOptions opts = b.build();
+            assertThat(opts.getTraceparent()).isEqualTo(child.asTraceparent());
+        } finally {
+            MDC.clear();
+        }
+    }
 }

@@ -9,6 +9,7 @@ import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
 import io.oxmq.oxdoc.model.ScanOrigin;
 import io.oxmq.oxdoc.queue.OxDocQueueConstants;
 import io.oxmq.spring.OxmqTemplate;
+import io.oxmq.tracing.TraceContext;
 import java.time.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -90,11 +91,14 @@ public class GraphWebhookController {
                 if (driveId != null) {
                     log.info("Dispatching Priority 1 Forward Sync for Drive [{}] (Tenant: {})", driveId, tenantId);
 
+                    TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
+
                     // Forward Scans: Priority 1 with 15s debounce deduplication
                     JobOptions options = JobOptions.builder()
                             .priority(1)
                             .attempts(3)
                             .backoff(new BackoffStrategy.Exponential(1000L))
+                            .traceparent(traceCtx.asTraceparent())
                             .deduplication(DeduplicationOptions.builder()
                                     .id("webhook-delta-" + driveId)
                                     .ttl(Duration.ofSeconds(15))

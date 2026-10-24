@@ -54,6 +54,11 @@ public class OxmqProperties {
      */
     private boolean metricsEnabled = true;
 
+    /**
+     * W3C OpenTelemetry distributed tracing and MDC propagation configuration.
+     */
+    private Tracing tracing = new Tracing();
+
     public boolean isClusterHashTags() {
         return clusterHashTags;
     }
@@ -243,6 +248,55 @@ public class OxmqProperties {
                 b.removeOnFail(io.oxmq.model.KeepJobs.of(count, java.time.Duration.ofSeconds(age)));
             }
             return b.build();
+        }
+    }
+
+    public Tracing getTracing() {
+        return tracing;
+    }
+
+    public void setTracing(Tracing tracing) {
+        this.tracing = tracing;
+    }
+
+    public static class Tracing {
+        /**
+         * Whether automatic W3C traceparent extraction and SLF4J MDC binding is enabled.
+         */
+        private boolean enabled = true;
+
+        /**
+         * SLF4J MDC key name for trace ID. Defaults to "traceId".
+         */
+        private String traceIdKey = "traceId";
+
+        /**
+         * SLF4J MDC key name for span ID. Defaults to "spanId".
+         */
+        private String spanIdKey = "spanId";
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public String getTraceIdKey() {
+            return traceIdKey;
+        }
+
+        public void setTraceIdKey(String traceIdKey) {
+            this.traceIdKey = traceIdKey;
+        }
+
+        public String getSpanIdKey() {
+            return spanIdKey;
+        }
+
+        public void setSpanIdKey(String spanIdKey) {
+            this.spanIdKey = spanIdKey;
         }
     }
 }
