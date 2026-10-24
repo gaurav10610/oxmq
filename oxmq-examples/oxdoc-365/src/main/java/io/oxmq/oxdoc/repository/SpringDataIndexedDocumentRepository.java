@@ -19,7 +19,11 @@ public interface SpringDataIndexedDocumentRepository extends JpaRepository<Index
 
     List<IndexedDocumentEntity> findAllByOrderByIndexedAtTimestampDesc();
 
+    List<IndexedDocumentEntity> findTop100ByOrderByIndexedAtTimestampDesc();
+
     List<IndexedDocumentEntity> findByTenantIdOrderByIndexedAtTimestampDesc(String tenantId);
+
+    List<IndexedDocumentEntity> findTop100ByTenantIdOrderByIndexedAtTimestampDesc(String tenantId);
 
     long countByAccessScope(AccessScope accessScope);
 

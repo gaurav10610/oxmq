@@ -23,6 +23,9 @@ server:
 oxmq:
   redis:
     url: redis://localhost:6379
+  default-job-options:
+    remove-on-complete: true # Automatically removes completed jobs data from Redis queues
+    remove-on-fail-count: 100 # Keeps last 100 failed jobs for auditing
   worker:
     concurrency: 25
     lock-duration: 45s
@@ -73,3 +76,7 @@ management:
     export:
       prometheus:
         enabled: true
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [%X{traceId:-},%X{spanId:-}] [%15.15t] %-40.40logger{39} : %m%n"

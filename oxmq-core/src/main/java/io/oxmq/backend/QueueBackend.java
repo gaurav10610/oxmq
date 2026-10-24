@@ -26,7 +26,15 @@ public interface QueueBackend extends Closeable {
 
     Object moveToDelayed(String jobId, String token, long delayMs, boolean skipAttempt);
 
+    default Object moveToDelayed(String jobId, String token, long delayMs, boolean skipAttempt, Map<String, Object> fieldsToUpdate) {
+        return moveToDelayed(jobId, token, delayMs, skipAttempt);
+    }
+
     int retryJob(String jobId, String token, boolean lifo);
+
+    default int retryJob(String jobId, String token, boolean lifo, Map<String, Object> fieldsToUpdate) {
+        return retryJob(jobId, token, lifo);
+    }
 
     int reprocessJob(String jobId, String state, boolean lifo, boolean resetAttemptsMade, boolean resetAttemptsStarted);
 

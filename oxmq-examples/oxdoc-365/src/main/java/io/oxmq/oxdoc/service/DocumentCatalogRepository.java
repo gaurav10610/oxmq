@@ -1,5 +1,7 @@
 package io.oxmq.oxdoc.service;
 
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.oxmq.oxdoc.entity.IndexedDocumentEntity;
 import io.oxmq.oxdoc.entity.MonitoredDriveEntity;
 import io.oxmq.oxdoc.model.AccessScope;
@@ -14,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,15 +29,37 @@ public class DocumentCatalogRepository {
     private final SpringDataIndexedDocumentRepository docRepo;
     private final SpringDataMonitoredDriveRepository driveRepo;
     private final TenantSubscriptionService tenantSubscriptionService;
+    private final MeterRegistry meterRegistry;
+
+    @Autowired
+    public DocumentCatalogRepository(
+            SpringDataIndexedDocumentRepository docRepo,
+            SpringDataMonitoredDriveRepository driveRepo,
+            TenantSubscriptionService tenantSubscriptionService,
+            @Autowired(required = false) MeterRegistry meterRegistry
+    ) {
+        this.docRepo = docRepo;
+        this.driveRepo = driveRepo;
+        this.tenantSubscriptionService = tenantSubscriptionService;
+        this.meterRegistry = meterRegistry;
+        if (meterRegistry != null) {
+            try {
+                Gauge.builder("oxdoc.catalog.documents.total", docRepo, SpringDataIndexedDocumentRepository::count)
+                        .description("Total documents stored in the knowledge catalog")
+                        .register(meterRegistry);
+                Gauge.builder("oxdoc.catalog.drives.total", driveRepo, SpringDataMonitoredDriveRepository::count)
+                        .description("Total monitored drives in inventory")
+                        .register(meterRegistry);
+            } catch (Exception ignored) {}
+        }
+    }
 
     public DocumentCatalogRepository(
             SpringDataIndexedDocumentRepository docRepo,
             SpringDataMonitoredDriveRepository driveRepo,
             TenantSubscriptionService tenantSubscriptionService
     ) {
-        this.docRepo = docRepo;
-        this.driveRepo = driveRepo;
-        this.tenantSubscriptionService = tenantSubscriptionService;
+        this(docRepo, driveRepo, tenantSubscriptionService, null);
     }
 
     @Transactional
@@ -50,6 +75,15 @@ public class DocumentCatalogRepository {
 
     public List<MonitoredDrive> getAllDrives() {
         return driveRepo.findAll().stream()
+                .map(MonitoredDriveEntity::toModel)
+                .collect(Collectors.toList());
+    }
+
+    public List<MonitoredDrive> getDrivesByTenantId(String tenantId) {
+        if (tenantId == null || tenantId.isBlank() || "all".equalsIgnoreCase(tenantId)) {
+            return getAllDrives();
+        }
+        return driveRepo.findByTenantId(tenantId).stream()
                 .map(MonitoredDriveEntity::toModel)
                 .collect(Collectors.toList());
     }
@@ -70,23 +104,44 @@ public class DocumentCatalogRepository {
 
     @Transactional
     public void saveDocument(IndexedDocumentRecord record) {
-        Optional<IndexedDocumentEntity> existing = docRepo.findByFileId(record.fileId());
-        if (existing.isPresent()) {
-            IndexedDocumentEntity entity = existing.get();
-            entity.setFileName(record.fileName());
-            entity.setFilePath(record.filePath());
-            entity.setFileSize(record.fileSize());
-            entity.setMimeType(record.mimeType());
-            entity.setAccessScope(record.accessScope());
-            entity.setHasUniquePermissions(record.hasUniquePermissions());
-            entity.setIndexingVerdict(record.indexingVerdict());
-            entity.setAnalysisDetails(record.analysisDetails());
-            entity.setSha256(record.sha256());
-            entity.setScanOrigin(record.scanOrigin());
-            entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
-            docRepo.save(entity);
-        } else {
-            docRepo.save(IndexedDocumentEntity.fromRecord(record));
+        try {
+            Optional<IndexedDocumentEntity> existing = docRepo.findByFileId(record.fileId());
+            if (existing.isPresent()) {
+                IndexedDocumentEntity entity = existing.get();
+                entity.setFileName(record.fileName());
+                entity.setFilePath(record.filePath());
+                entity.setFileSize(record.fileSize());
+                entity.setMimeType(record.mimeType());
+                entity.setAccessScope(record.accessScope());
+                entity.setHasUniquePermissions(record.hasUniquePermissions());
+                entity.setIndexingVerdict(record.indexingVerdict());
+                entity.setAnalysisDetails(record.analysisDetails());
+                entity.setSha256(record.sha256());
+                entity.setScanOrigin(record.scanOrigin());
+                entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
+                docRepo.save(entity);
+            } else {
+                docRepo.save(IndexedDocumentEntity.fromRecord(record));
+            }
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            // Concurrent insert race condition: update existing record safely
+            docRepo.findByFileId(record.fileId()).ifPresent(entity -> {
+                entity.setIndexingVerdict(record.indexingVerdict());
+                entity.setAnalysisDetails(record.analysisDetails());
+                entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
+                docRepo.save(entity);
+            });
+        }
+
+        if (meterRegistry != null) {
+            try {
+                meterRegistry.counter("oxdoc.documents.indexed",
+                        "tenant", record.tenantId() != null ? record.tenantId() : "unknown",
+                        "verdict", record.indexingVerdict() != null ? record.indexingVerdict().name() : "unknown",
+                        "scope", record.accessScope() != null ? record.accessScope().name() : "unknown",
+                        "origin", record.scanOrigin() != null ? record.scanOrigin().name() : "unknown"
+                ).increment();
+            } catch (Exception ignored) {}
         }
     }
 
@@ -104,6 +159,17 @@ public class DocumentCatalogRepository {
 
     public List<IndexedDocumentRecord> getAllFiles() {
         return getAllDocuments();
+    }
+
+    public List<IndexedDocumentRecord> getRecentDocuments(String tenantId, int limit) {
+        if (tenantId == null || tenantId.isBlank() || "all".equalsIgnoreCase(tenantId)) {
+            return docRepo.findTop100ByOrderByIndexedAtTimestampDesc().stream()
+                    .map(IndexedDocumentEntity::toRecord)
+                    .collect(Collectors.toList());
+        }
+        return docRepo.findTop100ByTenantIdOrderByIndexedAtTimestampDesc(tenantId).stream()
+                .map(IndexedDocumentEntity::toRecord)
+                .collect(Collectors.toList());
     }
 
     public List<IndexedDocumentRecord> getDocumentsByTenant(String tenantId) {
@@ -177,6 +243,12 @@ public class DocumentCatalogRepository {
         map.put("forwardScans", fwd);
         map.put("backwardScans", bwd);
         map.put("totalDrives", totalDrives);
+
+        Map<String, Long> perTenantCounts = new LinkedHashMap<>();
+        for (String tId : List.of("tenant-smb-250", "tenant-mid-2500", "tenant-ent-10k", "tenant-large-35k", "tenant-global-100k")) {
+            perTenantCounts.put(tId, docRepo.countByTenantId(tId));
+        }
+        map.put("perTenantCounts", perTenantCounts);
 
         if (filterTenant) {
             io.oxmq.oxdoc.model.TenantProfile profile = tenantSubscriptionService.getTenantProfile(tenantId);

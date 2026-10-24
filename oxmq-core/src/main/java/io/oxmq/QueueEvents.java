@@ -6,8 +6,6 @@ import io.lettuce.core.StreamMessage;
 import io.lettuce.core.XReadArgs;
 import io.lettuce.core.XReadArgs.StreamOffset;
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.pubsub.RedisPubSubAdapter;
-import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.serializer.JacksonJobSerializer;
@@ -44,7 +42,6 @@ public class QueueEvents implements Closeable {
     private final boolean ownsConnectionManager;
     private final JobSerializer serializer;
     private final Map<String, List<BiConsumer<String, Map<String, Object>>>> eventListeners = new ConcurrentHashMap<>();
-    private StatefulRedisPubSubConnection<String, String> pubSubConnection;
     private Thread streamThread;
     private volatile boolean running = false;
 
@@ -98,26 +95,11 @@ public class QueueEvents implements Closeable {
     }
 
     /**
-     * Starts listening to Redis Streams and Pub/Sub queue events.
+     * Starts listening to Redis Streams queue events.
      */
     public synchronized QueueEvents start() {
         if (!running) {
             this.running = true;
-            try {
-                this.pubSubConnection = connectionManager.getPubSubConnection();
-                this.pubSubConnection.addListener(new RedisPubSubAdapter<>() {
-                    @Override
-                    public void message(String channel, String message) {
-                        if (channelName.equals(channel)) {
-                            handleMessage(message);
-                        }
-                    }
-                });
-                this.pubSubConnection.sync().subscribe(channelName);
-            } catch (Exception e) {
-                log.debug("Pub/Sub subscription skipped for {}: {}", channelName, e.getMessage());
-            }
-
             this.streamThread = new Thread(this::streamPollingLoop, "oxmq-queue-events-" + channelName);
             this.streamThread.setDaemon(true);
             this.streamThread.start();
@@ -187,33 +169,6 @@ public class QueueEvents implements Closeable {
                     }
                 }
             }
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void handleMessage(String rawJson) {
-        try {
-            Map<String, Object> payload = serializer.deserialize(rawJson, Map.class);
-            if (payload == null) {
-                return;
-            }
-            String event = (String) payload.get("event");
-            String jobId = (String) payload.get("jobId");
-
-            if (event != null) {
-                List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(event);
-                if (listeners != null) {
-                    for (var listener : listeners) {
-                        try {
-                            listener.accept(jobId, payload);
-                        } catch (Exception e) {
-                            log.error("Error executing QueueEvents message listener for event '{}'", event, e);
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Failed to parse QueueEvents message: {}", rawJson, e);
         }
     }
 
@@ -360,13 +315,6 @@ public class QueueEvents implements Closeable {
             running = false;
             if (streamThread != null) {
                 streamThread.interrupt();
-            }
-            try {
-                if (pubSubConnection != null && pubSubConnection.isOpen()) {
-                    pubSubConnection.sync().unsubscribe(channelName);
-                }
-            } catch (Exception e) {
-                log.warn("Error unsubscribing QueueEvents from {}", channelName, e);
             }
             if (ownsConnectionManager && connectionManager != null) {
                 connectionManager.close();

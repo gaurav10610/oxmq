@@ -4,6 +4,7 @@ import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.serializer.JobSerializer;
 import io.oxmq.spring.postprocessor.OxmqListenerAnnotationBeanPostProcessor;
+import io.oxmq.tracing.TracingJobInterceptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -23,6 +24,14 @@ public class OxmqAutoConfigurationTest {
             assertThat(context).hasSingleBean(OxmqMetrics.class);
             assertThat(context).hasSingleBean(OxmqTemplate.class);
             assertThat(context).hasSingleBean(OxmqListenerAnnotationBeanPostProcessor.class);
+            assertThat(context).hasSingleBean(TracingJobInterceptor.class);
+        });
+    }
+
+    @Test
+    void testTracingCanBeDisabledViaProperty() {
+        contextRunner.withPropertyValues("oxmq.tracing.enabled=false").run(context -> {
+            assertThat(context).doesNotHaveBean(TracingJobInterceptor.class);
         });
     }
 

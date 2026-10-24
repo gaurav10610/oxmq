@@ -69,6 +69,12 @@ public class MockOffice365Server {
     private final String storageDirPath;
     private final boolean simulate429Burst;
     private final int totalFilesToSeed;
+    private final String scaleMode;
+    private final int smbFiles;
+    private final int midFiles;
+    private final int entFiles;
+    private final int largeFiles;
+    private final int globalFiles;
     private final String webhookUrl;
     private final String webhookClientState;
     private final ObjectMapper objectMapper;
@@ -260,7 +266,13 @@ public class MockOffice365Server {
             @Value("${oxdoc.mock-server.port:8081}") int port,
             @Value("${oxdoc.mock-server.storage-dir:./data/m365-storage}") String storageDirPath,
             @Value("${oxdoc.mock-server.simulate-429-burst:false}") boolean simulate429Burst,
-            @Value("${oxdoc.mock-server.total-files:5000}") int totalFilesToSeed,
+            @Value("${oxdoc.mock-server.total-files:231000}") int totalFilesToSeed,
+            @Value("${oxdoc.mock-server.scale-mode:ENTERPRISE_TIERED}") String scaleMode,
+            @Value("${oxdoc.mock-server.smb-files:1000}") int smbFiles,
+            @Value("${oxdoc.mock-server.mid-files:5000}") int midFiles,
+            @Value("${oxdoc.mock-server.ent-files:25000}") int entFiles,
+            @Value("${oxdoc.mock-server.large-files:100000}") int largeFiles,
+            @Value("${oxdoc.mock-server.global-files:100000}") int globalFiles,
             @Value("${oxdoc.webhook.notification-url:http://localhost:8080/api/v1/webhooks/graph}") String webhookUrl,
             @Value("${oxdoc.webhook.client-state:oxdoc-secret-state-token}") String webhookClientState,
             ObjectMapper objectMapper
@@ -269,6 +281,12 @@ public class MockOffice365Server {
         this.storageDirPath = storageDirPath;
         this.simulate429Burst = simulate429Burst;
         this.totalFilesToSeed = totalFilesToSeed;
+        this.scaleMode = scaleMode;
+        this.smbFiles = smbFiles;
+        this.midFiles = midFiles;
+        this.entFiles = entFiles;
+        this.largeFiles = largeFiles;
+        this.globalFiles = globalFiles;
         this.webhookUrl = webhookUrl;
         this.webhookClientState = webhookClientState;
         this.objectMapper = objectMapper;
@@ -283,11 +301,23 @@ public class MockOffice365Server {
             int port,
             String storageDirPath,
             boolean simulate429Burst,
+            int totalFilesToSeed,
             String webhookUrl,
             String webhookClientState,
             ObjectMapper objectMapper
     ) {
-        this(port, storageDirPath, simulate429Burst, 1000, webhookUrl, webhookClientState, objectMapper);
+        this(port, storageDirPath, simulate429Burst, totalFilesToSeed, "COMPACT", 200, 1000, 2000, 2000, 2000, webhookUrl, webhookClientState, objectMapper);
+    }
+
+    public MockOffice365Server(
+            int port,
+            String storageDirPath,
+            boolean simulate429Burst,
+            String webhookUrl,
+            String webhookClientState,
+            ObjectMapper objectMapper
+    ) {
+        this(port, storageDirPath, simulate429Burst, 1000, "COMPACT", 200, 200, 200, 200, 200, webhookUrl, webhookClientState, objectMapper);
     }
 
     @PostConstruct
@@ -445,80 +475,166 @@ public class MockOffice365Server {
         drivesMetadata.put(driveId, new DriveMetadata(driveId, tenantId, name, driveType, ownerPrincipal, siteOrUserName));
     }
 
+    private record TemplateInfo(String fileName, String mimeType, long size) {}
+
+    private Map<String, TemplateInfo> initPhysicalTemplates(Path storageDir) throws IOException {
+        Map<String, TemplateInfo> templates = new LinkedHashMap<>();
+
+        // 1. Technical Knowledge Base
+        createPhysicalTemplate(storageDir, "template_knowledge_base.txt",
+                "Enterprise Knowledge Base Article\nCategory: Architecture & Platform Engineering\nKeywords: OxMQ, Distributed Messaging, Project Loom, High Throughput\nAuthor: Enterprise Architect\nAbstract: Best practices for event-driven decoupled systems and real-time processing.",
+                "text/plain", templates);
+
+        // 2. Binary Dataset Archive
+        byte[] entropyBytes = new byte[8192];
+        new SecureRandom().nextBytes(entropyBytes);
+        createPhysicalBinaryTemplate(storageDir, "template_dataset_archive.bin", entropyBytes, "application/octet-stream", templates);
+
+        // 3. Executive Briefing Word Document
+        createPhysicalTemplate(storageDir, "template_executive_briefing.docx",
+                "Executive Briefing for Leadership: Quarterly Growth & Technology Strategy.\nConfidential.\nKey Initiatives & Milestones for Enterprise Cloud Architecture.",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", templates);
+
+        // 4. Strategic Plan Word Document
+        createPhysicalTemplate(storageDir, "template_strategic_plan.docx",
+                "Confidential business directives for Enterprise Operations.\nQuarterly objectives.\nAudited and Approved.",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", templates);
+
+        // 5. Governance Report PDF
+        createPhysicalTemplate(storageDir, "template_governance_report.pdf",
+                "%PDF-1.5\n% Corporate Governance Report\nCompliance & Risk Operations.\nConfidential Regulatory Audit.\n%%EOF",
+                "application/pdf", templates);
+
+        // 6. Financial Ledger Excel
+        createPhysicalTemplate(storageDir, "template_financial_ledger.xlsx",
+                "CostCenter,Category,Allocated,Actual,Status\nCC-101,Operations,$500000,$420000,Approved\nCC-102,Research,$750000,$690000,Audited",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", templates);
+
+        // 7. Customer Extract CSV
+        createPhysicalTemplate(storageDir, "template_customer_extract.csv",
+                "id,name,email,ssn,account_tier\n1001,Client_Alpha,alpha@example.com,123-45-6789,PREMIUM\n1002,Client_Beta,beta@example.com,987-65-4321,ENTERPRISE",
+                "text/csv", templates);
+
+        // 8. Clinical Research Trials PDF
+        createPhysicalTemplate(storageDir, "template_clinical_study.pdf",
+                "%PDF-1.5\n% Clinical Trials Protocol & IRB Approval\nConfidential Medical Research Data.\nPatient Safety & Efficacy.\n%%EOF",
+                "application/pdf", templates);
+
+        // 9. Quantum Patents Document
+        createPhysicalTemplate(storageDir, "template_quantum_patent.docx",
+                "MegaCorp Global Patent Application: Quantum Optimization of High-Throughput Distributed Messaging Fabrics.\nInventors: Chief Scientist, Principal Architect.",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", templates);
+
+        // 10. HIPAA Compliance PDF
+        createPhysicalTemplate(storageDir, "template_hipaa_compliance.pdf",
+                "%PDF-1.5\n% HIPAA Safeguards and Protected Health Information Audit\nConfidential Health Records.\nSecurity Rule 164.308 Compliance.\n%%EOF",
+                "application/pdf", templates);
+
+        return templates;
+    }
+
+    private void createPhysicalTemplate(Path storageDir, String fileName, String content, String mimeType, Map<String, TemplateInfo> map) throws IOException {
+        Path filePath = storageDir.resolve(fileName);
+        if (!Files.exists(filePath)) {
+            Files.writeString(filePath, content, StandardCharsets.UTF_8);
+        }
+        map.put(fileName, new TemplateInfo(fileName, mimeType, Files.size(filePath)));
+    }
+
+    private void createPhysicalBinaryTemplate(Path storageDir, String fileName, byte[] content, String mimeType, Map<String, TemplateInfo> map) throws IOException {
+        Path filePath = storageDir.resolve(fileName);
+        if (!Files.exists(filePath)) {
+            Files.write(filePath, content);
+        }
+        map.put(fileName, new TemplateInfo(fileName, mimeType, Files.size(filePath)));
+    }
+
     /**
      * Seeds physical files across all 5 tenants and their 25 drives.
-     * Each tenant receives 1,000 files (200 files per drive) = 5,000 files total.
+     * Supports tiered enterprise distributions:
+     * - SMB: 1,000 files (200 / drive)
+     * - Mid-Market: 5,000 files (1,000 / drive)
+     * - Enterprise: 25,000 files (5,000 / drive)
+     * - Large Enterprise: 100,000 files (20,000 / drive)
+     * - Global Hyperscale: 100,000 files (20,000 / drive)
+     * Total: 231,000 authentic files cataloged with real disk templates.
      */
     private void seedPhysicalFilesAcrossTenants(Path storageDir) throws IOException {
+        Map<String, TemplateInfo> templates = initPhysicalTemplates(storageDir);
         String[] scopes = {"private", "organization", "users", "anonymous"};
-        SecureRandom rng = new SecureRandom();
+        long now = System.currentTimeMillis();
 
-        int filesPerDrive = Math.max(20, totalFilesToSeed / 5 / 5); // Default: 200 files per drive (5,000 total)
-        log.info("Seeding {} files per drive across 25 drives (Total {} files)...", filesPerDrive, filesPerDrive * 25);
-
+        int totalSeeded = 0;
         for (DriveMetadata dm : drivesMetadata.values()) {
             // Skip backward compatibility alias drives during bulk seed
             if (dm.driveId().startsWith("sp-drive-") || dm.driveId().startsWith("od-drive-")) {
                 continue;
             }
 
+            int filesForThisDrive;
+            if ("COMPACT".equalsIgnoreCase(scaleMode)) {
+                filesForThisDrive = Math.max(20, totalFilesToSeed / 5 / 5);
+            } else {
+                filesForThisDrive = switch (dm.tenantId()) {
+                    case "tenant-smb-250" -> smbFiles / 5;
+                    case "tenant-mid-2500" -> midFiles / 5;
+                    case "tenant-ent-10k" -> entFiles / 5;
+                    case "tenant-large-35k" -> largeFiles / 5;
+                    case "tenant-global-100k" -> globalFiles / 5;
+                    default -> 200;
+                };
+            }
+
             List<String> folders = DRIVE_FOLDERS.getOrDefault(dm.driveId(), List.of("/Documents/General"));
             String tenantId = dm.tenantId();
+            List<String> driveList = driveFiles.computeIfAbsent(dm.driveId(), k -> Collections.synchronizedList(new ArrayList<>(filesForThisDrive)));
 
-            for (int i = 1; i <= filesPerDrive; i++) {
+            for (int i = 1; i <= filesForThisDrive; i++) {
                 String folder = folders.get(i % folders.size());
                 String scope = scopes[i % scopes.length];
                 int typeRoll = i % 100;
 
-                String fileName;
-                String mimeType;
-
+                String templateKey;
+                String ext;
                 if (typeRoll == 1) {
-                    // Structured Technical Knowledge Base Document
-                    fileName = "knowledge_article_" + dm.driveId() + "_" + i + ".txt";
-                    mimeType = "text/plain";
-                    String articleContent = "Enterprise Knowledge Base Article #" + i + "\nCategory: Architecture & Platform Engineering\nKeywords: OxMQ, Distributed Messaging, Project Loom, High Throughput\nAuthor: " + dm.ownerPrincipal() + "\nAbstract: Best practices for event-driven decoupled systems.";
-                    createPhysicalFile(storageDir, fileName, articleContent, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_knowledge_base.txt";
+                    ext = "txt";
                 } else if (typeRoll == 2) {
-                    // Compressed Binary Dataset Archive
-                    fileName = "dataset_archive_" + dm.driveId() + "_" + i + ".bin";
-                    mimeType = "application/octet-stream";
-                    byte[] entropyBytes = new byte[8192];
-                    rng.nextBytes(entropyBytes);
-                    createPhysicalBinaryFile(storageDir, fileName, entropyBytes, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_dataset_archive.bin";
+                    ext = "bin";
                 } else if (typeRoll == 3) {
-                    // System Architecture Specification Document
-                    fileName = "Executive_Briefing_" + dm.driveId() + "_" + i + ".docx";
-                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                    String briefingContent = "Executive Briefing for Leadership: Quarterly Growth & Technology Strategy (" + dm.name() + ").\nConfidential.\nKey Initiatives & Milestones.";
-                    createPhysicalFile(storageDir, fileName, briefingContent, mimeType, dm.driveId(), tenantId, "organization", folder);
+                    templateKey = "template_executive_briefing.docx";
+                    ext = "docx";
                 } else if (typeRoll < 40) {
-                    // Business Word Document
-                    fileName = "Strategic_Plan_" + dm.driveId() + "_" + i + ".docx";
-                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-                    String content = "Confidential business directives for " + dm.name() + " (Doc #" + i + ").\nQuarterly objectives.\nAudited.";
-                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_strategic_plan.docx";
+                    ext = "docx";
                 } else if (typeRoll < 70) {
-                    // PDF Document
-                    fileName = "Corporate_Governance_" + dm.driveId() + "_" + i + ".pdf";
-                    mimeType = "application/pdf";
-                    String content = "%PDF-1.5\n% " + dm.name() + " Governance Report #" + i + "\nCompliance & Risk Operations.\n%%EOF";
-                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_governance_report.pdf";
+                    ext = "pdf";
                 } else if (typeRoll < 90) {
-                    // Excel Spreadsheet
-                    fileName = "Financial_Ledger_" + dm.driveId() + "_" + i + ".xlsx";
-                    mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-                    String content = "CostCenter,Category,Allocated,Actual\nCC-" + (100 + i) + ",Operations,$500000,$420000";
-                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_financial_ledger.xlsx";
+                    ext = "xlsx";
                 } else {
-                    // PII / CSV Table
-                    fileName = "Customer_Data_Extract_" + dm.driveId() + "_" + i + ".csv";
-                    mimeType = "text/csv";
-                    String content = "id,name,email,ssn\n" + i + ",Client_" + i + ",client" + i + "@example.com,123-45-" + (1000 + i);
-                    createPhysicalFile(storageDir, fileName, content, mimeType, dm.driveId(), tenantId, scope, folder);
+                    templateKey = "template_customer_extract.csv";
+                    ext = "csv";
                 }
+
+                TemplateInfo tInfo = templates.get(templateKey);
+                String fileName = dm.name().replace(" ", "_") + "_Doc_" + i + "." + ext;
+                String fileId = "file-" + dm.driveId() + "-" + i;
+
+                MockFileInfo info = new MockFileInfo(
+                        fileId, dm.driveId(), tenantId, fileName, folder,
+                        tInfo.size(), tInfo.mimeType(), scope,
+                        tInfo.fileName(), now - (i * 1000L)
+                );
+
+                filesInventory.put(fileId, info);
+                driveList.add(fileId);
+                totalSeeded++;
             }
         }
+        log.info("Finished seeding {} files across all enterprise tenant drives (Total inventory: {} files)", totalSeeded, filesInventory.size());
     }
 
     private void seedBenchmarkInitialFiles(Path storageDir) throws IOException {
@@ -570,9 +686,7 @@ public class MockOffice365Server {
         );
         filesInventory.put(fileId, info);
         List<String> list = driveFiles.computeIfAbsent(driveId, k -> Collections.synchronizedList(new ArrayList<>()));
-        if (!list.contains(fileId)) {
-            list.add(fileId);
-        }
+        list.add(fileId);
     }
 
     public synchronized void seedAdditionalFiles(int targetTotal) {
@@ -960,6 +1074,23 @@ public class MockOffice365Server {
         sendJsonResponse(exchange, 200, root);
     }
 
+    private void appendFileJson(ArrayNode value, MockFileInfo info, String tenantId, String driveId) {
+        ObjectNode item = value.addObject();
+        item.put("id", info.fileId());
+        item.put("name", info.name());
+        item.put("size", info.size());
+        item.put("webUrl", "https://" + tenantId + ".sharepoint.com/documents/" + info.name());
+        item.put("@microsoft.graph.downloadUrl", "http://localhost:" + port + "/mock-storage/download/" + info.fileId());
+        item.put("eTag", "etag-" + info.lastModified());
+        item.put("cTag", "ctag-" + info.lastModified());
+
+        ObjectNode fileObj = item.putObject("file");
+        fileObj.put("mimeType", info.mimeType());
+
+        ObjectNode parentRef = item.putObject("parentReference");
+        parentRef.put("path", "/drives/" + driveId + "/root:" + info.path());
+    }
+
     private void handleDrives(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
 
@@ -977,27 +1108,56 @@ public class MockOffice365Server {
             ArrayNode value = root.putArray("value");
 
             List<String> fileIds = driveFiles.getOrDefault(driveId, Collections.emptyList());
-            for (String fid : fileIds) {
-                MockFileInfo info = filesInventory.get(fid);
-                if (info != null) {
-                    ObjectNode item = value.addObject();
-                    item.put("id", info.fileId());
-                    item.put("name", info.name());
-                    item.put("size", info.size());
-                    item.put("webUrl", "https://" + tenantId + ".sharepoint.com/documents/" + info.name());
-                    item.put("@microsoft.graph.downloadUrl", "http://localhost:" + port + "/mock-storage/download/" + info.fileId());
-                    item.put("eTag", "etag-" + info.lastModified());
-                    item.put("cTag", "ctag-" + info.lastModified());
+            String query = exchange.getRequestURI().getQuery();
 
-                    ObjectNode fileObj = item.putObject("file");
-                    fileObj.put("mimeType", info.mimeType());
+            int offset = 0;
+            boolean isIncrementalToken = false;
+            long tokenTimestamp = 0;
 
-                    ObjectNode parentRef = item.putObject("parentReference");
-                    parentRef.put("path", "/drives/" + driveId + "/root:" + info.path());
+            if (query != null) {
+                for (String param : query.split("&")) {
+                    if (param.startsWith("$skiptoken=")) {
+                        try {
+                            offset = Integer.parseInt(param.substring(11));
+                        } catch (NumberFormatException ignored) {}
+                    } else if (param.startsWith("token=")) {
+                        isIncrementalToken = true;
+                        try {
+                            tokenTimestamp = Long.parseLong(param.substring(6));
+                        } catch (NumberFormatException ignored) {}
+                    }
                 }
             }
 
-            root.put("@odata.deltaLink", "http://localhost:" + port + "/v1.0/drives/" + driveId + "/root/delta?token=" + System.currentTimeMillis());
+            if (isIncrementalToken) {
+                for (String fid : fileIds) {
+                    MockFileInfo info = filesInventory.get(fid);
+                    if (info != null && info.lastModified() > tokenTimestamp) {
+                        appendFileJson(value, info, tenantId, driveId);
+                    }
+                }
+                root.put("@odata.deltaLink", "http://localhost:" + port + "/v1.0/drives/" + driveId + "/root/delta?token=" + System.currentTimeMillis());
+            } else {
+                int pageSize = 500;
+                int totalCount = fileIds.size();
+                int start = Math.min(offset, totalCount);
+                int end = Math.min(start + pageSize, totalCount);
+
+                for (int i = start; i < end; i++) {
+                    String fid = fileIds.get(i);
+                    MockFileInfo info = filesInventory.get(fid);
+                    if (info != null) {
+                        appendFileJson(value, info, tenantId, driveId);
+                    }
+                }
+
+                if (end < totalCount) {
+                    root.put("@odata.nextLink", "http://localhost:" + port + "/v1.0/drives/" + driveId + "/root/delta?$skiptoken=" + end);
+                } else {
+                    root.put("@odata.deltaLink", "http://localhost:" + port + "/v1.0/drives/" + driveId + "/root/delta?token=" + System.currentTimeMillis());
+                }
+            }
+
             sendJsonResponse(exchange, 200, root);
             return;
         }

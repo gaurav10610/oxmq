@@ -15,7 +15,7 @@
 | **M2: Concurrency & Virtual Threads** | Java 21 Loom dispatcher, Stalled Job Sentinel, Lock Extender, Exponential Backoff, Progress API | 🟢 Done | `100%` | `v0.2.0` |
 | **M3: DAG Workflows & Rate Limiting** | `FlowProducer` parent-child trees, sliding-window rate limiter, pause/resume/clean | 🟢 Done | `100%` | `v0.3.0` |
 | **M4: Batch Dequeue & QueueEvents** | `QueueEvents` Pub/Sub listener, `OxmqBatchWorker` high-throughput bulk popping | 🟢 Done | `100%` | `v0.4.0` |
-| **M5: Flagship Showcase Application** | `CloudBridge` multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web dashboard, `FlowProducer` DAGs, and Virtual Threads | 🟢 Done | `100%` | `v0.5.0` |
+| **M5: Flagship Showcase Application** | `OxDoc 365` enterprise document intelligence pipeline with interactive web dashboard, `FlowProducer` DAGs, and Virtual Threads | 🟢 Done | `100%` | `v0.5.0` |
 | **M6: Hardening, Benchmarking & 1.0.0 GA** | JMH benchmark suite, Documentation & SEO optimization, GitHub Release `v1.0.0` with packaged JAR artifacts, 100% Live Redis test verification | 🟢 Done | `100%` | `v1.0.0` |
 | **M7: Java 17+ LTS & 10,000 DAG Scale** | Java 17 baseline support with Loom fallback, annotation-driven `@OxmqListener` & `@OxmqBatchListener`, 10k DAG tree scale benchmarks, Java 17 Spring Boot showcase app | 🟢 Done | `100%` | `v1.1.0` |
 | **M8: 100% BullMQ v6 Parity & Pluggable Backends** | Official BullMQ v6.3.15 Lua parity (49/49 verified scripts), Pluggable `QueueBackend` (`RedisQueueBackend`), dynamic `DelayedException`, custom retry backoffs, child dependency options | 🟢 Done | `100%` | `v1.2.0` |
@@ -37,7 +37,7 @@
 | **`oxmq-core`** | Redis client, Lua scripts, Virtual Thread worker, BatchWorker, QueueEvents, FlowProducer, Metrics | Lettuce 6.x, Jackson 2.x, SLF4J, Micrometer Core | Unit & Integration (100% Passing) | 🟢 Operational |
 | **`oxmq-spring-boot-starter`** | Spring Boot 3.x Auto-configuration, `@OxmqListener`, Actuator | Spring Boot 3.x, Spring Context, `oxmq-core` | Unit & Smoke | 🟢 Operational |
 | **`oxmq-benchmarks`** | JMH performance microbenchmarks for enqueue, dequeue, latency | JMH Core & Annotations, `oxmq-core` | Benchmark Suite | 🟢 Operational |
-| **`oxmq-examples/cloudbridge`** | Flagship multi-cloud asset sync pipeline (GitHub, Dropbox, Box) with interactive web UI & live DAG graph | Spring Web, Spring Actuator, `oxmq-spring-boot-starter` | E2E Integration & Web Tests | 🟢 Operational |
+| **`oxmq-examples/oxdoc-365`** | Flagship enterprise document intelligence pipeline with interactive web UI, live DAG graph, & multi-tenant quotas | Spring Web, Spring Actuator, `oxmq-spring-boot-starter` | E2E Integration & Web Tests | 🟢 Operational |
 | **`oxmq-examples`** | Parent aggregator module for showcase applications | Maven POM | Aggregator | 🟢 Operational |
 
 ---
@@ -46,7 +46,7 @@
 
 ### Phase 1: Build & Infrastructure
 - [x] `[SETUP-001]` Root multi-module `pom.xml` configured with Java 21 LTS baseline.
-- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples/cloudbridge`.
+- [x] `[SETUP-002]` Modular project structure: `oxmq-core`, `oxmq-spring-boot-starter`, `oxmq-benchmarks`, `oxmq-examples/oxdoc-365`.
 - [x] `[SETUP-003]` Maven Wrapper (`mvnw`) initialized for zero-config onboarding.
 - [x] `[SETUP-004]` Apache 2.0 `LICENSE` and `.gitignore` repository baseline.
 
@@ -101,12 +101,12 @@
 - [x] `[SPRG-003]` `OxmqListenerAnnotationBeanPostProcessor` for declarative worker lifecycle management.
 - [x] `[SPRG-004]` Spring Boot Actuator `OxmqHealthIndicator`.
 
-### Phase 8: Flagship Showcase Application (`oxmq-examples/cloudbridge/`)
-- [x] `[EXMP-001]` Multi-cloud asset pipeline syncing GitHub repositories to Dropbox & Box.
+### Phase 8: Flagship Showcase Application (`oxmq-examples/oxdoc-365/`)
+- [x] `[EXMP-001]` Multi-cloud & SaaS content pipeline modeling Microsoft Graph RU quotas and document categorization.
 - [x] `[EXMP-002]` Parent-Child DAG workflow via `FlowProducer` (`WAITING_CHILDREN` fan-out and resolution).
-- [x] `[EXMP-003]` High-concurrency file transfer workers running on Java 21 Virtual Threads (`@OxmqListener`).
+- [x] `[EXMP-003]` High-concurrency workers running on Java 21 Virtual Threads (`@OxmqListener`).
 - [x] `[EXMP-004]` Real-time progress tracking (0% to 100%) and per-file state querying from Redis.
-- [x] `[EXMP-005]` Modern interactive web dashboard (`http://localhost:8080`) with embedded Bull-Board inspector.
+- [x] `[EXMP-005]` Modern interactive web dashboard with embedded Bull-Board inspector.
 - [x] `[EXMP-006]` End-to-end integration test suite verifying DAG dispatch and manifest generation.
 
 ---

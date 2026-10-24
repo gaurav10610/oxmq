@@ -87,8 +87,18 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public Object moveToDelayed(String jobId, String token, long delayMs, boolean skipAttempt, Map<String, Object> fieldsToUpdate) {
+        return bullScripts.moveToDelayed(binaryConnection(), queueKeys, jobId, token, delayMs, skipAttempt, fieldsToUpdate);
+    }
+
+    @Override
     public int retryJob(String jobId, String token, boolean lifo) {
         return bullScripts.retryJob(binaryConnection(), queueKeys, jobId, token, lifo);
+    }
+
+    @Override
+    public int retryJob(String jobId, String token, boolean lifo, Map<String, Object> fieldsToUpdate) {
+        return bullScripts.retryJob(binaryConnection(), queueKeys, jobId, token, lifo, fieldsToUpdate);
     }
 
     @Override

@@ -28,6 +28,7 @@ public class TenantCooldownService {
     private final PriorityQuotaGovernorPlugin governor;
     private final TenantSubscriptionService tenantSubscriptionService;
     private final double headroomYieldThreshold;
+    private final io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
     // Real-time API Quota Telemetry Counters partitioned by Tenant
     private final Map<String, LongAdder> forwardApiQuotaByTenant = new java.util.concurrent.ConcurrentHashMap<>();
@@ -39,18 +40,31 @@ public class TenantCooldownService {
     private final LongAdder backwardApiQuotaUsed = new LongAdder();
     private final LongAdder retriesRecoveredCount = new LongAdder();
 
+    @org.springframework.beans.factory.annotation.Autowired
     public TenantCooldownService(
             GroupRateLimiterPlugin rateLimiter,
             RateLimitSentinelPlugin sentinel,
             PriorityQuotaGovernorPlugin governor,
             TenantSubscriptionService tenantSubscriptionService,
-            @Value("${oxdoc.rate-limit.headroom-yield-threshold:0.25}") double headroomYieldThreshold
+            @Value("${oxdoc.rate-limit.headroom-yield-threshold:0.25}") double headroomYieldThreshold,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) io.micrometer.core.instrument.MeterRegistry meterRegistry
     ) {
         this.rateLimiter = rateLimiter;
         this.sentinel = sentinel;
         this.governor = governor;
         this.tenantSubscriptionService = tenantSubscriptionService;
         this.headroomYieldThreshold = headroomYieldThreshold;
+        this.meterRegistry = meterRegistry;
+    }
+
+    public TenantCooldownService(
+            GroupRateLimiterPlugin rateLimiter,
+            RateLimitSentinelPlugin sentinel,
+            PriorityQuotaGovernorPlugin governor,
+            TenantSubscriptionService tenantSubscriptionService,
+            double headroomYieldThreshold
+    ) {
+        this(rateLimiter, sentinel, governor, tenantSubscriptionService, headroomYieldThreshold, null);
     }
 
     /**
@@ -81,6 +95,14 @@ public class TenantCooldownService {
             backwardApiQuotaByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
         }
         tenantSubscriptionService.recordWorkProcessed(tenantId);
+        if (meterRegistry != null) {
+            try {
+                meterRegistry.counter("oxdoc.api.calls",
+                        "tenant", tenantId != null ? tenantId : "unknown",
+                        "origin", origin != null ? origin.name() : "BACKWARD"
+                ).increment();
+            } catch (Exception ignored) {}
+        }
     }
 
     public void recordTenantApiCall(String tenantId) {
@@ -98,6 +120,13 @@ public class TenantCooldownService {
     public void record429Hit(String tenantId) {
         // Sentinel handles counting throttles natively
         tenantSubscriptionService.record429ThrottleEvent(tenantId);
+        if (meterRegistry != null) {
+            try {
+                meterRegistry.counter("oxdoc.throttles.429",
+                        "tenant", tenantId != null ? tenantId : "unknown"
+                ).increment();
+            } catch (Exception ignored) {}
+        }
     }
 
     public void record429Hit() {
@@ -107,6 +136,13 @@ public class TenantCooldownService {
     public void recordRetryRecovered(String tenantId) {
         retriesRecoveredCount.increment();
         retriesRecoveredByTenant.computeIfAbsent(tenantId, k -> new LongAdder()).increment();
+        if (meterRegistry != null) {
+            try {
+                meterRegistry.counter("oxdoc.retries.recovered",
+                        "tenant", tenantId != null ? tenantId : "unknown"
+                ).increment();
+            } catch (Exception ignored) {}
+        }
     }
 
     public void recordRetryRecovered() {

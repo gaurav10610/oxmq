@@ -32,6 +32,7 @@ public class Job<T> {
     private Object returnvalue;
     private String failedReason;
     private String parentKey;
+    private String repeatJobKey;
     private String queueName;
     private Map<String, Object> childrenValues;
 
@@ -202,6 +203,14 @@ public class Job<T> {
         this.parentKey = parentKey;
     }
 
+    public String getRepeatJobKey() {
+        return repeatJobKey;
+    }
+
+    public void setRepeatJobKey(String repeatJobKey) {
+        this.repeatJobKey = repeatJobKey;
+    }
+
     public String getQueueName() {
         return queueName;
     }
@@ -275,6 +284,13 @@ public class Job<T> {
             return opts.getTelemetry().get("tracestate").toString();
         }
         return null;
+    }
+
+    /**
+     * Resolves the W3C TraceContext representation for this job.
+     */
+    public io.oxmq.tracing.TraceContext getTraceContext() {
+        return io.oxmq.tracing.TraceContext.extract(this);
     }
 
     public void setProgressUpdater(BiConsumer<Integer, Object> progressUpdater) {

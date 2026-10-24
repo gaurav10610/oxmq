@@ -9,7 +9,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PID_FILE="${SCRIPT_DIR}/.oxdoc.pid"
-LEGACY_PID_FILE="${SCRIPT_DIR}/.oxguard.pid"
 MOCK_PID_FILE="${SCRIPT_DIR}/.mockserver.pid"
 
 # ANSI Colors
@@ -37,7 +36,7 @@ echo -e "${BOLD}${BLUE}=========================================================
 # 1. Stop Java Application Processes (OxDoc 365 & Mock Office 365 Server)
 STOPPED_APP=false
 
-for pid_info in "OxDoc 365:${PID_FILE}" "OxGuard (Legacy):${LEGACY_PID_FILE}" "Mock Office 365 Server:${MOCK_PID_FILE}"; do
+for pid_info in "OxDoc 365:${PID_FILE}" "Mock Office 365 Server:${MOCK_PID_FILE}"; do
     NAME="${pid_info%%:*}"
     PFILE="${pid_info#*:}"
     if [ -f "${PFILE}" ]; then
@@ -84,7 +83,7 @@ else
 fi
 
 # 2. Stop Docker Containers
-CONTAINER_LIST="oxdoc-bullboard oxdoc-postgres oxdoc-redis oxdoc-prometheus oxdoc-grafana oxguard-bullboard oxguard-postgres oxguard-redis oxmq-redis oxguard-prometheus oxguard-grafana"
+CONTAINER_LIST="oxdoc-bullboard oxdoc-postgres oxdoc-redis oxdoc-prometheus oxdoc-grafana oxmq-redis"
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     if [ "${CLEAN_MODE}" = true ]; then

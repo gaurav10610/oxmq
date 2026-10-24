@@ -12,6 +12,7 @@ import java.io.Closeable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -199,6 +200,91 @@ public class FlowProducer implements Closeable {
 
             return parentId;
         }
+    }
+
+    /**
+     * Retrieves the hierarchical execution tree of a workflow flow DAG starting from a root job ID.
+     * Mirrors BullMQ's FlowProducer.getFlow(opts).
+     *
+     * @param queueName queue where the root parent job resides
+     * @param jobId     ID of the parent/root job
+     * @return populated JobNode tree with statuses and children dependencies, or null if root job not found
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId) {
+        return getFlow(queueName, jobId, 10);
+    }
+
+    /**
+     * Retrieves the hierarchical execution tree of a workflow flow DAG with configurable maximum depth.
+     *
+     * @param queueName queue where the root parent job resides
+     * @param jobId     ID of the parent/root job
+     * @param maxDepth  maximum recursion depth to traverse
+     * @return populated JobNode tree with statuses and children dependencies, or null if root job not found
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId, int maxDepth) {
+        if (queueName == null || jobId == null || maxDepth < 0) {
+            return null;
+        }
+
+        QueueKeys queueKeys = (clusterTag != null && !clusterTag.isBlank())
+                ? QueueKeys.forClusterFlow(clusterTag, defaultPrefix, queueName)
+                : new QueueKeys(defaultPrefix, queueName);
+
+        String jobKey = queueKeys.toJobKey(jobId);
+        var sync = connectionManager.getCommandConnection().sync();
+        Map<String, String> fields = sync.hgetall(jobKey);
+        if (fields == null || fields.isEmpty()) {
+            return null;
+        }
+
+        String name = fields.getOrDefault("name", "unnamed");
+        String dataStr = fields.get("data");
+        String optsStr = fields.get("opts");
+        io.oxmq.model.JobOptions opts = (optsStr != null && !optsStr.isBlank())
+                ? serializer.deserialize(optsStr, io.oxmq.model.JobOptions.class)
+                : new io.oxmq.model.JobOptions();
+
+        io.oxmq.model.Job<Object> job = new io.oxmq.model.Job<>(jobId, name, dataStr, opts);
+        job.setQueueName(queueName);
+        String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        String progressStr = fields.get("progress");
+        if (progressStr != null) {
+            try {
+                job.setProgress(Integer.parseInt(progressStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        String parentKey = fields.get("parentKey");
+        if (parentKey != null) job.setParentKey(parentKey);
+
+        io.oxmq.model.JobNode jobNode = new io.oxmq.model.JobNode(job);
+        if (maxDepth == 0) {
+            return jobNode;
+        }
+
+        // Collect child job keys from pending, processed, and failed sets
+        Set<String> childKeys = new java.util.LinkedHashSet<>();
+        Set<String> pending = sync.smembers(jobKey + ":dependencies");
+        if (pending != null) childKeys.addAll(pending);
+        Map<String, String> processed = sync.hgetall(jobKey + ":processed");
+        if (processed != null) childKeys.addAll(processed.keySet());
+        Map<String, String> failed = sync.hgetall(jobKey + ":failed");
+        if (failed != null) childKeys.addAll(failed.keySet());
+
+        for (String childKey : childKeys) {
+            String[] tokens = childKey.split(":");
+            if (tokens.length >= 2) {
+                String childJobId = tokens[tokens.length - 1];
+                String childQueue = tokens[tokens.length - 2];
+                io.oxmq.model.JobNode childNode = getFlow(childQueue, childJobId, maxDepth - 1);
+                if (childNode != null) {
+                    jobNode.addChild(childNode);
+                }
+            }
+        }
+
+        return jobNode;
     }
 
     @Override

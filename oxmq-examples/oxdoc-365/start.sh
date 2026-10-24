@@ -10,10 +10,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yml"
 PID_FILE="${SCRIPT_DIR}/.oxdoc.pid"
 LOG_FILE="${SCRIPT_DIR}/oxdoc.log"
-JAR_FILE="${SCRIPT_DIR}/target/oxdoc-365-1.7.0.jar"
+JAR_FILE="$(ls -t "${SCRIPT_DIR}/target/oxdoc-365-"*.jar 2>/dev/null | grep -v sources | grep -v javadoc | head -n 1 || echo "${SCRIPT_DIR}/target/oxdoc-365-1.8.0.jar")"
 MOCK_PID_FILE="${SCRIPT_DIR}/.mockserver.pid"
 MOCK_LOG_FILE="${SCRIPT_DIR}/mockserver.log"
-MOCK_JAR_FILE="${REPO_ROOT}/oxmq-examples/mock-office365-server/target/mock-office365-server-1.7.0-exec.jar"
+MOCK_JAR_FILE="$(ls -t "${REPO_ROOT}/oxmq-examples/mock-office365-server/target/mock-office365-server-"*-exec.jar 2>/dev/null | head -n 1 || echo "${REPO_ROOT}/oxmq-examples/mock-office365-server/target/mock-office365-server-1.8.0-exec.jar")"
 
 # ANSI Colors
 GREEN='\033[0;32m'

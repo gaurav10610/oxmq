@@ -20,9 +20,13 @@ When using `oxmq-spring-boot-starter`, configure your broker settings under the 
 | `oxmq.virtual-threads` | `boolean` | `true` | Whether to dispatch worker tasks to Java 21 Project Loom Virtual Threads. Transparently falls back to an optimized platform thread pool on Java 17 LTS. |
 | `oxmq.metrics-enabled` | `boolean` | `true` | Exposes native Micrometer counters, timers, and gauges for Prometheus and Spring Boot Actuator. |
 | `oxmq.max-len-events` | `int` | `10000` | Redis stream event trimming threshold (`MAXLEN ~ count`) on the queue's `events` key to prevent unbounded Redis stream growth. |
-| `oxmq.default-job-options.remove-on-complete.count` | `Integer` | `null` | Max completed jobs retained in Redis sorted set across all queues (auto-inherited if job options are omitted). |
+| `oxmq.default-job-options.remove-on-complete` | `boolean` | `false` | Whether to immediately purge completed job hashes and logs from Redis upon successful completion. |
+| `oxmq.default-job-options.remove-on-complete-count` | `Integer` | `null` | Max completed jobs retained in Redis sorted set across all queues (auto-inherited if job options are omitted). |
+| `oxmq.default-job-options.remove-on-complete.count` | `Integer` | `null` | Nested object form: Max completed jobs retained in Redis sorted set. |
 | `oxmq.default-job-options.remove-on-complete.age-seconds` | `Long` | `null` | Max age in seconds of completed jobs retained in Redis before automatic eviction. |
-| `oxmq.default-job-options.remove-on-fail.count` | `Integer` | `null` | Max failed jobs retained in Redis sorted set across all queues. |
+| `oxmq.default-job-options.remove-on-fail` | `boolean` | `false` | Whether to immediately purge failed job hashes from Redis upon terminal failure. |
+| `oxmq.default-job-options.remove-on-fail-count` | `Integer` | `null` | Max failed jobs retained in Redis sorted set for Dead-Letter auditing (e.g. `100`). |
+| `oxmq.default-job-options.remove-on-fail.count` | `Integer` | `null` | Nested object form: Max failed jobs retained in Redis sorted set. |
 | `oxmq.default-job-options.remove-on-fail.age-seconds` | `Long` | `null` | Max age in seconds of failed jobs retained in Redis before automatic eviction. |
 
 ### Complete `application.yml` Example

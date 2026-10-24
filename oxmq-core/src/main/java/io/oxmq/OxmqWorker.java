@@ -207,7 +207,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
                     concurrencySemaphore.release();
                     emitDrained();
-                    TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+                    waitForMarkerOrSleep(pollerConn);
                     continue;
                 }
 
@@ -218,7 +218,11 @@ public class OxmqWorker<T> implements Worker<T> {
                     long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
                     concurrencySemaphore.release();
                     emitDrained();
-                    TimeUnit.MILLISECONDS.sleep(expireTime > 0 ? Math.min(expireTime, pollIntervalMs) : pollIntervalMs);
+                    if (expireTime > 0) {
+                        TimeUnit.MILLISECONDS.sleep(Math.min(expireTime, pollIntervalMs));
+                    } else {
+                        waitForMarkerOrSleep(pollerConn);
+                    }
                     continue;
                 }
 
@@ -228,6 +232,10 @@ public class OxmqWorker<T> implements Worker<T> {
 
                 Job<T> job = buildJobFromFields(jobId, fields);
                 lockExtender.registerJob(jobId);
+
+                if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
+                    rescheduleJobScheduler(job.getRepeatJobKey(), job);
+                }
 
                 dispatcherExecutor.submit(() -> executeJob(job));
 
@@ -411,6 +419,17 @@ public class OxmqWorker<T> implements Worker<T> {
         int maxAttempts = opts != null && opts.getAttempts() > 0 ? opts.getAttempts() : 1;
         int currentAttempts = job.getAttemptsMade() + 1;
 
+        String failedReasonValue;
+        if (job.isCancelled()) {
+            failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
+        } else {
+            failedReasonValue = stackTrace;
+        }
+
+        Map<String, Object> fieldsToUpdate = new HashMap<>();
+        fieldsToUpdate.put("failedReason", failedReasonValue);
+        fieldsToUpdate.put("stacktrace", serializer.serialize(List.of(stackTrace)));
+
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
             BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
             long delayMs = 0;
@@ -426,26 +445,19 @@ public class OxmqWorker<T> implements Worker<T> {
 
             if (delayMs > 0) {
                 bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
-                        job.getId(), workerId, delayMs);
+                        job.getId(), workerId, delayMs, false, fieldsToUpdate);
                 emitFailed(job, error);
                 log.debug("Job {} [id: {}] failed (attempt {}/{}), delayed by {} ms for retry",
                         job.getName(), job.getId(), currentAttempts, maxAttempts, delayMs);
                 return;
             } else {
                 bullScripts.retryJob(connectionManager.getBinaryConnection(), queueKeys,
-                        job.getId(), workerId, opts != null && opts.isLifo());
+                        job.getId(), workerId, opts != null && opts.isLifo(), fieldsToUpdate);
                 emitFailed(job, error);
                 log.debug("Job {} [id: {}] failed (attempt {}/{}), moved to wait for retry",
                         job.getName(), job.getId(), currentAttempts, maxAttempts);
                 return;
             }
-        }
-
-        String failedReasonValue;
-        if (job.isCancelled()) {
-            failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
-        } else {
-            failedReasonValue = stackTrace;
         }
 
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
@@ -476,6 +488,10 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        String rjkStr = fields.get("rjk");
+        if (rjkStr != null && !rjkStr.isBlank()) {
+            job.setRepeatJobKey(rjkStr);
+        }
 
         // Memory optimization: lazily load children values only when requested by processor
         job.setChildrenValuesSupplier(() -> {
@@ -554,6 +570,97 @@ public class OxmqWorker<T> implements Worker<T> {
             return new String(bytes, StandardCharsets.UTF_8);
         }
         return obj != null ? obj.toString() : null;
+    }
+
+    private void waitForMarkerOrSleep(StatefulRedisConnection<String, byte[]> pollerConn) {
+        double blockTimeout = Math.max(0.05, pollIntervalMs / 1000.0);
+        try {
+            pollerConn.sync().bzpopmin(blockTimeout, queueKeys.getKey("marker"));
+        } catch (Exception e) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(Math.min(50, pollIntervalMs));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void rescheduleJobScheduler(String schedulerId, Job<T> job) {
+        dispatcherExecutor.submit(() -> {
+            try {
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                String schedulerKey = queueKeys.toKey("repeat:" + schedulerId);
+                Map<String, String> schedData = sync.hgetall(schedulerKey);
+                if (schedData == null || schedData.isEmpty()) {
+                    return;
+                }
+
+                long now = System.currentTimeMillis();
+                String endDateStr = schedData.get("endDate");
+                if (endDateStr != null && !endDateStr.isBlank()) {
+                    try {
+                        long endDate = Long.parseLong(endDateStr);
+                        if (now > endDate) {
+                            log.debug("JobScheduler {} reached endDate {}, skipping reschedule", schedulerId, endDate);
+                            return;
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+
+                String limitStr = schedData.get("limit");
+                String icStr = schedData.get("ic");
+                if (limitStr != null && !limitStr.isBlank() && icStr != null && !icStr.isBlank()) {
+                    try {
+                        int limit = Integer.parseInt(limitStr);
+                        int ic = Integer.parseInt(icStr);
+                        if (ic >= limit) {
+                            log.debug("JobScheduler {} reached iteration limit ({}/{}), skipping reschedule", schedulerId, ic, limit);
+                            return;
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+
+                String everyStr = schedData.get("every");
+                String pattern = schedData.get("pattern");
+                String tz = schedData.get("tz");
+                String name = schedData.getOrDefault("name", job.getName());
+                String dataJson = schedData.getOrDefault("data", "{}");
+                String optsJson = schedData.get("opts");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> optsMap = (optsJson != null && !optsJson.isBlank())
+                        ? serializer.deserialize(optsJson, Map.class)
+                        : Map.of();
+
+                Long every = null;
+                long nextMillis;
+
+                if (everyStr != null && !everyStr.isBlank()) {
+                    every = Long.parseLong(everyStr);
+                    nextMillis = now + every;
+                } else if (pattern != null && !pattern.isBlank()) {
+                    nextMillis = io.oxmq.util.CronEvaluator.parse(pattern).nextExecution(now, tz);
+                } else {
+                    return;
+                }
+
+                bullScripts.addJobScheduler(
+                        connectionManager.getBinaryConnection(),
+                        queueKeys,
+                        schedulerId,
+                        nextMillis,
+                        name,
+                        dataJson,
+                        optsMap,
+                        every,
+                        pattern,
+                        tz
+                );
+                log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
+                        schedulerId, nextMillis, Math.max(0, nextMillis - now));
+            } catch (Exception e) {
+                log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
+            }
+        });
     }
 
     @Override

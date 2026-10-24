@@ -75,6 +75,9 @@ public class IndexedDocumentEntity {
     @Column(nullable = false)
     private long indexedAtTimestamp;
 
+    @Column(length = 64)
+    private String traceId;
+
     public IndexedDocumentEntity() {}
 
     public static IndexedDocumentEntity fromRecord(IndexedDocumentRecord record) {
@@ -93,6 +96,7 @@ public class IndexedDocumentEntity {
         entity.setSha256(record.sha256());
         entity.setScanOrigin(record.scanOrigin());
         entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
+        entity.setTraceId(record.traceId());
         return entity;
     }
 
@@ -111,7 +115,8 @@ public class IndexedDocumentEntity {
                 analysisDetails,
                 sha256,
                 scanOrigin,
-                indexedAtTimestamp
+                indexedAtTimestamp,
+                traceId
         );
     }
 
@@ -145,4 +150,6 @@ public class IndexedDocumentEntity {
     public void setScanOrigin(ScanOrigin scanOrigin) { this.scanOrigin = scanOrigin; }
     public long getIndexedAtTimestamp() { return indexedAtTimestamp; }
     public void setIndexedAtTimestamp(long indexedAtTimestamp) { this.indexedAtTimestamp = indexedAtTimestamp; }
+    public String getTraceId() { return traceId; }
+    public void setTraceId(String traceId) { this.traceId = traceId; }
 }

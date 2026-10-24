@@ -97,7 +97,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for pkg in "io.oxmq.oxmq-benchmarks" "io.oxmq.cloudbridge" "io.oxmq.oxmq-examples"; do
+          for pkg in "io.oxmq.oxmq-benchmarks" "io.oxmq.oxmq-examples"; do
             echo "Checking status of $pkg in registry..."
             res=$(curl -s -w "\n%{http_code}" \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \

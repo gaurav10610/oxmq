@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-examples</artifactId>
-        <version>1.7.0</version>
+        <version>1.8.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -34,10 +34,14 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- Spring Boot Actuator -->
+        <!-- Spring Boot Actuator & Prometheus Metrics -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
         <!-- Testing -->

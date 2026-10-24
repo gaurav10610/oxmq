@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-parent</artifactId>
-        <version>1.7.0</version>
+        <version>1.8.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -22,7 +22,6 @@
     </properties>
 
     <modules>
-        <module>cloudbridge</module>
         <module>oxmq-spring-boot-java17-example</module>
         <module>mock-office365-server</module>
         <module>oxdoc-365</module>

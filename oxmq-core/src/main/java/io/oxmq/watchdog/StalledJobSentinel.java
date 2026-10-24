@@ -6,8 +6,7 @@ import io.oxmq.lua.BullScripts;
 import io.oxmq.metrics.OxmqMetrics;
 import java.io.Closeable;
 import java.util.List;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +23,7 @@ public class StalledJobSentinel implements Closeable {
     private final BullScripts bullScripts;
     private final QueueKeys queueKeys;
     private final OxmqMetrics metrics;
-    private final ScheduledExecutorService scheduler;
+    private final ScheduledFuture<?> scheduledTask;
     private final int maxStalledCount;
     private final long checkIntervalMs;
 
@@ -37,12 +36,8 @@ public class StalledJobSentinel implements Closeable {
         this.maxStalledCount = maxStalledCount;
         this.checkIntervalMs = checkIntervalMs;
 
-        this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "oxmq-stalled-sentinel-" + queueKeys.getQueueName());
-            t.setDaemon(true);
-            return t;
-        });
-        this.scheduler.scheduleWithFixedDelay(this::checkStalledJobs, checkIntervalMs, checkIntervalMs, TimeUnit.MILLISECONDS);
+        this.scheduledTask = WatchdogScheduler.sharedScheduler()
+                .scheduleWithFixedDelay(this::checkStalledJobs, checkIntervalMs, checkIntervalMs, TimeUnit.MILLISECONDS);
     }
 
     private void checkStalledJobs() {
@@ -72,14 +67,8 @@ public class StalledJobSentinel implements Closeable {
 
     @Override
     public void close() {
-        scheduler.shutdown();
-        try {
-            if (!scheduler.awaitTermination(2, TimeUnit.SECONDS)) {
-                scheduler.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            scheduler.shutdownNow();
-            Thread.currentThread().interrupt();
+        if (scheduledTask != null) {
+            scheduledTask.cancel(false);
         }
     }
 }

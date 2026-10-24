@@ -7,7 +7,9 @@ import io.oxmq.oxdoc.connector.MockAdminClient;
 import io.oxmq.oxdoc.connector.MockGraphClient;
 import io.oxmq.oxdoc.model.AccessScope;
 import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
+import io.oxmq.oxdoc.model.DriveType;
 import io.oxmq.oxdoc.model.IndexedDocumentRecord;
+import io.oxmq.oxdoc.model.MonitoredDrive;
 import io.oxmq.oxdoc.model.ScanOrigin;
 import io.oxmq.oxdoc.model.TenantDiscoveryPayload;
 import io.oxmq.oxdoc.model.TenantProfile;
@@ -18,12 +20,15 @@ import io.oxmq.oxdoc.service.LiveMetricsService;
 import io.oxmq.oxdoc.service.TenantCooldownService;
 import io.oxmq.oxdoc.service.TenantSubscriptionService;
 import io.oxmq.spring.OxmqTemplate;
+import io.oxmq.tracing.TraceContext;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -190,30 +195,121 @@ public class DashboardController {
     public ResponseEntity<List<IndexedDocumentRecord>> getFiles(
             @RequestParam(value = "tenantId", required = false) String tenantId,
             @RequestParam(value = "scope", required = false) String scope,
+            @RequestParam(value = "exposure", required = false) String exposure,
             @RequestParam(value = "verdict", required = false) String verdict,
+            @RequestParam(value = "threat", required = false) String threat,
             @RequestParam(value = "origin", required = false) String origin
     ) {
-        List<IndexedDocumentRecord> files = repository.getDocumentsByTenant(tenantId);
+        List<IndexedDocumentRecord> files = repository.getRecentDocuments(tenantId, 100);
 
-        if (scope != null && !scope.isBlank()) {
+        String effectiveScope = (scope != null && !scope.isBlank()) ? scope : exposure;
+        if (effectiveScope != null && !effectiveScope.isBlank() && !"all".equalsIgnoreCase(effectiveScope)) {
             files = files.stream()
-                    .filter(f -> f.accessScope().name().equalsIgnoreCase(scope))
+                    .filter(f -> f.accessScope().name().equalsIgnoreCase(effectiveScope))
                     .toList();
         }
 
-        if (verdict != null && !verdict.isBlank()) {
+        String effectiveVerdict = (verdict != null && !verdict.isBlank()) ? verdict : threat;
+        if (effectiveVerdict != null && !effectiveVerdict.isBlank() && !"all".equalsIgnoreCase(effectiveVerdict)) {
             files = files.stream()
-                    .filter(f -> f.indexingVerdict().name().equalsIgnoreCase(verdict))
+                    .filter(f -> f.indexingVerdict().name().equalsIgnoreCase(effectiveVerdict))
                     .toList();
         }
 
-        if (origin != null && !origin.isBlank()) {
+        if (origin != null && !origin.isBlank() && !"all".equalsIgnoreCase(origin)) {
             files = files.stream()
                     .filter(f -> f.scanOrigin().name().equalsIgnoreCase(origin))
                     .toList();
         }
 
         return ResponseEntity.ok(files);
+    }
+
+    /**
+     * Returns the structured multi-tenant hierarchy (Tenants -> Drives -> Folders -> Files)
+     * for interactive exploration in the OxDoc 365 dashboard.
+     */
+    @GetMapping("/hierarchy")
+    public ResponseEntity<Map<String, Object>> getHierarchy(
+            @RequestParam(value = "tenantId", required = false) String tenantId
+    ) {
+        boolean filterTenant = tenantId != null && !tenantId.isBlank() && !"all".equalsIgnoreCase(tenantId);
+        List<TenantProfile> profiles = filterTenant
+                ? Collections.singletonList(tenantSubscriptionService.getTenantProfile(tenantId))
+                : tenantSubscriptionService.getAllTenants();
+
+        List<Map<String, Object>> tenantList = new ArrayList<>();
+        for (TenantProfile p : profiles) {
+            if (p == null) continue;
+            Map<String, Object> tMap = new LinkedHashMap<>();
+            tMap.put("tenantId", p.tenantId());
+            tMap.put("organizationName", p.organizationName());
+            tMap.put("tier", p.tier().name());
+            tMap.put("tierDisplayName", p.tier().getDisplayName());
+            tMap.put("seatCount", p.seatCount());
+            tMap.put("burstLimitRUsPerSec", cooldownService.getTenantBurstLimit(p.tenantId()));
+
+            Map<String, Object> tenantMetrics = repository.getMetrics(p.tenantId());
+            long docCount = tenantMetrics.get("totalDocuments") instanceof Number n ? n.longValue() : 0L;
+            List<MonitoredDrive> drives = repository.getDrivesByTenantId(p.tenantId());
+            tMap.put("totalDocuments", docCount);
+            tMap.put("totalDrives", drives.size());
+
+            List<IndexedDocumentRecord> recentDocs = repository.getRecentDocuments(p.tenantId(), 200);
+
+            List<Map<String, Object>> spSites = new ArrayList<>();
+            List<Map<String, Object>> userODs = new ArrayList<>();
+
+            for (MonitoredDrive drive : drives) {
+                Map<String, Object> driveMap = new LinkedHashMap<>();
+                driveMap.put("driveId", drive.driveId());
+                driveMap.put("name", drive.name());
+                driveMap.put("driveType", drive.driveType().name());
+
+                List<IndexedDocumentRecord> driveDocs = recentDocs.stream()
+                        .filter(d -> drive.driveId().equals(d.driveId()))
+                        .toList();
+                driveMap.put("totalFiles", driveDocs.size());
+
+                long publicCount = driveDocs.stream()
+                        .filter(d -> d.accessScope() == AccessScope.PUBLIC_ANONYMOUS)
+                        .count();
+                driveMap.put("publicExposureCount", publicCount);
+
+                Map<String, List<IndexedDocumentRecord>> byFolder = driveDocs.stream()
+                        .collect(Collectors.groupingBy(d -> {
+                            String pth = d.filePath();
+                            if (pth == null || pth.isBlank() || "/".equals(pth)) return "Root Library";
+                            int lastSlash = pth.lastIndexOf('/');
+                            return lastSlash > 0 ? pth.substring(0, lastSlash) : pth;
+                        }, LinkedHashMap::new, Collectors.toList()));
+
+                if (byFolder.isEmpty()) {
+                    byFolder.put("Root Library", Collections.emptyList());
+                }
+
+                List<Map<String, Object>> folderList = new ArrayList<>();
+                for (Map.Entry<String, List<IndexedDocumentRecord>> entry : byFolder.entrySet()) {
+                    Map<String, Object> fMap = new LinkedHashMap<>();
+                    fMap.put("folderPath", entry.getKey());
+                    fMap.put("files", entry.getValue());
+                    folderList.add(fMap);
+                }
+                driveMap.put("folders", folderList);
+
+                if (drive.driveType() == DriveType.SHAREPOINT_LIBRARY) {
+                    spSites.add(driveMap);
+                } else {
+                    userODs.add(driveMap);
+                }
+            }
+
+            tMap.put("sharepointSites", spSites);
+            tMap.put("oneDrives", userODs);
+            tenantList.add(tMap);
+        }
+
+        return ResponseEntity.ok(Map.of("tenants", tenantList));
     }
 
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -251,10 +347,12 @@ public class DashboardController {
     ) {
         log.info("Manually triggering tenant discovery and backward crawl for [{}]", tenantId);
 
+        TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
         JobOptions options = JobOptions.builder()
                 .priority(5)
                 .attempts(3)
                 .backoff(new BackoffStrategy.Exponential(1000L))
+                .traceparent(traceCtx.asTraceparent())
                 .build();
 
         oxmqTemplate.send(
@@ -267,6 +365,7 @@ public class DashboardController {
         return ResponseEntity.ok(Map.of(
                 "status", "DISPATCHED",
                 "tenantId", tenantId,
+                "traceId", traceCtx.traceId(),
                 "message", "Baseline historical discovery job queued for tenant: " + tenantId,
                 "timestamp", System.currentTimeMillis()
         ));
@@ -280,17 +379,19 @@ public class DashboardController {
         log.info("Triggering concurrent baseline crawl across all official Microsoft 365 tenant accounts");
         List<String> dispatched = new ArrayList<>();
         for (TenantProfile profile : tenantSubscriptionService.getAllTenants()) {
-            JobOptions options = JobOptions.builder()
+            TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
+            JobOptions.Builder optBuilder = JobOptions.builder()
                     .priority(5)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
-                    .build();
+                    .removeOnComplete(true);
+            traceCtx.inject(optBuilder);
 
             oxmqTemplate.send(
                     OxDocQueueConstants.QUEUE_TENANT_DISCOVERY,
                     "discovery-" + profile.tenantId() + "-" + System.currentTimeMillis(),
-                    new TenantDiscoveryPayload(profile.tenantId()),
-                    options
+                    new TenantDiscoveryPayload(profile.tenantId(), traceCtx.traceId()),
+                    optBuilder.build()
             );
             dispatched.add(profile.tenantId());
         }
@@ -299,7 +400,7 @@ public class DashboardController {
                 "status", "ALL_DISPATCHED",
                 "tenants", dispatched,
                 "totalTenants", dispatched.size(),
-                "message", "Dispatched concurrent discovery across all 5 enterprise tenant accounts (5,000 files)"
+                "message", "Dispatched concurrent discovery across all 5 enterprise tenant accounts (231,000+ files)"
         ));
     }
 
@@ -355,28 +456,31 @@ public class DashboardController {
         else if (accessScope == AccessScope.PRIVATE) scopeStr = "private";
         mockAdminClient.uploadForwardFile(driveId, fileName, scopeStr, fileBytes, "application/octet-stream");
 
-        JobOptions options = JobOptions.builder()
+        TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
+        JobOptions.Builder optBuilder = JobOptions.builder()
                 .priority(1)
                 .attempts(3)
+                .removeOnComplete(true)
                 .deduplication(DeduplicationOptions.builder()
                                 .id("forward-upload-" + driveId)
                                 .ttl(Duration.ofSeconds(15))
                                 .keepLastIfActive(true)
-                                .build())
-                .build();
+                                .build());
+        traceCtx.inject(optBuilder);
 
-        DriveDeltaSyncPayload payload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD);
+        DriveDeltaSyncPayload payload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD, null, traceCtx.traceId());
 
         oxmqTemplate.send(
                 OxDocQueueConstants.QUEUE_DRIVE_DELTA,
                 "forward-event-" + driveId + "-" + System.currentTimeMillis(),
                 payload,
-                options
+                optBuilder.build()
         );
 
         return ResponseEntity.ok(Map.of(
                 "status", "ENQUEUED",
                 "tenantId", tenantId,
+                "traceId", traceCtx.traceId(),
                 "message", "Simulated forward file upload queued with Priority 1 and 15s debounce",
                 "fileName", fileName,
                 "scope", accessScope.name()

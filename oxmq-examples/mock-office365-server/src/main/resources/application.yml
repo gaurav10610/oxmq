@@ -12,7 +12,13 @@ oxdoc:
     enabled: true
     port: 8081
     storage-dir: "./data/m365-storage"
-    total-files: 5000
+    scale-mode: "ENTERPRISE_TIERED"
+    total-files: 231000
+    smb-files: 1000
+    mid-files: 5000
+    ent-files: 25000
+    large-files: 100000
+    global-files: 100000
     simulate-429-burst: false
   webhook:
     client-state: "oxdoc-secret-state-token"

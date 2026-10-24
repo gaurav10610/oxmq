@@ -98,9 +98,39 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     private void registerGauges() {
-        metrics.registerWaitingGauge(name, () -> count(JobState.WAITING));
-        metrics.registerActiveGauge(name, () -> count(JobState.ACTIVE));
-        metrics.registerDelayedGauge(name, () -> count(JobState.DELAYED));
+        metrics.registerWaitingGauge(name, new CachedGaugeSupplier(() -> count(JobState.WAITING), 5000));
+        metrics.registerActiveGauge(name, new CachedGaugeSupplier(() -> count(JobState.ACTIVE), 5000));
+        metrics.registerDelayedGauge(name, new CachedGaugeSupplier(() -> count(JobState.DELAYED), 5000));
+    }
+
+    /**
+     * Caches gauge evaluation results for a TTL window (5 seconds) to avoid spamming Redis with
+     * synchronous network round-trips during high-frequency Prometheus scrapes.
+     */
+    private static class CachedGaugeSupplier implements java.util.function.Supplier<Number> {
+        private final java.util.function.Supplier<Number> delegate;
+        private final long ttlMs;
+        private volatile long lastFetchTime = 0;
+        private volatile Number cachedValue = 0L;
+
+        CachedGaugeSupplier(java.util.function.Supplier<Number> delegate, long ttlMs) {
+            this.delegate = delegate;
+            this.ttlMs = ttlMs;
+        }
+
+        @Override
+        public Number get() {
+            long now = System.currentTimeMillis();
+            if (now - lastFetchTime > ttlMs) {
+                try {
+                    cachedValue = delegate.get();
+                    lastFetchTime = now;
+                } catch (Exception ignored) {
+                    // Retain previous cached value on transient Redis communication glitches
+                }
+            }
+            return cachedValue;
+        }
     }
 
     @Override
@@ -144,6 +174,13 @@ public class OxmqQueue<T> implements Queue<T> {
         merged.setKeepLastIfActive(opts.isKeepLastIfActive() || defaultJobOptions.isKeepLastIfActive());
         merged.setKeepLogs(opts.getKeepLogs() > 0 ? opts.getKeepLogs() : defaultJobOptions.getKeepLogs());
         merged.setGroupKey(opts.getGroupKey() != null ? opts.getGroupKey() : defaultJobOptions.getGroupKey());
+        merged.setTraceparent(opts.getTraceparent() != null ? opts.getTraceparent() : defaultJobOptions.getTraceparent());
+        merged.setTracestate(opts.getTracestate() != null ? opts.getTracestate() : defaultJobOptions.getTracestate());
+        merged.setTelemetry(opts.getTelemetry() != null ? opts.getTelemetry() : defaultJobOptions.getTelemetry());
+        merged.setFailParentOnFailure(opts.isFailParentOnFailure() || defaultJobOptions.isFailParentOnFailure());
+        merged.setRemoveDependencyOnFailure(opts.isRemoveDependencyOnFailure() || defaultJobOptions.isRemoveDependencyOnFailure());
+        merged.setContinueParentOnFailure(opts.isContinueParentOnFailure() || defaultJobOptions.isContinueParentOnFailure());
+        merged.setIgnoreDependencyOnFailure(opts.isIgnoreDependencyOnFailure() || defaultJobOptions.isIgnoreDependencyOnFailure());
 
         if (opts.getKeepCompletedJobs() != null) {
             merged.setKeepCompletedJobs(opts.getKeepCompletedJobs());
@@ -498,7 +535,8 @@ public class OxmqQueue<T> implements Queue<T> {
         Objects.requireNonNull(schedulerId, "schedulerId must not be null");
         Objects.requireNonNull(jobName, "jobName must not be null");
         Objects.requireNonNull(cronPattern, "cronPattern must not be null");
-        long nextMillis = System.currentTimeMillis();
+        long now = System.currentTimeMillis();
+        long nextMillis = io.oxmq.util.CronEvaluator.parse(cronPattern).nextExecution(now, null);
         String serializedData = serializer.serialize(data);
         JobOptions options = opts != null ? opts : JobOptions.defaults();
         return backend.addJobScheduler(schedulerId, nextMillis, jobName, serializedData, options.toMap(), null, cronPattern, null);
