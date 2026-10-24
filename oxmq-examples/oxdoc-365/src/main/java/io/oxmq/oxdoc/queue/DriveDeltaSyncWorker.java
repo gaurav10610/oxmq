@@ -160,60 +160,74 @@ public class DriveDeltaSyncWorker {
                 continue;
             }
 
+            TraceContext parentTrace = TraceContext.fromMdc() != null ? TraceContext.fromMdc() : TraceContext.generateNew();
+
             // Create Parent Flow Job (Aggregator)
             DocumentCatalogPayload aggregatePayload = new DocumentCatalogPayload(
                     payload.tenantId(), payload.driveId(), item.id(), item.name(),
-                    item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin()
+                    item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin(),
+                    parentTrace.traceId()
             );
 
-            TraceContext parentTrace = TraceContext.fromMdc() != null ? TraceContext.fromMdc() : TraceContext.generateNew();
-
             // Parent Flow Job (Aggregator node in waiting-children state with bounded exponential backoff)
-            JobOptions parentOptions = JobOptions.builder()
+            JobOptions.Builder parentOptionsBuilder = JobOptions.builder()
                     .priority(priority)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
-                    .traceparent(parentTrace.asTraceparent())
-                    .build();
+                    .removeOnComplete(true);
+            parentTrace.inject(parentOptionsBuilder);
 
             FlowJob<DocumentCatalogPayload> parentFlow = FlowJob.of(
                     OxDocQueueConstants.QUEUE_CATALOG_INDEX,
                     "aggregate-" + item.name(),
                     aggregatePayload,
-                    parentOptions
+                    parentOptionsBuilder.build()
             );
 
             // Child 1: Content Categorization (Pillar 1) with self-healing retries
-            DocumentProcessingPayload scanPayload = new DocumentProcessingPayload(
+            TraceContext childTrace1 = parentTrace.createChildSpan();
+            DocumentProcessingPayload scanPayload1 = new DocumentProcessingPayload(
                     payload.tenantId(), payload.driveId(), item.id(), item.name(),
-                    item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin()
+                    item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin(),
+                    childTrace1.traceId()
             );
+
+            JobOptions.Builder childOptBuilder1 = JobOptions.builder()
+                    .priority(priority)
+                    .attempts(3)
+                    .backoff(new BackoffStrategy.Exponential(1000L))
+                    .failParentOnFailure(false)
+                    .removeOnComplete(true);
+            childTrace1.inject(childOptBuilder1);
 
             FlowJob<DocumentProcessingPayload> childCategorize = FlowJob.of(
                     OxDocQueueConstants.QUEUE_CONTENT_CATEGORIZATION,
                     "categorize-" + item.name(),
-                    scanPayload,
-                    JobOptions.builder()
-                            .priority(priority)
-                            .attempts(3)
-                            .backoff(new BackoffStrategy.Exponential(1000L))
-                            .traceparent(parentTrace.createChildSpan().asTraceparent())
-                            .failParentOnFailure(false)
-                            .build()
+                    scanPayload1,
+                    childOptBuilder1.build()
             );
 
             // Child 2: Document Extraction (Pillar 2) with self-healing retries
+            TraceContext childTrace2 = parentTrace.createChildSpan();
+            DocumentProcessingPayload scanPayload2 = new DocumentProcessingPayload(
+                    payload.tenantId(), payload.driveId(), item.id(), item.name(),
+                    item.path(), item.size(), item.mimeType(), item.downloadUrl(), payload.scanOrigin(),
+                    childTrace2.traceId()
+            );
+
+            JobOptions.Builder childOptBuilder2 = JobOptions.builder()
+                    .priority(priority)
+                    .attempts(3)
+                    .backoff(new BackoffStrategy.Exponential(1000L))
+                    .failParentOnFailure(false)
+                    .removeOnComplete(true);
+            childTrace2.inject(childOptBuilder2);
+
             FlowJob<DocumentProcessingPayload> childExtract = FlowJob.of(
                     OxDocQueueConstants.QUEUE_DOCUMENT_EXTRACTION,
                     "extract-" + item.name(),
-                    scanPayload,
-                    JobOptions.builder()
-                            .priority(priority)
-                            .attempts(3)
-                            .backoff(new BackoffStrategy.Exponential(1000L))
-                            .traceparent(parentTrace.createChildSpan().asTraceparent())
-                            .failParentOnFailure(false)
-                            .build()
+                    scanPayload2,
+                    childOptBuilder2.build()
             );
 
             parentFlow.addChildren(List.of(childCategorize, childExtract));

@@ -94,25 +94,25 @@ public class GraphWebhookController {
                     TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
 
                     // Forward Scans: Priority 1 with 15s debounce deduplication
-                    JobOptions options = JobOptions.builder()
+                    JobOptions.Builder optBuilder = JobOptions.builder()
                             .priority(1)
                             .attempts(3)
                             .backoff(new BackoffStrategy.Exponential(1000L))
-                            .traceparent(traceCtx.asTraceparent())
+                            .removeOnComplete(true)
                             .deduplication(DeduplicationOptions.builder()
                                     .id("webhook-delta-" + driveId)
                                     .ttl(Duration.ofSeconds(15))
                                     .keepLastIfActive(true)
-                                    .build())
-                            .build();
+                                    .build());
+                    traceCtx.inject(optBuilder);
 
-                    DriveDeltaSyncPayload deltaPayload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD);
+                    DriveDeltaSyncPayload deltaPayload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD, null, traceCtx.traceId());
 
                     oxmqTemplate.send(
                             OxDocQueueConstants.QUEUE_DRIVE_DELTA,
                             "forward-sync-" + driveId,
                             deltaPayload,
-                            options
+                            optBuilder.build()
                     );
                 }
             }

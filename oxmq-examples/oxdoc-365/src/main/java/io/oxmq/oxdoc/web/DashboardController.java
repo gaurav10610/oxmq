@@ -380,18 +380,18 @@ public class DashboardController {
         List<String> dispatched = new ArrayList<>();
         for (TenantProfile profile : tenantSubscriptionService.getAllTenants()) {
             TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
-            JobOptions options = JobOptions.builder()
+            JobOptions.Builder optBuilder = JobOptions.builder()
                     .priority(5)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
-                    .traceparent(traceCtx.asTraceparent())
-                    .build();
+                    .removeOnComplete(true);
+            traceCtx.inject(optBuilder);
 
             oxmqTemplate.send(
                     OxDocQueueConstants.QUEUE_TENANT_DISCOVERY,
                     "discovery-" + profile.tenantId() + "-" + System.currentTimeMillis(),
-                    new TenantDiscoveryPayload(profile.tenantId()),
-                    options
+                    new TenantDiscoveryPayload(profile.tenantId(), traceCtx.traceId()),
+                    optBuilder.build()
             );
             dispatched.add(profile.tenantId());
         }
@@ -457,24 +457,24 @@ public class DashboardController {
         mockAdminClient.uploadForwardFile(driveId, fileName, scopeStr, fileBytes, "application/octet-stream");
 
         TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
-        JobOptions options = JobOptions.builder()
+        JobOptions.Builder optBuilder = JobOptions.builder()
                 .priority(1)
                 .attempts(3)
-                .traceparent(traceCtx.asTraceparent())
+                .removeOnComplete(true)
                 .deduplication(DeduplicationOptions.builder()
                                 .id("forward-upload-" + driveId)
                                 .ttl(Duration.ofSeconds(15))
                                 .keepLastIfActive(true)
-                                .build())
-                .build();
+                                .build());
+        traceCtx.inject(optBuilder);
 
-        DriveDeltaSyncPayload payload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD);
+        DriveDeltaSyncPayload payload = new DriveDeltaSyncPayload(tenantId, driveId, ScanOrigin.FORWARD, null, traceCtx.traceId());
 
         oxmqTemplate.send(
                 OxDocQueueConstants.QUEUE_DRIVE_DELTA,
                 "forward-event-" + driveId + "-" + System.currentTimeMillis(),
                 payload,
-                options
+                optBuilder.build()
         );
 
         return ResponseEntity.ok(Map.of(

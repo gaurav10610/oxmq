@@ -4,6 +4,7 @@ import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import java.security.SecureRandom;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -89,7 +90,33 @@ public record TraceContext(String version, String traceId, String spanId, String
         if (job == null) return null;
         String tp = job.getTraceparent();
         String ts = job.getTracestate();
-        return parse(tp, ts);
+        if (tp != null && !tp.isBlank()) {
+            TraceContext parsed = parse(tp, ts);
+            if (parsed != null) return parsed;
+        }
+        // Fallback: check if telemetry map has traceId or traceparent directly
+        if (job.getOpts() != null && job.getOpts().getTelemetry() != null) {
+            Object tpObj = job.getOpts().getTelemetry().get("traceparent");
+            if (tpObj != null && !tpObj.toString().isBlank()) {
+                TraceContext parsed = parse(tpObj.toString().trim(), ts);
+                if (parsed != null) return parsed;
+            }
+            Object traceIdObj = job.getOpts().getTelemetry().get("traceId");
+            if (traceIdObj != null && !traceIdObj.toString().isBlank()) {
+                String tid = traceIdObj.toString().trim();
+                Object spanIdObj = job.getOpts().getTelemetry().get("spanId");
+                String sid = (spanIdObj != null && !spanIdObj.toString().isBlank()) ? spanIdObj.toString().trim() : generateNew().spanId();
+                return new TraceContext("00", tid, sid, "01", ts);
+            }
+        }
+        // Fallback: check if job data has traceId
+        if (job.getData() instanceof Map<?, ?> map) {
+            Object tid = map.get("traceId");
+            if (tid != null && !tid.toString().isBlank()) {
+                return new TraceContext("00", tid.toString().trim(), generateNew().spanId(), "01", ts);
+            }
+        }
+        return null;
     }
 
     /**
@@ -129,6 +156,14 @@ public record TraceContext(String version, String traceId, String spanId, String
             if (tracestate != null) {
                 builder.tracestate(tracestate);
             }
+            Map<String, Object> tel = new java.util.HashMap<>();
+            tel.put("traceparent", asTraceparent());
+            tel.put("traceId", traceId());
+            tel.put("spanId", spanId());
+            if (tracestate != null) {
+                tel.put("tracestate", tracestate);
+            }
+            builder.telemetry(tel);
         }
     }
 
@@ -141,6 +176,14 @@ public record TraceContext(String version, String traceId, String spanId, String
             if (tracestate != null) {
                 options.setTracestate(tracestate);
             }
+            Map<String, Object> tel = new java.util.HashMap<>();
+            tel.put("traceparent", asTraceparent());
+            tel.put("traceId", traceId());
+            tel.put("spanId", spanId());
+            if (tracestate != null) {
+                tel.put("tracestate", tracestate);
+            }
+            options.setTelemetry(tel);
         }
     }
 }

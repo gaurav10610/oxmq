@@ -80,7 +80,7 @@ public class CatalogIndexWorker {
         }
 
         io.oxmq.tracing.TraceContext traceCtx = job.getTraceContext();
-        String traceId = traceCtx != null ? traceCtx.traceId() : org.slf4j.MDC.get("traceId");
+        String traceId = traceCtx != null ? traceCtx.traceId() : (payload.traceId() != null ? payload.traceId() : org.slf4j.MDC.get("traceId"));
 
         IndexedDocumentRecord record = new IndexedDocumentRecord(
                 payload.itemId(),

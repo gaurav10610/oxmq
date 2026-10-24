@@ -66,24 +66,26 @@ public class TenantDiscoveryWorker {
 
             // Backward historical baseline crawl dispatched at Priority 10 with exponential backoff
             TraceContext traceCtx = TraceContext.fromMdc() != null ? TraceContext.fromMdc().createChildSpan() : TraceContext.generateNew();
-            JobOptions options = JobOptions.builder()
+            JobOptions.Builder optionsBuilder = JobOptions.builder()
                     .priority(10)
                     .attempts(3)
                     .backoff(new io.oxmq.model.BackoffStrategy.Exponential(1000L))
-                    .traceparent(traceCtx.asTraceparent())
-                    .build();
+                    .removeOnComplete(true);
+            traceCtx.inject(optionsBuilder);
 
             DriveDeltaSyncPayload deltaPayload = new DriveDeltaSyncPayload(
                     payload.tenantId(),
                     drive.driveId(),
-                    ScanOrigin.BACKWARD
+                    ScanOrigin.BACKWARD,
+                    null,
+                    traceCtx.traceId()
             );
 
             oxmqTemplate.send(
                     OxDocQueueConstants.QUEUE_DRIVE_DELTA,
                     "delta-sync-" + drive.driveId(),
                     deltaPayload,
-                    options
+                    optionsBuilder.build()
             );
             enqueuedCount++;
         }

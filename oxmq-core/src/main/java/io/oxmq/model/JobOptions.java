@@ -331,7 +331,20 @@ public class JobOptions {
         if (continueParentOnFailure) map.put("continueParentOnFailure", true);
         if (ignoreDependencyOnFailure) map.put("ignoreDependencyOnFailure", true);
         if (groupKey != null) map.put("groupKey", groupKey);
-        if (traceparent != null) map.put("traceparent", traceparent);
+        if (traceparent != null) {
+            map.put("traceparent", traceparent);
+            if (telemetry == null) {
+                Map<String, Object> tel = new HashMap<>();
+                tel.put("traceparent", traceparent);
+                if (tracestate != null) tel.put("tracestate", tracestate);
+                io.oxmq.tracing.TraceContext parsed = io.oxmq.tracing.TraceContext.parse(traceparent, tracestate);
+                if (parsed != null) {
+                    tel.put("traceId", parsed.traceId());
+                    tel.put("spanId", parsed.spanId());
+                }
+                map.put("telemetry", tel);
+            }
+        }
         if (tracestate != null) map.put("tracestate", tracestate);
         if (telemetry != null) map.put("telemetry", telemetry);
         if (backoff != null) {

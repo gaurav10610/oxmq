@@ -35,6 +35,9 @@ public class TracingJobInterceptor implements JobInterceptor {
         if (ctx != null) {
             MDC.put(traceIdKey, ctx.traceId());
             MDC.put(spanIdKey, ctx.spanId());
+            try {
+                job.log("W3C OTel Trace: traceId=" + ctx.traceId() + ", spanId=" + ctx.spanId() + " (traceparent=" + ctx.asTraceparent() + ")");
+            } catch (Exception ignored) {}
         }
         return InterceptorDecision.proceed();
     }

@@ -194,10 +194,20 @@ public class OxmqProperties {
     }
 
     public static class DefaultJobOptions {
+        private Boolean removeOnComplete;
         private Integer removeOnCompleteCount;
         private Long removeOnCompleteAgeSeconds;
+        private Boolean removeOnFail;
         private Integer removeOnFailCount;
         private Long removeOnFailAgeSeconds;
+
+        public Boolean getRemoveOnComplete() {
+            return removeOnComplete;
+        }
+
+        public void setRemoveOnComplete(Boolean removeOnComplete) {
+            this.removeOnComplete = removeOnComplete;
+        }
 
         public Integer getRemoveOnCompleteCount() {
             return removeOnCompleteCount;
@@ -213,6 +223,14 @@ public class OxmqProperties {
 
         public void setRemoveOnCompleteAgeSeconds(Long removeOnCompleteAgeSeconds) {
             this.removeOnCompleteAgeSeconds = removeOnCompleteAgeSeconds;
+        }
+
+        public Boolean getRemoveOnFail() {
+            return removeOnFail;
+        }
+
+        public void setRemoveOnFail(Boolean removeOnFail) {
+            this.removeOnFail = removeOnFail;
         }
 
         public Integer getRemoveOnFailCount() {
@@ -232,17 +250,21 @@ public class OxmqProperties {
         }
 
         public io.oxmq.model.JobOptions toJobOptions() {
-            if (removeOnCompleteCount == null && removeOnCompleteAgeSeconds == null
-                    && removeOnFailCount == null && removeOnFailAgeSeconds == null) {
+            if (removeOnComplete == null && removeOnCompleteCount == null && removeOnCompleteAgeSeconds == null
+                    && removeOnFail == null && removeOnFailCount == null && removeOnFailAgeSeconds == null) {
                 return null;
             }
             io.oxmq.model.JobOptions.Builder b = io.oxmq.model.JobOptions.builder();
-            if (removeOnCompleteCount != null || removeOnCompleteAgeSeconds != null) {
+            if (Boolean.TRUE.equals(removeOnComplete)) {
+                b.removeOnComplete(true);
+            } else if (removeOnCompleteCount != null || removeOnCompleteAgeSeconds != null) {
                 int count = removeOnCompleteCount != null ? removeOnCompleteCount : 0;
                 long age = removeOnCompleteAgeSeconds != null ? removeOnCompleteAgeSeconds : 0;
                 b.removeOnComplete(io.oxmq.model.KeepJobs.of(count, java.time.Duration.ofSeconds(age)));
             }
-            if (removeOnFailCount != null || removeOnFailAgeSeconds != null) {
+            if (Boolean.TRUE.equals(removeOnFail)) {
+                b.removeOnFail(true);
+            } else if (removeOnFailCount != null || removeOnFailAgeSeconds != null) {
                 int count = removeOnFailCount != null ? removeOnFailCount : 0;
                 long age = removeOnFailAgeSeconds != null ? removeOnFailAgeSeconds : 0;
                 b.removeOnFail(io.oxmq.model.KeepJobs.of(count, java.time.Duration.ofSeconds(age)));
