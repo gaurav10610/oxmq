@@ -36,9 +36,17 @@ public class Job<T> {
     private String groupKey;
     private String queueName;
     private Map<String, Object> childrenValues;
+    private String checkpointJson;
+    private String checkpointStep;
 
     @JsonIgnore
     private transient BiConsumer<Integer, Object> progressUpdater;
+
+    @JsonIgnore
+    private transient BiConsumer<String, Object> checkpointSaver;
+
+    @JsonIgnore
+    private transient Consumer<java.util.List<FlowJob>> childSpawner;
 
     @JsonIgnore
     private transient Consumer<String> logAppender;
@@ -429,6 +437,100 @@ public class Job<T> {
      */
     public Throwable getBatchFailureReason() {
         return batchFailureReason;
+    }
+
+    /**
+     * Saves an execution checkpoint with intermediate state in Redis.
+     * If the job fails or is retried, the next attempt can retrieve this state via {@link #getCheckpoint(Class)}.
+     *
+     * @param state the state object to persist
+     */
+    public void checkpoint(Object state) {
+        checkpoint(null, state);
+    }
+
+    /**
+     * Saves an execution checkpoint with a step name and intermediate state in Redis.
+     *
+     * @param stepName logical stage/step name (e.g. "download", "transcode")
+     * @param state the state object to persist
+     */
+    public void checkpoint(String stepName, Object state) {
+        this.checkpointStep = stepName;
+        if (checkpointSaver != null && state != null) {
+            checkpointSaver.accept(stepName, state);
+        }
+    }
+
+    /**
+     * Retrieves the persisted checkpoint state deserialized into the specified target class.
+     * Returns null if no checkpoint has been saved for this job.
+     */
+    @SuppressWarnings("unchecked")
+    public <S> S getCheckpoint(Class<S> type) {
+        if (checkpointJson == null || checkpointJson.isBlank() || type == null) {
+            return null;
+        }
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = io.oxmq.util.JsonUtils.mapper();
+            return mapper.readValue(checkpointJson, type);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public String getCheckpointStep() {
+        return checkpointStep;
+    }
+
+    public void setCheckpointStep(String checkpointStep) {
+        this.checkpointStep = checkpointStep;
+    }
+
+    public String getCheckpointJson() {
+        return checkpointJson;
+    }
+
+    public void setCheckpointJson(String checkpointJson) {
+        this.checkpointJson = checkpointJson;
+    }
+
+    public void setCheckpointSaver(BiConsumer<String, Object> checkpointSaver) {
+        this.checkpointSaver = checkpointSaver;
+    }
+
+    /**
+     * Sets the spawner callback used for dynamic runtime child dependency ingestion.
+     */
+    public void setChildSpawner(Consumer<java.util.List<FlowJob>> childSpawner) {
+        this.childSpawner = childSpawner;
+    }
+
+    /**
+     * Dynamically spawns child jobs from inside this active job and transitions this parent job
+     * into the {@code waiting-children} state.
+     *
+     * @param children the child jobs to schedule
+     * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
+     */
+    public void addChildren(java.util.List<FlowJob> children) {
+        if (childSpawner == null) {
+            throw new IllegalStateException("Dynamic child spawning is only available during active job execution");
+        }
+        childSpawner.accept(children);
+    }
+
+    /**
+     * Dynamically spawns a single child job from inside this active job and transitions this parent job
+     * into the {@code waiting-children} state.
+     *
+     * @param child the child job to schedule
+     * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
+     */
+    public void addChild(FlowJob child) {
+        if (child != null) {
+            addChildren(java.util.List.of(child));
+        }
     }
 
     @Override

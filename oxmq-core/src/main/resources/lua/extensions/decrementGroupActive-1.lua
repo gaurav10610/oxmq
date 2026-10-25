@@ -36,10 +36,14 @@ if active <= 0 then
 end
 
 -- If group was maxed, check if it can now resume waiting
+local groupConcurrencyKey = prefixKey .. "groups:concurrency"
+local groupConcurrencyOverride = tonumber(rcall("HGET", groupConcurrencyKey, groupId))
+local effectiveConcurrency = groupConcurrencyOverride or maxGroupConcurrency
+
 local isMaxed = rcall("SISMEMBER", groupsMaxedKey, groupId)
 local isPaused = rcall("SISMEMBER", groupsPausedKey, groupId)
 
-if isMaxed == 1 and isPaused == 0 and (maxGroupConcurrency == 0 or active < maxGroupConcurrency) then
+if isMaxed == 1 and isPaused == 0 and (effectiveConcurrency == 0 or active < effectiveConcurrency) then
     local groupWaitKey = prefixKey .. "groups:" .. groupId
     local groupPrioritizedKey = prefixKey .. "groups:" .. groupId .. ":prioritized"
     local remaining = rcall("LLEN", groupWaitKey) + rcall("ZCARD", groupPrioritizedKey)

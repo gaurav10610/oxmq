@@ -318,6 +318,48 @@ public class OxmqTemplate {
     }
 
     /**
+     * Returns job counts breakdown per priority for a specific virtual group.
+     */
+    public java.util.Map<Integer, Long> getCountsPerPriorityForGroup(String queueName, String groupId, List<Integer> priorities) {
+        return getQueue(queueName).getCountsPerPriorityForGroup(groupId, priorities);
+    }
+
+    /**
+     * Sets a dynamic concurrency limit override for a specific virtual group in Redis.
+     */
+    public void setGroupConcurrency(String queueName, String groupId, int concurrency) {
+        getQueue(queueName).setGroupConcurrency(groupId, concurrency);
+    }
+
+    /**
+     * Retrieves the specific concurrency limit override for a virtual group, or null if using default.
+     */
+    public Integer getGroupConcurrency(String queueName, String groupId) {
+        return getQueue(queueName).getGroupConcurrency(groupId);
+    }
+
+    /**
+     * Removes the specific concurrency limit override for a virtual group.
+     */
+    public boolean removeGroupConcurrency(String queueName, String groupId) {
+        return getQueue(queueName).removeGroupConcurrency(groupId);
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide.
+     */
+    public boolean cancelJob(String queueName, String jobId) {
+        return getQueue(queueName).cancelJob(jobId);
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide with a specific reason.
+     */
+    public boolean cancelJob(String queueName, String jobId, String reason) {
+        return getQueue(queueName).cancelJob(jobId, reason);
+    }
+
+    /**
      * Drains waiting (and optionally delayed) jobs from the queue.
      */
     public void drain(String queueName, boolean delayed) {

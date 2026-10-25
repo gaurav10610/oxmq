@@ -83,4 +83,15 @@ public @interface OxmqListener {
      * Property placeholder for jobTimeoutMs, e.g. {@code "${app.job.timeout:30000}"}.
      */
     String jobTimeoutMsString() default "";
+
+    /**
+     * Declarative mapping of job names to execution timeout in milliseconds.
+     * Example: {@code jobTimeouts = {"fast-task:5000", "slow-task:300000"}}.
+     */
+    String[] jobTimeouts() default {};
+
+    /**
+     * Property placeholder for jobTimeouts mapping, e.g. {@code "${app.job.timeouts:}"}.
+     */
+    String jobTimeoutsString() default "";
 }

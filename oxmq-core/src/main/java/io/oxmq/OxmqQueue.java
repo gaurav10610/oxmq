@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -284,6 +285,8 @@ public class OxmqQueue<T> implements Queue<T> {
         String returnStr = fields.get("returnvalue");
         String failedStr = fields.get("failedReason");
         String parentKeyStr = fields.get("parentKey");
+        String checkpointStr = fields.get("checkpoint");
+        String checkpointStepStr = fields.get("checkpoint_step");
 
         T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
         JobOptions opts = serializer.deserialize(optsStr, JobOptions.class);
@@ -298,6 +301,8 @@ public class OxmqQueue<T> implements Queue<T> {
         if (returnStr != null) job.setReturnvalue(returnStr);
         if (failedStr != null) job.setFailedReason(failedStr);
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
 
         if (state != null) {
             job.setState(state);
@@ -958,6 +963,86 @@ public class OxmqQueue<T> implements Queue<T> {
         } catch (NumberFormatException e) {
             return 0;
         }
+    }
+
+    @Override
+    public Map<Integer, Long> getCountsPerPriorityForGroup(String groupId, List<Integer> priorities) {
+        if (groupId == null || groupId.isBlank() || priorities == null || priorities.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        var sync = connectionManager.getCommandConnection().sync();
+        Map<Integer, Long> counts = new HashMap<>();
+        String prioKey = prefix + ":groups:" + groupId + ":prioritized";
+        String waitKey = prefix + ":groups:" + groupId;
+        for (Integer p : priorities) {
+            if (p == null) continue;
+            if (p == 0) {
+                Long len = sync.llen(waitKey);
+                counts.put(0, len != null ? len : 0L);
+            } else {
+                Long count = sync.zcount(prioKey, io.lettuce.core.Range.create(p.doubleValue(), p.doubleValue()));
+                counts.put(p, count != null ? count : 0L);
+            }
+        }
+        return counts;
+    }
+
+    @Override
+    public void setGroupConcurrency(String groupId, int concurrency) {
+        if (groupId == null || groupId.isBlank()) return;
+        var sync = connectionManager.getCommandConnection().sync();
+        String key = queueKeys.toKey("groups:concurrency");
+        if (concurrency > 0) {
+            sync.hset(key, groupId, String.valueOf(concurrency));
+        } else {
+            sync.hdel(key, groupId);
+        }
+    }
+
+    @Override
+    public Integer getGroupConcurrency(String groupId) {
+        if (groupId == null || groupId.isBlank()) return null;
+        var sync = connectionManager.getCommandConnection().sync();
+        String val = sync.hget(queueKeys.toKey("groups:concurrency"), groupId);
+        if (val == null || val.isBlank()) return null;
+        try {
+            return Integer.parseInt(val);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    @Override
+    public boolean removeGroupConcurrency(String groupId) {
+        if (groupId == null || groupId.isBlank()) return false;
+        var sync = connectionManager.getCommandConnection().sync();
+        Long del = sync.hdel(queueKeys.toKey("groups:concurrency"), groupId);
+        return del != null && del > 0;
+    }
+
+    @Override
+    public boolean cancelJob(String jobId, String reason) {
+        if (jobId == null || jobId.isBlank()) return false;
+        String resolvedReason = reason != null ? reason : "User requested cancellation";
+
+        JobState state = getJobState(jobId);
+        if (state == JobState.COMPLETED || state == JobState.FAILED) {
+            return false;
+        }
+
+        if (state == JobState.WAITING || state == JobState.DELAYED || state == JobState.PRIORITIZED) {
+            try {
+                remove(jobId);
+            } catch (Exception ignored) {
+            }
+        }
+
+        var sync = connectionManager.getCommandConnection().sync();
+        String controlChannel = queueKeys.toKey("control");
+        String message = "CANCEL:" + jobId + ":" + resolvedReason;
+        sync.publish(controlChannel, message);
+        log.info("Dispatched cluster-wide cancellation for job [id: {}] on queue {}: {}", jobId, name, resolvedReason);
+        return true;
     }
 
     private static String toStr(Object obj) {

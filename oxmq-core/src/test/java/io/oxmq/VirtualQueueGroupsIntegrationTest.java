@@ -321,4 +321,82 @@ class VirtualQueueGroupsIntegrationTest {
         assertEquals("inspect-1", alphaJobs.get(0).getName());
         assertEquals("group-alpha", alphaJobs.get(0).getGroupKey());
     }
+
+    @Test
+    @DisplayName("Intra-group priority ordering and priority count queries")
+    void testIntraGroupPriorityOrderingAndPriorityCounts() throws Exception {
+        String tenant = "prio-tenant";
+        // 1. Enqueue lower-priority first, then VIP priority, then FIFO
+        queue.add("job-low", "d-low", JobOptions.builder().group(GroupOptions.builder().id(tenant).priority(10).build()).build());
+        queue.add("job-vip", "d-vip", JobOptions.builder().group(GroupOptions.builder().id(tenant).priority(1).build()).build());
+        queue.add("job-fifo", "d-fifo", JobOptions.builder().group(GroupOptions.builder().id(tenant).priority(0).build()).build());
+
+        // 2. Query priority counts
+        Map<Integer, Long> counts = queue.getCountsPerPriorityForGroup(tenant, List.of(0, 1, 10));
+        assertNotNull(counts);
+        assertEquals(1L, counts.get(1), "Priority 1 should have 1 job");
+        assertEquals(1L, counts.get(10), "Priority 10 should have 1 job");
+        assertEquals(1L, counts.get(0), "Priority 0 should have 1 job");
+
+        // 3. Worker dequeues jobs; VIP (priority 1) must be processed before priority 10, then FIFO
+        List<String> order = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch latch = new CountDownLatch(3);
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(1)
+                .processor(job -> {
+                    order.add(job.getName());
+                    latch.countDown();
+                    return "ok";
+                })
+                .build();
+
+        worker.start();
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "All jobs should finish");
+
+        assertEquals(List.of("job-vip", "job-low", "job-fifo"), order,
+                "Intra-group priority: VIP (1) must execute first, then 10, then FIFO (0)");
+    }
+
+    @Test
+    @DisplayName("Dynamic per-group concurrency overrides in Redis")
+    void testDynamicPerGroupConcurrencyOverrides() throws Exception {
+        queue.setGroupConcurrency("vip-tenant", 3);
+        assertEquals(3, queue.getGroupConcurrency("vip-tenant"));
+
+        AtomicInteger activeVip = new AtomicInteger();
+        AtomicInteger maxObservedVip = new AtomicInteger();
+        CountDownLatch latch = new CountDownLatch(3);
+
+        for (int i = 0; i < 3; i++) {
+            queue.add("vip-job-" + i, "d", JobOptions.builder().group("vip-tenant").build());
+        }
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(10)
+                .groupConcurrency(1) // Default is 1, but vip-tenant has override of 3!
+                .processor(job -> {
+                    int current = activeVip.incrementAndGet();
+                    maxObservedVip.accumulateAndGet(current, Math::max);
+                    try {
+                        Thread.sleep(150);
+                    } catch (InterruptedException ignored) {}
+                    activeVip.decrementAndGet();
+                    latch.countDown();
+                    return "ok";
+                })
+                .build();
+
+        worker.start();
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "All VIP jobs should execute");
+        assertTrue(maxObservedVip.get() >= 2, "VIP tenant should achieve concurrency > default (1), observed: " + maxObservedVip.get());
+
+        // Test removal of override
+        assertTrue(queue.removeGroupConcurrency("vip-tenant"));
+        assertNull(queue.getGroupConcurrency("vip-tenant"));
+    }
 }

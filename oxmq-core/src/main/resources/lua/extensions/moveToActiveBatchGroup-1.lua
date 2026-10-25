@@ -78,8 +78,12 @@ for i = 1, iterations do
         end
 
         if not isLimited then
+            local groupConcurrencyKey = prefixKey .. "groups:concurrency"
+            local groupConcurrencyOverride = tonumber(rcall("HGET", groupConcurrencyKey, groupId))
+            local effectiveConcurrency = groupConcurrencyOverride or maxGroupConcurrency
+
             local activeCount = tonumber(rcall("HGET", groupsActiveCountKey, groupId) or 0)
-            if maxGroupConcurrency > 0 and activeCount >= maxGroupConcurrency then
+            if effectiveConcurrency > 0 and activeCount >= effectiveConcurrency then
                 rcall("SADD", groupsMaxedKey, groupId)
                 rcall("LREM", groupsWaitingKey, 1, groupId)
             else
@@ -88,8 +92,8 @@ for i = 1, iterations do
 
                 local jobs = {}
                 local allowedSlots = maxBatchSize
-                if maxGroupConcurrency > 0 then
-                    allowedSlots = math.min(maxBatchSize, maxGroupConcurrency - activeCount)
+                if effectiveConcurrency > 0 then
+                    allowedSlots = math.min(maxBatchSize, effectiveConcurrency - activeCount)
                 end
 
                 while #jobs < allowedSlots do
@@ -122,7 +126,7 @@ for i = 1, iterations do
                     local remaining = rcall("LLEN", groupWaitKey) + rcall("ZCARD", groupPrioritizedKey)
                     if remaining == 0 then
                         rcall("LREM", groupsWaitingKey, 1, groupId)
-                    elseif maxGroupConcurrency > 0 and (activeCount + #jobs) >= maxGroupConcurrency then
+                    elseif effectiveConcurrency > 0 and (activeCount + #jobs) >= effectiveConcurrency then
                         rcall("SADD", groupsMaxedKey, groupId)
                         rcall("LREM", groupsWaitingKey, 1, groupId)
                     end

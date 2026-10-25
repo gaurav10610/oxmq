@@ -89,6 +89,8 @@ public class OxmqWorker<T> implements Worker<T> {
     private LockExtender lockExtender;
     private StalledJobSentinel stalledJobSentinel;
     private java.util.concurrent.ScheduledExecutorService timeoutWatchdog;
+    private final Map<String, Long> jobTimeoutsMs;
+    private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
 
     @FunctionalInterface
     public interface CustomBackoffStrategy<T> {
@@ -124,6 +126,7 @@ public class OxmqWorker<T> implements Worker<T> {
         this.maxStalledCount = builder.maxStalledCount;
         this.maxStartedAttempts = builder.maxStartedAttempts;
         this.defaultJobTimeoutMs = builder.defaultJobTimeoutMs;
+        this.jobTimeoutsMs = Map.copyOf(builder.jobTimeoutsMs);
         this.groupConcurrency = Math.max(0, builder.groupConcurrency);
         this.ownsConnectionManager = builder.ownsConnectionManager;
 
@@ -190,6 +193,35 @@ public class OxmqWorker<T> implements Worker<T> {
             this.pollerThread = new Thread(this::pollLoop, "oxmq-poller-" + queueName);
             this.pollerThread.setDaemon(true);
             this.pollerThread.start();
+
+            startControlListener();
+        }
+    }
+
+    private void startControlListener() {
+        try {
+            this.controlPubSubConn = connectionManager.getClient().connectPubSub();
+            this.controlPubSubConn.addListener(new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
+                @Override
+                public void message(String channel, String message) {
+                    if (message != null && message.startsWith("CANCEL:")) {
+                        String[] parts = message.split(":", 3);
+                        if (parts.length >= 2) {
+                            String targetJobId = parts[1];
+                            String cancelReason = parts.length >= 3 ? parts[2] : "Cluster cancellation requested";
+                            if (isJobActive(targetJobId)) {
+                                log.info("Received cluster-wide CANCEL for active job [id: {}] on queue {}: {}",
+                                        targetJobId, queueName, cancelReason);
+                                cancelJob(targetJobId, cancelReason);
+                            }
+                        }
+                    }
+                }
+            });
+            this.controlPubSubConn.sync().subscribe(queueKeys.toKey("control"));
+            log.debug("OxMQ Worker [{}] subscribed to control channel {}", workerId, queueKeys.toKey("control"));
+        } catch (Exception e) {
+            log.warn("Failed to subscribe to control channel for queue {}: {}", queueName, e.getMessage());
         }
     }
 
@@ -295,7 +327,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
         long effectiveTimeoutMs = job.getOpts() != null && job.getOpts().getJobTimeoutMs() > 0
                 ? job.getOpts().getJobTimeoutMs()
-                : defaultJobTimeoutMs;
+                : (jobTimeoutsMs.containsKey(job.getName()) ? jobTimeoutsMs.get(job.getName()) : defaultJobTimeoutMs);
 
         java.util.concurrent.ScheduledFuture<?> timeoutFuture = null;
         if (effectiveTimeoutMs > 0 && timeoutWatchdog != null && !timeoutWatchdog.isShutdown()) {
@@ -574,6 +606,10 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        String checkpointStr = fields.get("checkpoint");
+        String checkpointStepStr = fields.get("checkpoint_step");
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
         String rjkStr = fields.get("rjk");
         if (rjkStr != null && !rjkStr.isBlank()) {
             job.setRepeatJobKey(rjkStr);
@@ -629,6 +665,55 @@ public class OxmqWorker<T> implements Worker<T> {
             } catch (Exception e) {
                 log.warn("Failed to append log for job {}", jobId, e);
             }
+        });
+
+        job.setCheckpointSaver((step, state) -> {
+            try {
+                String json = serializer.serialize(state);
+                job.setCheckpointJson(json);
+                job.setCheckpointStep(step);
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                String jobKey = queueKeys.toJobKey(jobId);
+                if (step != null && !step.isBlank()) {
+                    sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
+                } else {
+                    sync.hset(jobKey, "checkpoint", json);
+                }
+                log.debug("Saved checkpoint for job {} [step: {}] in queue {}", jobId, step, queueName);
+            } catch (Exception e) {
+                log.warn("Failed to persist checkpoint for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+            }
+        });
+
+        job.setChildSpawner(children -> {
+            if (children == null || children.isEmpty()) return;
+            try {
+                StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+                String parentKey = queueKeys.toJobKey(jobId);
+                Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
+
+                for (io.oxmq.model.FlowJob child : children) {
+                    JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
+                    Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
+                    childOptsMap.put("parentKey", parentKey);
+                    childOptsMap.put("parent", parentObj);
+
+                    String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
+                    io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
+                            ? queueKeys
+                            : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
+                    String childData = serializer.serialize(child.getData());
+                    long nowTs = System.currentTimeMillis();
+
+                    bullScripts.addStandardJob(binConn, childKeys, "", child.getName(), childData, childOptsMap, nowTs);
+                }
+
+                int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
+                log.debug("Moved parent job {} to waiting-children: result code {}", jobId, moveRes);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
+            }
+            throw new io.oxmq.exception.WaitingChildrenException();
         });
 
         return job;
@@ -964,6 +1049,12 @@ public class OxmqWorker<T> implements Worker<T> {
                 lockExtender.close();
             }
 
+            if (controlPubSubConn != null) {
+                try {
+                    controlPubSubConn.close();
+                } catch (Exception ignored) {}
+            }
+
             if (ownsConnectionManager && connectionManager != null) {
                 connectionManager.close();
             }
@@ -1077,6 +1168,26 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> defaultJobTimeoutMs(long defaultJobTimeoutMs) {
             this.defaultJobTimeoutMs = defaultJobTimeoutMs;
+            return this;
+        }
+
+        private final Map<String, Long> jobTimeoutsMs = new HashMap<>();
+
+        public Builder<T> jobTimeout(String jobName, Duration timeout) {
+            if (jobName != null && timeout != null) {
+                this.jobTimeoutsMs.put(jobName, timeout.toMillis());
+            }
+            return this;
+        }
+
+        public Builder<T> jobTimeouts(Map<String, Duration> timeouts) {
+            if (timeouts != null) {
+                timeouts.forEach((k, v) -> {
+                    if (k != null && v != null) {
+                        this.jobTimeoutsMs.put(k, v.toMillis());
+                    }
+                });
+            }
             return this;
         }
 

@@ -72,6 +72,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private ExecutorService dispatcherExecutor;
     private Thread pollerThread;
     private LockExtender lockExtender;
+    private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
 
     private record ActiveBatchExecution<T>(List<Job<T>> jobs, Thread thread) {}
     private final java.util.concurrent.ConcurrentMap<String, ActiveBatchExecution<T>> activeJobExecutions = new java.util.concurrent.ConcurrentHashMap<>();
@@ -131,6 +132,35 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             this.pollerThread = new Thread(this::pollLoop, "oxmq-batch-poller-" + queueName);
             this.pollerThread.setDaemon(true);
             this.pollerThread.start();
+
+            startControlListener();
+        }
+    }
+
+    private void startControlListener() {
+        try {
+            this.controlPubSubConn = connectionManager.getClient().connectPubSub();
+            this.controlPubSubConn.addListener(new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
+                @Override
+                public void message(String channel, String message) {
+                    if (message != null && message.startsWith("CANCEL:")) {
+                        String[] parts = message.split(":", 3);
+                        if (parts.length >= 2) {
+                            String targetJobId = parts[1];
+                            String cancelReason = parts.length >= 3 ? parts[2] : "Cluster cancellation requested";
+                            if (isJobActive(targetJobId)) {
+                                log.info("Received cluster-wide CANCEL for active batch job [id: {}] on queue {}: {}",
+                                        targetJobId, queueName, cancelReason);
+                                cancelJob(targetJobId, cancelReason);
+                            }
+                        }
+                    }
+                }
+            });
+            this.controlPubSubConn.sync().subscribe(queueKeys.toKey("control"));
+            log.debug("OxMQ Batch Worker [{}] subscribed to control channel {}", workerId, queueKeys.toKey("control"));
+        } catch (Exception e) {
+            log.warn("Failed to subscribe to control channel for batch queue {}: {}", queueName, e.getMessage());
         }
     }
 
@@ -490,6 +520,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        String checkpointStr = fields.get("checkpoint");
+        String checkpointStepStr = fields.get("checkpoint_step");
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
 
         // Memory optimization: lazily load children values only when requested by processor
         job.setChildrenValuesSupplier(() -> {
@@ -529,6 +563,23 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
             } catch (Exception e) {
                 log.warn("Failed to append log for job {}", jobId, e);
+            }
+        });
+
+        job.setCheckpointSaver((step, state) -> {
+            try {
+                String json = serializer.serialize(state);
+                job.setCheckpointJson(json);
+                job.setCheckpointStep(step);
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                String jobKey = queueKeys.toJobKey(jobId);
+                if (step != null && !step.isBlank()) {
+                    sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
+                } else {
+                    sync.hset(jobKey, "checkpoint", json);
+                }
+            } catch (Exception e) {
+                log.warn("Failed to persist checkpoint for job {} in batch worker {}: {}", jobId, queueName, e.getMessage());
             }
         });
 
@@ -673,6 +724,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
             if (lockExtender != null) {
                 lockExtender.close();
+            }
+
+            if (controlPubSubConn != null) {
+                try {
+                    controlPubSubConn.close();
+                } catch (Exception ignored) {}
             }
 
             if (ownsConnectionManager && connectionManager != null) {

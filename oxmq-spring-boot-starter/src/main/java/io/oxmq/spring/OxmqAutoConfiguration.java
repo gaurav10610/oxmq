@@ -122,4 +122,19 @@ public class OxmqAutoConfiguration {
         String effectivePrefix = properties.resolvePrefix(environment);
         return new OxmqHealthIndicator(redisClient, postProcessor, effectivePrefix);
     }
+
+    @Bean
+    @org.springframework.context.annotation.Lazy
+    @ConditionalOnMissingBean
+    public io.oxmq.relay.OxmqRelay oxmqRelay(RedisConnectionManager connectionManager,
+                                              JobSerializer serializer,
+                                              OxmqProperties properties,
+                                              Environment environment) {
+        String effectivePrefix = properties.resolvePrefix(environment) + ":relay";
+        return io.oxmq.relay.OxmqRelay.builder()
+                .connectionManager(connectionManager)
+                .serializer(serializer)
+                .prefix(effectivePrefix)
+                .build();
+    }
 }

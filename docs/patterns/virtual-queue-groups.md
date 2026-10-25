@@ -32,6 +32,7 @@ OxMQ implements virtual groups using Redis primitive structures with strict isol
 ```
 bull:<queue>:groups:waiting       -> LIST of group IDs waiting for processing (Circular RPOPLPUSH)
 bull:<queue>:groups:active:count  -> HASH { groupId: activeJobCount }
+bull:<queue>:groups:concurrency   -> HASH { groupId: dynamicConcurrencyOverride }
 bull:<queue>:groups:maxed         -> SET of group IDs whose concurrency cap has been reached
 bull:<queue>:groups:limited       -> ZSET of throttled group IDs (score = expiration epoch ms)
 bull:<queue>:groups:paused        -> SET of administratively paused group IDs
@@ -84,6 +85,39 @@ queue.add("export-pdf", "{\"reportId\": 403}",
                         .build())
                 .build());
 ```
+
+### Intra-Group Priority Queuing
+
+In enterprise multi-tenant systems, individual tenants often need urgent or VIP jobs to jump ahead of standard background jobs **within their own virtual group**, without unfairly starving other tenants.
+
+OxMQ Virtual Queue Groups support native **Intra-Group Priority**:
+
+```java
+// Standard priority job for tenant-alpha
+queue.add("report-standard", "{\"reportId\": 101}",
+        JobOptions.builder()
+                .group(GroupOptions.builder()
+                        .id("tenant-alpha")
+                        .priority(10) // Lower priority number = processed first!
+                        .build())
+                .build());
+
+// Urgent VIP job for tenant-alpha (jumps ahead within tenant-alpha's queue)
+queue.add("report-urgent", "{\"reportId\": 999}",
+        JobOptions.builder()
+                .group(GroupOptions.builder()
+                        .id("tenant-alpha")
+                        .priority(1)  // Top priority (1 < 10)
+                        .build())
+                .build());
+
+// Query counts per priority tier for a specific group
+Map<Integer, Long> priorityCounts = queue.getCountsPerPriorityForGroup("tenant-alpha");
+System.out.println("Pending priority 1 jobs: " + priorityCounts.get(1));
+System.out.println("Pending priority 10 jobs: " + priorityCounts.get(10));
+```
+
+Jobs with a `group.priority` are stored in `bull:<queue>:groups:<groupId>:prioritized` (a Redis ZSET scored by priority). During round-robin group selection, prioritized jobs are popped first (`ZPOPMIN`) before standard FIFO jobs (`RPOP`).
 
 ### Processing with Worker Concurrency Caps
 
@@ -169,6 +203,34 @@ Purge all pending jobs for an offboarded tenant in a single atomic Redis roundtr
 ```java
 long deletedCount = queue.deleteGroup("tenant-alpha");
 System.out.println("Purged " + deletedCount + " jobs from tenant-alpha backlog");
+```
+
+### Dynamic Per-Group Concurrency Overrides
+
+While workers define a default baseline `groupConcurrency` (e.g., 2 concurrent jobs per tenant), production platforms frequently need to dynamically adjust concurrency caps for specific tenants based on subscription tiers (e.g. Free Tier = 1, Enterprise Tier = 10, VIP Customer = 25) without restarting worker pods.
+
+OxMQ stores dynamic overrides in Redis hash `bull:<queue>:groups:concurrency`. When workers evaluate group saturation, dynamic overrides supersede worker defaults:
+
+```java
+// Set an administrative concurrency override of 10 for enterprise tenant
+queue.setGroupConcurrency("tenant-enterprise", 10);
+
+// Read back the currently active concurrency override
+int activeConcurrency = queue.getGroupConcurrency("tenant-enterprise"); // returns 10
+
+// Reset tenant back to worker's default groupConcurrency cap
+queue.removeGroupConcurrency("tenant-enterprise");
+```
+
+In Spring Boot, you can manage these overrides via `OxmqTemplate`:
+
+```java
+@Autowired
+private OxmqTemplate oxmqTemplate;
+
+public void upgradeTenantTier(String tenantId, int tierConcurrency) {
+    oxmqTemplate.setGroupConcurrency("document-exports", tenantId, tierConcurrency);
+}
 ```
 
 ### Inspecting and Querying Groups

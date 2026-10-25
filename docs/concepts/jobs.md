@@ -350,6 +350,166 @@ OxmqWorker<ReportAggregator> worker = OxmqWorker.<ReportAggregator>builder()
 
 ---
 
+## Resumable State Machines & Job Progress Checkpointing
+
+For long-running multi-stage batch jobs, data extraction pipelines, or complex multi-step workflows, a transient network error or pod restart in Step 4 shouldn't force the job to re-execute Steps 1, 2, and 3 from scratch.
+
+OxMQ introduces native **Resumable State Machines and Job Checkpointing**:
+
+```java
+public record PipelineState(int recordsExtracted, String lastProcessedId, boolean stagingComplete) {}
+
+OxmqWorker<DataPipelinePayload> worker = OxmqWorker.<DataPipelinePayload>builder()
+    .queueName("etl-pipeline")
+    .processor(job -> {
+        // 1. Restore previous checkpoint if this attempt is a retry
+        PipelineState state = job.getCheckpoint(PipelineState.class);
+        String currentStep = job.getCheckpointStep();
+
+        if (state == null) {
+            state = new PipelineState(0, null, false);
+        }
+
+        // Step 1: Extract records
+        if (!"STAGE_EXTRACT_DONE".equals(currentStep)) {
+            state = runExtraction(state);
+            job.checkpoint("STAGE_EXTRACT_DONE", state); // Persisted atomically in Redis!
+        }
+
+        // Step 2: Transform & Enrich
+        if (!"STAGE_TRANSFORM_DONE".equals(currentStep)) {
+            state = runTransformation(state);
+            job.checkpoint("STAGE_TRANSFORM_DONE", state);
+        }
+
+        // Step 3: Load into target Data Warehouse
+        loadDataWarehouse(state);
+        return "PIPELINE_COMPLETE";
+    })
+    .build();
+```
+
+### Checkpointing Semantics:
+1. `job.checkpoint(step, state)` immediately persists both the logical stage identifier (`checkpoint_step`) and serialized state payload (`checkpoint`) to Redis hash `bull:<queue>:<jobId>`.
+2. When the job fails and is retried by backoff policies or reassigned to a different worker pod, `job.getCheckpoint(Class<T>)` and `job.getCheckpointStep()` immediately restore the exact point of execution.
+3. Steps completed prior to the checkpoint are skipped, preventing redundant computation, double-charging, or duplicate external API calls.
+
+---
+
+## Declarative Per-Job-Type Timeout Mappings
+
+In production microservices, a single worker pool often handles diverse job types with vastly different execution profiles (e.g., `send-sms` should fail after 5 seconds, whereas `export-large-csv` requires up to 10 minutes).
+
+OxMQ allows configuring **Declarative Per-Job-Type Timeouts** on workers:
+
+### Java Builder API:
+```java
+OxmqWorker<Void> worker = OxmqWorker.<Void>builder()
+    .queueName("tasks")
+    .defaultJobTimeout(Duration.ofSeconds(30))       // Fallback for unspecified jobs
+    .jobTimeout("fast-notification", Duration.ofSeconds(5))
+    .jobTimeout("generate-pdf", Duration.ofMinutes(2))
+    .jobTimeout("monthly-analytics", Duration.ofMinutes(15))
+    .processor(job -> {
+        // Fast notification will be aborted after 5s; monthly analytics gets 15m
+        return executeTask(job);
+    })
+    .build();
+```
+
+### Spring Boot `@OxmqListener`:
+```java
+@Component
+public class TaskListener {
+
+    @OxmqListener(
+        queue = "tasks",
+        concurrency = 20,
+        jobTimeoutMs = 30000, // 30s default
+        jobTimeouts = {
+            @JobTimeout(task = "fast-notification", timeout = 5000),
+            @JobTimeout(task = "generate-pdf", timeout = 120000),
+            @JobTimeout(task = "monthly-analytics", timeout = 900000)
+        }
+    )
+    public void handleTask(Job<Object> job) {
+        // Watchdog automatically monitors active virtual thread and enforces specific timeout
+    }
+}
+```
+
+If an active virtual thread exceeds its specific deadline:
+1. The watchdog marks `job.isCancelled()` as true with reason `"Job execution timed out after X ms"`.
+2. The virtual thread is interrupted (`Thread.interrupt()`).
+3. The job fails with `JobTimeoutException` and triggers normal retry backoff.
+
+---
+
+## Dynamic Runtime Child Spawning in DAGs
+
+Standard workflows require the entire DAG dependency graph to be known upfront before enqueuing. However, real-world workflows often require **dynamic branching**: a parent task inspects runtime data, decides how many sub-tasks to execute, schedules them, pauses itself, and automatically resumes once all children complete.
+
+OxMQ enables **Dynamic Runtime Child Spawning**:
+
+```java
+OxmqWorker<Object> worker = OxmqWorker.builder()
+    .queueName("orchestration-queue")
+    .processor(job -> {
+        if ("parent-orchestrator".equals(job.getName())) {
+            // Check if we are resuming after child tasks completed
+            Map<String, Object> childOutputs = job.getChildrenValues();
+            if (childOutputs != null && !childOutputs.isEmpty()) {
+                log.info("All dynamic children finished! Outputs: {}", childOutputs);
+                return "AGGREGATED_SUCCESS";
+            }
+
+            // Phase 1: Dynamically determine child tasks at runtime
+            List<OrderPart> parts = fetchOrderParts(job.getData());
+            List<FlowJob> children = new ArrayList<>();
+            for (OrderPart part : parts) {
+                children.add(FlowJob.of("parts-queue", "process-part", part));
+            }
+
+            // Spawn children and pause parent:
+            // This schedules child jobs in Redis, moves parent into WAITING_CHILDREN,
+            // and throws WaitingChildrenException to yield the worker Virtual Thread!
+            job.addChildren(children);
+            return null; // Unreachable - thread yields
+        }
+        return "OK";
+    })
+    .build();
+```
+
+### Dynamic Flow Execution Sequence:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Queue as Redis Queue
+    participant Worker as OxMQ Worker (Virtual Thread)
+    
+    Client->>Queue: Enqueue Parent Job
+    Queue->>Worker: Worker picks up Parent Job
+    Note over Worker: Evaluates runtime data<br/>Determines 3 dynamic children
+    Worker->>Queue: job.addChildren(3 children)
+    Worker->>Queue: moveToWaitingChildren()
+    Note over Worker: Throws WaitingChildrenException<br/>Virtual Thread yielded cleanly!
+    
+    par Child Execution
+        Queue->>Worker: Worker executes Child 1 (completed)
+        Queue->>Worker: Worker executes Child 2 (completed)
+        Queue->>Worker: Worker executes Child 3 (completed)
+    end
+    
+    Note over Queue: Last child completes<br/>moveToFinished unblocks Parent
+    Queue->>Queue: Parent promoted from waiting-children to wait
+    Queue->>Worker: Worker resumes Parent Job
+    Note over Worker: job.getChildrenValues() provides outputs<br/>Parent completes successfully!
+```
+
+---
+
 ## OpenTelemetry Distributed Tracing (`TraceContext`)
 
 OxMQ natively supports W3C distributed tracing standards (`traceparent` and `tracestate`), allowing distributed traces to flow seamlessly across microservice boundaries, queues, and DAG dependencies.

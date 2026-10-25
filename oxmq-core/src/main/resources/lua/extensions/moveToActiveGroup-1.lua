@@ -86,9 +86,13 @@ for i = 1, iterations do
         end
 
         if not isLimited then
-            -- 3. Check group concurrency cap
+            -- 3. Check group concurrency cap (with per-group dynamic override support)
+            local groupConcurrencyKey = prefixKey .. "groups:concurrency"
+            local groupConcurrencyOverride = tonumber(rcall("HGET", groupConcurrencyKey, groupId))
+            local effectiveConcurrency = groupConcurrencyOverride or maxGroupConcurrency
+
             local activeCount = tonumber(rcall("HGET", groupsActiveCountKey, groupId) or 0)
-            if maxGroupConcurrency > 0 and activeCount >= maxGroupConcurrency then
+            if effectiveConcurrency > 0 and activeCount >= effectiveConcurrency then
                 rcall("SADD", groupsMaxedKey, groupId)
                 rcall("LREM", groupsWaitingKey, 1, groupId)
             else
@@ -123,7 +127,7 @@ for i = 1, iterations do
                     local remainingJobs = rcall("LLEN", groupWaitKey) + rcall("ZCARD", groupPrioritizedKey)
                     if remainingJobs == 0 then
                         rcall("LREM", groupsWaitingKey, 1, groupId)
-                    elseif maxGroupConcurrency > 0 and (activeCount + 1) >= maxGroupConcurrency then
+                    elseif effectiveConcurrency > 0 and (activeCount + 1) >= effectiveConcurrency then
                         rcall("SADD", groupsMaxedKey, groupId)
                         rcall("LREM", groupsWaitingKey, 1, groupId)
                     end

@@ -94,6 +94,8 @@ export default withMermaid(
           collapsed: false,
           items: [
             { text: 'Virtual Queue Groups & Multi-Tenancy', link: '/patterns/virtual-queue-groups' },
+            { text: 'Cluster-Wide Distributed Cancellation', link: '/patterns/distributed-cancellation' },
+            { text: 'Distributed Pub/Sub Relay', link: '/patterns/distributed-relay' },
             { text: 'Transactional Outbox Pattern', link: '/patterns/transactional-outbox' },
             { text: 'Request-Reply Synchronization', link: '/patterns/request-reply' },
             { text: 'Rate Limiting & Concurrency', link: '/patterns/rate-limiting' },

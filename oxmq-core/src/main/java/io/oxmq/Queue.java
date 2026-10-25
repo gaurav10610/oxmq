@@ -466,6 +466,71 @@ public interface Queue<T> extends Closeable {
         return 0;
     }
 
+    /**
+     * Returns job counts breakdown per priority for a specific virtual group.
+     * Priority 0 corresponds to non-prioritized FIFO jobs.
+     *
+     * @param groupId virtual group identifier
+     * @param priorities list of priorities to inspect
+     * @return map of priority to job count
+     */
+    default java.util.Map<Integer, Long> getCountsPerPriorityForGroup(String groupId, java.util.List<Integer> priorities) {
+        return java.util.Map.of();
+    }
+
+    /**
+     * Sets a dynamic concurrency limit override for a specific virtual group.
+     * Overrides the worker's default group concurrency for this group in Redis.
+     *
+     * @param groupId virtual group identifier
+     * @param concurrency maximum concurrent active jobs for this group
+     */
+    default void setGroupConcurrency(String groupId, int concurrency) {
+    }
+
+    /**
+     * Retrieves the specific concurrency limit override for a virtual group, or null if using default.
+     *
+     * @param groupId virtual group identifier
+     * @return configured concurrency override or null
+     */
+    default Integer getGroupConcurrency(String groupId) {
+        return null;
+    }
+
+    /**
+     * Removes the specific concurrency limit override for a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if an override was removed
+     */
+    default boolean removeGroupConcurrency(String groupId) {
+        return false;
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide.
+     * If the job is active on any worker node in the cluster, sends a cancellation signal
+     * via Redis control channel to immediately interrupt its virtual thread and cancel its token.
+     *
+     * @param jobId job identifier
+     * @return true if cancellation request was dispatched
+     */
+    default boolean cancelJob(String jobId) {
+        return cancelJob(jobId, "User requested cancellation");
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide with a specified reason.
+     *
+     * @param jobId job identifier
+     * @param reason human-readable cancellation reason
+     * @return true if cancellation request was dispatched
+     */
+    default boolean cancelJob(String jobId, String reason) {
+        return false;
+    }
+
     @Override
     void close();
 }

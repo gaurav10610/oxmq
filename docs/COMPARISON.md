@@ -18,10 +18,17 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts (zero custom scripts)** | **Official BullMQ Lua scripts** |
 | **Multi-Service Context Isolation** | **Native service-level namespace auto-inheritance (`oxmq.namespace`)** | Manual `prefix` configuration on every queue |
 | **Virtual Queue Groups** | **Native Built-in ($O(1)$ fair circular round-robin, no pro tier)** | **Commercial Paywall (BullMQ Pro license required)** |
+| **Intra-Group Priority Queuing** | **Native Built-in (`group.priority`, `getCountsPerPriorityForGroup`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Dynamic Per-Group Concurrency Overrides** | **Native Built-in (`setGroupConcurrency`, `getGroupConcurrency` via `groups:concurrency`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Group Concurrency Caps** | **Native Built-in (`groupConcurrency`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Group Rate Limiting** | **Native Built-in (`setGroupRateLimit`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Batch Worker with Group Affinity** | **Native Built-in (homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro)** |
 | **Item-Level Granular Batch Failure** | **Native Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Cluster-Wide Job Cancellation** | **Native Built-in (`cancelJob(id, reason)` over Redis `<queue>:control` pub/sub)** | **Manual custom code or BullMQ Pro** |
+| **Resumable State Machines & Checkpointing** | **Native Built-in (`job.checkpoint(step, state)`, skips completed steps on retry)** | Requires manual database state persistence |
+| **Declarative Per-Job-Type Timeouts** | **Native Built-in (`worker.jobTimeout(name, dur)` & `@JobTimeout`)** | Manual application-level timer wrappers |
+| **Dynamic Runtime Child Spawning in DAGs** | **Native Built-in (`job.addChild` / `job.addChildren`, yields virtual thread to `waiting-children`)** | **Commercial Paywall (BullMQ Pro Flows)** |
+| **Distributed Pub/Sub Control Plane / Relay** | **Native Built-in (`OxmqRelay`, hierarchical wildcards `*` / `>`, retained messages, node leases)** | Requires external NATS / broker / custom pubsub |
 | **Hard Watchdog Execution Timeouts** | **Native Built-in (`jobTimeout(Duration)`)** | Manual application-level timer wrappers |
 | **Transactional Outbox Engine** | **Native Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) or custom code |
 | **Request-Reply Pattern** | **Native `waitUntilFinished` & `waitUntilFinishedAsync` (Redis Streams)** | `Job.waitUntilFinished` (Redis Streams) |

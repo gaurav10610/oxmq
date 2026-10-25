@@ -136,6 +136,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                             public String groupConcurrencyString() { return ""; }
                             public long jobTimeoutMs() { return 0; }
                             public String jobTimeoutMsString() { return ""; }
+                            public String[] jobTimeouts() { return new String[0]; }
+                            public String jobTimeoutsString() { return ""; }
                         };
                     }
                     return null;
@@ -270,6 +272,22 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
 
         if (payloadClass != null) {
             builder.payloadClass((Class) payloadClass);
+        }
+
+        Map<String, Duration> jobTimeouts = new HashMap<>();
+        if (listener.jobTimeouts() != null && listener.jobTimeouts().length > 0) {
+            for (String entry : listener.jobTimeouts()) {
+                parseJobTimeoutEntry(resolve(entry), jobTimeouts);
+            }
+        }
+        if (listener.jobTimeoutsString() != null && !listener.jobTimeoutsString().isBlank()) {
+            String resolved = resolve(listener.jobTimeoutsString());
+            for (String entry : resolved.split(",")) {
+                parseJobTimeoutEntry(entry, jobTimeouts);
+            }
+        }
+        if (!jobTimeouts.isEmpty()) {
+            builder.jobTimeouts(jobTimeouts);
         }
 
         if (listener.rateLimitMax() > 0 && listener.rateLimitDurationMs() > 0) {
@@ -734,5 +752,17 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
 
     public List<Worker<?>> getRegisteredWorkers() {
         return registeredWorkers;
+    }
+
+    private void parseJobTimeoutEntry(String entry, Map<String, Duration> map) {
+        if (entry == null || entry.isBlank()) return;
+        String[] parts = entry.split(":", 2);
+        if (parts.length == 2) {
+            try {
+                String taskName = parts[0].trim();
+                long ms = Long.parseLong(parts[1].trim());
+                map.put(taskName, Duration.ofMillis(ms));
+            } catch (NumberFormatException ignored) {}
+        }
     }
 }
