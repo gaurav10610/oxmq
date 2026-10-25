@@ -1019,8 +1019,33 @@ public class OxmqWorker<T> implements Worker<T> {
      * @return true if rate limit was applied
      */
     public boolean rateLimitGroup(String groupId, Duration duration) {
+        return rateLimitGroup(groupId, 1, duration);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window.
+     * Mirrors BullMQ Pro's setGroupRateLimit(groupId, max, duration).
+     *
+     * @param groupId  virtual group identifier
+     * @param maxJobs  maximum number of jobs allowed in the duration window
+     * @param duration duration of the window
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, int maxJobs, Duration duration) {
+        return rateLimitGroup(groupId, maxJobs, duration != null ? duration.toMillis() : 0);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window in milliseconds.
+     *
+     * @param groupId    virtual group identifier
+     * @param maxJobs    maximum number of jobs allowed in the duration window
+     * @param durationMs duration in milliseconds
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, int maxJobs, long durationMs) {
         return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
-                duration != null ? duration.toMillis() : 0);
+                maxJobs, durationMs);
     }
 
     @Override

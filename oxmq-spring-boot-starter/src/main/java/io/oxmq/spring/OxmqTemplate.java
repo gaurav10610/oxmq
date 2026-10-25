@@ -317,11 +317,34 @@ public class OxmqTemplate {
     }
 
     /**
+     * Dynamically sets a cluster-wide rate limit on a virtual queue group with max jobs quota.
+     * Mirrors BullMQ Pro's queue.setGroupRateLimit(groupId, max, duration).
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, int maxJobs, Duration duration) {
+        return getQueue(queueName).setGroupRateLimit(groupId, maxJobs, duration);
+    }
+
+    /**
+     * Dynamically sets a cluster-wide rate limit on a virtual queue group with max jobs quota in milliseconds.
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, int maxJobs, long durationMs) {
+        return getQueue(queueName).setGroupRateLimit(groupId, maxJobs, durationMs);
+    }
+
+    /**
      * Returns remaining TTL (in milliseconds) for a rate-limited virtual group.
      * Returns 0 if not currently rate-limited.
      */
     public long getGroupRateLimitTtl(String queueName, String groupId) {
         return getQueue(queueName).getGroupRateLimitTtl(groupId);
+    }
+
+    /**
+     * Returns remaining TTL (in milliseconds) for a rate-limited virtual group given maxJobs quota.
+     * Mirrors BullMQ Pro's queue.getGroupRateLimitTtl(groupId, maxJobs).
+     */
+    public long getGroupRateLimitTtl(String queueName, String groupId, int maxJobs) {
+        return getQueue(queueName).getGroupRateLimitTtl(groupId, maxJobs);
     }
 
     /**

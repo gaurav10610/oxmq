@@ -216,24 +216,35 @@ public class ExtensionScripts {
     }
 
     /**
-     * Sets a dynamic rate-limit duration on a virtual group.
+     * Sets a dynamic rate-limit duration on a virtual group with maximum jobs allowed.
+     * Mirrors BullMQ Pro's setGroupRateLimit(groupId, max, duration).
      */
     public boolean setGroupRateLimit(StatefulRedisConnection<String, byte[]> connection,
-                                     QueueKeys keys, String groupId, long durationMs) {
+                                     QueueKeys keys, String groupId, int maxJobs, long durationMs) {
         String[] redisKeys = new String[] {
             keys.toKey("groups:waiting"),
             keys.toKey("groups:limited"),
-            keys.getKey("events")
+            keys.getKey("events"),
+            keys.toKey("groups:" + groupId + ":limit")
         };
 
         long expireTs = System.currentTimeMillis() + durationMs;
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
         byte[] expireBytes = String.valueOf(expireTs).getBytes(StandardCharsets.UTF_8);
         byte[] durBytes = String.valueOf(durationMs).getBytes(StandardCharsets.UTF_8);
+        byte[] maxBytes = String.valueOf(Math.max(1, maxJobs)).getBytes(StandardCharsets.UTF_8);
 
         Long result = scriptManager.evalBinary(connection, ExtensionLuaScript.SET_GROUP_RATE_LIMIT,
-                ScriptOutputType.INTEGER, redisKeys, groupBytes, expireBytes, durBytes);
+                ScriptOutputType.INTEGER, redisKeys, groupBytes, expireBytes, durBytes, maxBytes);
         return result != null && result == 1;
+    }
+
+    /**
+     * Sets a dynamic rate-limit duration on a virtual group.
+     */
+    public boolean setGroupRateLimit(StatefulRedisConnection<String, byte[]> connection,
+                                     QueueKeys keys, String groupId, long durationMs) {
+        return setGroupRateLimit(connection, keys, groupId, 1, durationMs);
     }
 
     public record GroupEntry(String id, long count) {}

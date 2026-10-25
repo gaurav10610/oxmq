@@ -81,12 +81,21 @@ public class OxmqGroupsEndpoint {
      * </ul>
      * POST /actuator/oxmq-groups
      */
-    @WriteOperation
     public Map<String, Object> manageGroup(String queue,
                                           String action,
                                           @Nullable String groupId,
                                           @Nullable Long durationMs,
                                           @Nullable Integer concurrency) {
+        return manageGroup(queue, action, groupId, durationMs, concurrency, null);
+    }
+
+    @WriteOperation
+    public Map<String, Object> manageGroup(String queue,
+                                          String action,
+                                          @Nullable String groupId,
+                                          @Nullable Long durationMs,
+                                          @Nullable Integer concurrency,
+                                          @Nullable Integer maxJobs) {
         if (queue == null || queue.isBlank()) {
             return Map.of("error", "Property 'queue' is required");
         }
@@ -130,9 +139,11 @@ public class OxmqGroupsEndpoint {
                     return Map.of("error", "Property 'groupId' is required for action 'setRateLimit'");
                 }
                 long ms = (durationMs != null && durationMs > 0) ? durationMs : 1000;
-                boolean limited = oxmqTemplate.setGroupRateLimit(queue, groupId, Duration.ofMillis(ms));
+                int max = (maxJobs != null && maxJobs > 0) ? maxJobs : 1;
+                boolean limited = oxmqTemplate.setGroupRateLimit(queue, groupId, max, Duration.ofMillis(ms));
                 response.put("success", limited);
                 response.put("durationMs", ms);
+                response.put("maxJobs", max);
             }
             case "setconcurrency" -> {
                 if (groupId == null || groupId.isBlank() || concurrency == null) {

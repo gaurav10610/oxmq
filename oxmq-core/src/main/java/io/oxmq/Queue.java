@@ -525,6 +525,31 @@ public interface Queue<T> extends Closeable {
      * @return true if rate limit was applied
      */
     default boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, 1, duration);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the duration window.
+     * Mirrors BullMQ Pro's queue.setGroupRateLimit(groupId, max, duration).
+     *
+     * @param groupId  virtual group identifier
+     * @param maxJobs  maximum number of jobs allowed in the duration window
+     * @param duration duration of the window
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, int maxJobs, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, maxJobs, duration != null ? duration.toMillis() : 0);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window in milliseconds.
+     *
+     * @param groupId    virtual group identifier
+     * @param maxJobs    maximum number of jobs allowed in the duration window
+     * @param durationMs duration of the window in milliseconds
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, int maxJobs, long durationMs) {
         return false;
     }
 
@@ -536,6 +561,18 @@ public interface Queue<T> extends Closeable {
      * @return remaining TTL in milliseconds, or 0 if not limited
      */
     default long getGroupRateLimitTtl(String groupId) {
+        return getGroupRateLimitTtl(groupId, 1);
+    }
+
+    /**
+     * Returns the remaining time-to-live (in milliseconds) for a rate-limited virtual group given maxJobs quota.
+     * Mirrors BullMQ Pro's queue.getGroupRateLimitTtl(groupId, maxJobs).
+     *
+     * @param groupId virtual group identifier
+     * @param maxJobs maximum allowed jobs in window
+     * @return remaining TTL in milliseconds, or 0 if not limited
+     */
+    default long getGroupRateLimitTtl(String groupId, int maxJobs) {
         return 0;
     }
 

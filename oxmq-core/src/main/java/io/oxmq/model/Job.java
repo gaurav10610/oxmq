@@ -467,6 +467,22 @@ public class Job<T> {
     /**
      * Returns true if this job was marked as failed via {@link #setAsFailed(Throwable)}.
      */
+    private List<Job<T>> batch;
+
+    /**
+     * Returns all jobs belonging to the current batch when this job is processed by a batch worker.
+     * Mirrors BullMQ Pro's job.getBatch().
+     *
+     * @return list of jobs in the batch, or an empty list if this job is not part of a batch
+     */
+    public List<Job<T>> getBatch() {
+        return batch != null ? batch : List.of();
+    }
+
+    public void setBatch(List<Job<T>> batch) {
+        this.batch = batch;
+    }
+
     public boolean isMarkedFailed() {
         return batchFailureReason != null;
     }

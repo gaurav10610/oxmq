@@ -179,11 +179,15 @@ batchWorker.start();
 If a tenant exceeds their external API quotas (e.g., received an HTTP 429 Too Many Requests from an upstream provider), you can throttle only that tenant cluster-wide without impacting any other tenant:
 
 ```java
-// Throttles tenant-alpha across all worker nodes for 10 seconds
+// Option A: Throttles tenant-alpha across all worker nodes for 10 seconds
 queue.setGroupRateLimit("tenant-alpha", Duration.ofSeconds(10));
 
+// Option B: Multi-Parameter Token Bucket Rate Limit (Mirrors BullMQ Pro setGroupRateLimit(groupId, max, duration))
+// Allow up to 50 jobs per 5 seconds for tenant-alpha
+queue.setGroupRateLimit("tenant-alpha", 50, Duration.ofSeconds(5));
+
 // Or directly from inside a worker processor:
-worker.rateLimitGroup("tenant-alpha", Duration.ofSeconds(10));
+worker.rateLimitGroup("tenant-alpha", 50, Duration.ofSeconds(5));
 ```
 
 ### Pausing and Resuming a Virtual Group

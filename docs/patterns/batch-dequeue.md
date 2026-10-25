@@ -194,6 +194,33 @@ public void onTenantBatch(List<Job<Event>> batch) {
 
 ---
 
+## 🔗 Accessing Batched Jobs via `job.getBatch()` & Worker Callbacks
+
+When writing domain logic inside batch workers, you can access the sibling jobs directly from any individual `Job` instance (mirroring BullMQ Pro's `job.getBatch()`):
+
+```java
+// Inside batch processing logic:
+Job<AuditEvent> firstJob = batch.get(0);
+
+// Retrieve all jobs belonging to this batch execution
+List<Job<AuditEvent>> fullBatch = firstJob.getBatch();
+System.out.println("Processing batch of " + fullBatch.size() + " items");
+```
+
+### Fluent Event Callbacks for Batches
+`OxmqBatchWorker` provides lifecycle listener callbacks for monitoring batch executions:
+
+```java
+batchWorker
+    .onBatchActive(jobs -> log.info("Started processing batch of {} jobs", jobs.size()))
+    .onJobCompleted((job, result) -> log.info("Job {} completed in batch", job.getId()))
+    .onJobFailed((job, err) -> log.warn("Job {} failed in batch: {}", job.getId(), err.getMessage()))
+    .onBatchCompleted((jobs, result) -> log.info("Batch of {} jobs completed", jobs.size()))
+    .onBatchFailed((jobs, err) -> log.error("Entire batch failed", err));
+```
+
+---
+
 ## ⚡ Empirical Batch Worker Performance
 
 In our empirical benchmarks, `OxmqBatchWorker` reached up to **2,918.9 jobs/second** (Java 17 LTS) and **2,886.8 jobs/second** (Java 21 LTS) peak throughput—a **2.6x multiplier** over single-job workers:

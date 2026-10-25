@@ -23,6 +23,7 @@ class ComprehensiveBullMqParityIntegrationTest {
     private OxmqQueue<String> queue;
     private FlowProducer flowProducer;
     private OxmqWorker<String> worker;
+    private OxmqBatchWorker<String> batchWorker;
 
     @BeforeEach
     void setUp() {
@@ -39,6 +40,9 @@ class ComprehensiveBullMqParityIntegrationTest {
     void tearDown() {
         if (worker != null) {
             try { worker.close(); } catch (Exception ignored) {}
+        }
+        if (batchWorker != null) {
+            try { batchWorker.close(); } catch (Exception ignored) {}
         }
         if (flowProducer != null) {
             try { flowProducer.close(); } catch (Exception ignored) {}
@@ -113,11 +117,9 @@ class ComprehensiveBullMqParityIntegrationTest {
                 .queueName(queueName)
                 .connectionManager(connectionManager)
                 .concurrency(2)
-                .processor(job -> {
-                    latch.countDown();
-                    return "result-" + job.getName();
-                })
+                .processor(job -> "result-" + job.getName())
                 .build();
+        worker.onCompleted((job, res) -> latch.countDown());
         worker.start();
 
         assertTrue(latch.await(5, TimeUnit.SECONDS), "Children should finish execution");
@@ -178,5 +180,60 @@ class ComprehensiveBullMqParityIntegrationTest {
         boolean removed = delayedJob.remove();
         assertTrue(removed, "job.remove() should remove job from Redis");
         assertNull(queue.getJob(delayedJob.getId()), "Removed job should not exist");
+    }
+
+    @Test
+    @DisplayName("Group Rate Limiting with maxJobs quota and TTL inspection")
+    void testGroupRateLimitWithMaxJobsAndTtl() {
+        String groupId = "tenant-xyz";
+        assertEquals(0, queue.getGroupRateLimitTtl(groupId), "Initially group should have 0 TTL");
+
+        // Apply rate limit with maxJobs = 5 and duration = 30 seconds
+        boolean applied = queue.setGroupRateLimit(groupId, 5, Duration.ofSeconds(30));
+        assertTrue(applied, "Rate limit should be applied to group");
+
+        long ttl = queue.getGroupRateLimitTtl(groupId, 5);
+        assertTrue(ttl > 0 && ttl <= 30000, "Group TTL should be positive and <= 30,000 ms, was: " + ttl);
+
+        long ttlSingle = queue.getGroupRateLimitTtl(groupId);
+        assertTrue(ttlSingle > 0, "Group TTL without maxJobs parameter should also be positive");
+    }
+
+    @Test
+    @DisplayName("Batch worker: job.getBatch() access on individual jobs and worker event callbacks")
+    void testBatchJobSiblingsViaGetBatchAndCallbacks() throws Exception {
+        // Enqueue 3 jobs
+        queue.add("item-1", "payload-1");
+        queue.add("item-2", "payload-2");
+        queue.add("item-3", "payload-3");
+
+        CountDownLatch batchLatch = new CountDownLatch(1);
+        CountDownLatch jobLatch = new CountDownLatch(3);
+        java.util.concurrent.atomic.AtomicInteger observedBatchSize = new java.util.concurrent.atomic.AtomicInteger();
+
+        batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(5)
+                .minBatchSize(3)
+                .batchTimeoutMs(2000)
+                .processor(jobs -> {
+                    // Verify every job can access the full batch via job.getBatch()
+                    for (Job<String> j : jobs) {
+                        assertNotNull(j.getBatch(), "job.getBatch() must not be null");
+                        assertEquals(jobs.size(), j.getBatch().size(), "job.getBatch() must match batch size");
+                    }
+                    observedBatchSize.set(jobs.size());
+                    return "batch-ok";
+                })
+                .build();
+
+        batchWorker.onJobCompleted((job, res) -> jobLatch.countDown());
+        batchWorker.onBatchCompleted((jobs, res) -> batchLatch.countDown());
+        batchWorker.start();
+
+        assertTrue(batchLatch.await(10, TimeUnit.SECONDS), "Batch worker should complete the batch");
+        assertTrue(jobLatch.await(10, TimeUnit.SECONDS), "All 3 individual job completion callbacks should fire");
+        assertEquals(3, observedBatchSize.get(), "Batch should contain exactly 3 jobs");
     }
 }

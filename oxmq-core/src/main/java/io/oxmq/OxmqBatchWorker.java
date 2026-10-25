@@ -20,11 +20,14 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -77,6 +80,37 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private record ActiveBatchExecution<T>(List<Job<T>> jobs, Thread thread) {}
     private final java.util.concurrent.ConcurrentMap<String, ActiveBatchExecution<T>> activeJobExecutions = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<ActiveBatchExecution<T>> activeBatches = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private final List<Consumer<List<Job<T>>>> batchActiveListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<List<Job<T>>, Object>> batchCompletedListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<List<Job<T>>, Throwable>> batchFailedListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Object>> jobCompletedListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Throwable>> jobFailedListeners = new CopyOnWriteArrayList<>();
+
+    public OxmqBatchWorker<T> onBatchActive(Consumer<List<Job<T>>> listener) {
+        batchActiveListeners.add(listener);
+        return this;
+    }
+
+    public OxmqBatchWorker<T> onBatchCompleted(BiConsumer<List<Job<T>>, Object> listener) {
+        batchCompletedListeners.add(listener);
+        return this;
+    }
+
+    public OxmqBatchWorker<T> onBatchFailed(BiConsumer<List<Job<T>>, Throwable> listener) {
+        batchFailedListeners.add(listener);
+        return this;
+    }
+
+    public OxmqBatchWorker<T> onJobCompleted(BiConsumer<Job<T>, Object> listener) {
+        jobCompletedListeners.add(listener);
+        return this;
+    }
+
+    public OxmqBatchWorker<T> onJobFailed(BiConsumer<Job<T>, Throwable> listener) {
+        jobFailedListeners.add(listener);
+        return this;
+    }
 
     private OxmqBatchWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
@@ -308,7 +342,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         ActiveBatchExecution<T> batchExecution = new ActiveBatchExecution<>(jobs, Thread.currentThread());
         activeBatches.add(batchExecution);
         for (Job<T> job : jobs) {
+            job.setBatch(jobs);
             activeJobExecutions.put(job.getId(), batchExecution);
+        }
+        for (var l : batchActiveListeners) {
+            try { l.accept(jobs); } catch (Exception ignored) {}
         }
         try {
             log.debug("Executing batch of {} jobs on queue {}", jobs.size(), queueName);
@@ -329,6 +367,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 completeBatch(jobs, result, duration);
                 for (Job<T> job : jobs) {
                     metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
+                    for (var l : jobCompletedListeners) {
+                        try { l.accept(job, result); } catch (Exception ignored) {}
+                    }
+                }
+                for (var l : batchCompletedListeners) {
+                    try { l.accept(jobs, result); } catch (Exception ignored) {}
                 }
                 log.debug("Completed batch of {} jobs in {} ms", jobs.size(), duration.toMillis());
             } else {
@@ -338,6 +382,9 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                         Throwable err = job.getBatchFailureReason();
                         failSingleJob(job, err, duration);
                         metrics.recordJobFailed(queueName, job.getGroupKey(), duration, err != null ? err.getClass().getSimpleName() : "Error");
+                        for (var l : jobFailedListeners) {
+                            try { l.accept(job, err); } catch (Exception ignored) {}
+                        }
                         log.info("Batch job {} [id: {}] marked as failed: {}", job.getName(), job.getId(),
                                 err != null ? err.getMessage() : "Failed");
                     } else {
@@ -348,6 +395,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     completeBatch(successfulJobs, result, duration);
                     for (Job<T> job : successfulJobs) {
                         metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
+                        for (var l : jobCompletedListeners) {
+                            try { l.accept(job, result); } catch (Exception ignored) {}
+                        }
+                    }
+                    for (var l : batchCompletedListeners) {
+                        try { l.accept(successfulJobs, result); } catch (Exception ignored) {}
                     }
                 }
                 log.info("Completed batch with partial failures on queue {}: {} succeeded, {} failed",
@@ -366,6 +419,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             failBatch(jobs, ie, duration);
             for (Job<T> job : jobs) {
                 metrics.recordJobFailed(queueName, job.getGroupKey(), duration, "JobCancelledException");
+                for (var l : jobFailedListeners) {
+                    try { l.accept(job, ie); } catch (Exception ignored) {}
+                }
+            }
+            for (var l : batchFailedListeners) {
+                try { l.accept(jobs, ie); } catch (Exception ignored) {}
             }
             log.info("Batch of {} jobs was cancelled on queue {}: {}", jobs.size(), queueName, reason);
         } catch (Throwable t) {
@@ -375,6 +434,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             failBatch(jobs, t, duration);
             for (Job<T> job : jobs) {
                 metrics.recordJobFailed(queueName, job.getGroupKey(), duration, t.getClass().getSimpleName());
+                for (var l : jobFailedListeners) {
+                    try { l.accept(job, t); } catch (Exception ignored) {}
+                }
+            }
+            for (var l : batchFailedListeners) {
+                try { l.accept(jobs, t); } catch (Exception ignored) {}
             }
             log.warn("Batch of {} jobs failed on queue {}: {}", jobs.size(), queueName, t.getMessage(), t);
         } finally {

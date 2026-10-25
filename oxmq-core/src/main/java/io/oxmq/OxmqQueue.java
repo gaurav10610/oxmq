@@ -1038,18 +1038,41 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, 1, duration);
+    }
+
+    @Override
+    public boolean setGroupRateLimit(String groupId, int maxJobs, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, maxJobs, duration != null ? duration.toMillis() : 0);
+    }
+
+    @Override
+    public boolean setGroupRateLimit(String groupId, int maxJobs, long durationMs) {
         return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
-                duration != null ? duration.toMillis() : 0);
+                maxJobs, durationMs);
     }
 
     @Override
     public long getGroupRateLimitTtl(String groupId) {
+        return getGroupRateLimitTtl(groupId, 1);
+    }
+
+    @Override
+    public long getGroupRateLimitTtl(String groupId, int maxJobs) {
         if (groupId == null || groupId.isBlank()) return 0;
         try {
             var sync = connectionManager.getCommandConnection().sync();
             String groupsLimitedKey = queueKeys.toKey("groups:limited");
             Double score = sync.zscore(groupsLimitedKey, groupId);
             if (score == null) {
+                String groupLimitKey = queueKeys.toKey("groups:" + groupId + ":limit");
+                Long pttl = sync.pttl(groupLimitKey);
+                if (pttl != null && pttl > 0) {
+                    if (maxJobs <= 1) return pttl;
+                    String val = sync.get(groupLimitKey);
+                    int current = val != null ? Integer.parseInt(val) : 0;
+                    if (current >= maxJobs) return pttl;
+                }
                 return 0;
             }
             long remaining = (long) (score - System.currentTimeMillis());

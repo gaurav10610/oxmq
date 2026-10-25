@@ -21,14 +21,14 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Intra-Group Priority Queuing** | **Native Built-in (`group.priority`, `getCountsPerPriorityForGroup`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Dynamic Per-Group Concurrency Overrides** | **Native Built-in (`setGroupConcurrency`, `getGroupConcurrency` via `groups:concurrency`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Group Concurrency Caps** | **Native Built-in (`groupConcurrency`)** | **Commercial Paywall (BullMQ Pro)** |
-| **Group Rate Limiting** | **Native Built-in (`setGroupRateLimit`)** | **Commercial Paywall (BullMQ Pro)** |
-| **Group Rate Limit TTL Query** | **Native Built-in (`getGroupRateLimitTtl`)** | **Commercial Paywall (BullMQ Pro `getRateLimitTtl`)** |
+| **Group Rate Limiting** | **Native Built-in (`setGroupRateLimit(groupId, max, duration)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Rate Limit TTL Query** | **Native Built-in (`getGroupRateLimitTtl(groupId, maxJobs)`)** | **Commercial Paywall (BullMQ Pro `getRateLimitTtl`)** |
 | **Global Across-Groups Breakdown & Pagination** | **Native Built-in (`getGroups`, `getGroupsJobsCount`)** | **Commercial Paywall (BullMQ Pro `getGroupsJobsCount`)** |
 | **Self-Healing Group Desynchronization Repair** | **Native Built-in (`repairGroup`, `repairMaxedGroups`)** | Manual script repair or BullMQ Pro support |
 | **Reactive Stream Processors & Multi-Stage Checkpointing** | **Native Built-in (`reactiveProcessor`, `Flux`, `Mono`, `Flow.Publisher`)** | **Commercial Paywall (BullMQ Pro Observables)** |
 | **Spring Boot Actuator Group REST Endpoints** | **Native Built-in (`/actuator/oxmq-groups` GET & POST management)** | None / Custom API development |
 | **Opt-in Per-Group Prometheus Telemetry** | **Native Built-in (`oxmq.group-metrics-enabled=true`)** | None / Commercial add-on |
-| **Batch Worker with Group Affinity** | **Native Built-in (homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro)** |
+| **Batch Worker with Group Affinity** | **Native Built-in (`OxmqBatchWorker`, `job.getBatch()`, homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro `WorkerPro`, `job.getBatch()`)** |
 | **Item-Level Granular Batch Failure** | **Native Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
 | **Cluster-Wide Job Cancellation** | **Native Built-in (`cancelJob(id, reason)` over Redis `<queue>:control` pub/sub)** | **Manual custom code or BullMQ Pro** |
 | **Resumable State Machines & Checkpointing** | **Native Built-in (`job.checkpoint(step, state)`, skips completed steps on retry)** | Requires manual database state persistence |
