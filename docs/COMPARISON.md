@@ -17,6 +17,13 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Multi-Core CPU Scaling** | Natively concurrent across all JVM CPU cores | Requires spawning child OS processes ("sandboxed workers") |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts (zero custom scripts)** | **Official BullMQ Lua scripts** |
 | **Multi-Service Context Isolation** | **Native service-level namespace auto-inheritance (`oxmq.namespace`)** | Manual `prefix` configuration on every queue |
+| **Virtual Queue Groups** | **Native Built-in ($O(1)$ fair circular round-robin, no pro tier)** | **Commercial Paywall (BullMQ Pro license required)** |
+| **Group Concurrency Caps** | **Native Built-in (`groupConcurrency`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Rate Limiting** | **Native Built-in (`setGroupRateLimit`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Batch Worker with Group Affinity** | **Native Built-in (homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro)** |
+| **Item-Level Granular Batch Failure** | **Native Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Hard Watchdog Execution Timeouts** | **Native Built-in (`jobTimeout(Duration)`)** | Manual application-level timer wrappers |
+| **Transactional Outbox Engine** | **Native Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) or custom code |
 | **Request-Reply Pattern** | **Native `waitUntilFinished` & `waitUntilFinishedAsync` (Redis Streams)** | `Job.waitUntilFinished` (Redis Streams) |
 | **Memory Retention (`KeepJobs`)** | **Built-in `KeepJobs` (`count`, `ageSeconds`, `limit`) via `moveToFinished-14.lua`** | Built-in `keepJobs` via `moveToFinished-14.lua` |
 | **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy (including `dn:` & `pc`) | Standard `bull:<queue>:*` hierarchy |
@@ -37,7 +44,8 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility (Zero Node.js code) | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, `@OxmqBatchListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |
-| **License** | **Apache 2.0** | **MIT** |
+| **Pricing & Pro Tier** | **100% Free & Open Source (NO PRO TIER, NO PAYWALL)** | **Commercial BullMQ Pro (annual license subscription)** |
+| **License** | **Apache 2.0** | **MIT (Community) / Commercial Proprietary (Pro)** |
 
 ---
 

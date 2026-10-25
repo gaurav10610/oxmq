@@ -93,6 +93,8 @@ export default withMermaid(
           text: 'Design Patterns',
           collapsed: false,
           items: [
+            { text: 'Virtual Queue Groups & Multi-Tenancy', link: '/patterns/virtual-queue-groups' },
+            { text: 'Transactional Outbox Pattern', link: '/patterns/transactional-outbox' },
             { text: 'Request-Reply Synchronization', link: '/patterns/request-reply' },
             { text: 'Rate Limiting & Concurrency', link: '/patterns/rate-limiting' },
             { text: 'Retries & Backoff Policies', link: '/patterns/retries-backoff' },

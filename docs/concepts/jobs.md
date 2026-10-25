@@ -55,8 +55,13 @@ JobOptions options = JobOptions.builder()
     .deduplicationId("checkout_user_42")     // Custom deduplication key
     .debounceDuration(Duration.ofSeconds(5)) // Resets execution timer on rapid submissions
     
-    // Multi-Tenant Partitioning
-    .groupKey("tenant_acme")                 // Partition rate limit by tenant
+    // Multi-Tenant Virtual Queue Groups
+    .group("tenant_acme")                    // Assign to virtual group for fair round-robin scheduling
+    // Or with bounded backlog:
+    .group(GroupOptions.builder().id("tenant_acme").maxSize(500).build())
+    
+    // In-Flight Hard Execution Timeout
+    .jobTimeout(Duration.ofSeconds(45))      // Watchdog interrupts thread after 45s of active execution
     
     // Housekeeping & Redis Memory Pruning (KeepJobs)
     .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2))) // Retain last 1,000 completed jobs or < 2 hours
@@ -183,6 +188,64 @@ When an exception is thrown inside a worker processor:
 3. The job is placed into `bull:<queue>:delayed` with a calculated maturity timestamp score.
 4. When the timestamp arrives, Redis automatically promotes the job back to `bull:<queue>:wait`.
 5. If all attempts are exhausted, the job moves to `bull:<queue>:failed`.
+
+---
+
+## ⏱️ Hard Execution Timeouts & Cancellation Tokens
+
+Long-running or hanging tasks (e.g. unresponsive third-party HTTP endpoints, infinite loops, hanging database queries) can tie up worker virtual threads and lock resources indefinitely.
+
+OxMQ provides both **Preemptive Watchdog Timeouts** and **Cooperative Cancellation Tokens**:
+
+### 1. Setting Execution Timeouts
+
+Specify timeouts per-job or as a worker default:
+
+```java
+// Option A: Per-job timeout via JobOptions
+queue.add("transcode-video", payload, 
+        JobOptions.builder()
+                .jobTimeout(Duration.ofMinutes(5)) // Hard timeout after 5m
+                .build());
+
+// Option B: Worker-level default timeout
+OxmqWorker<String> worker = OxmqWorker.<String>builder()
+        .queueName("transcode-queue")
+        .defaultJobTimeout(Duration.ofMinutes(10))
+        .processor(this::processJob)
+        .build();
+```
+
+### 2. Watchdog Preemption & Interruption
+
+When a job's execution duration exceeds its configured timeout:
+1. A dedicated background daemon watchdog thread triggers.
+2. The executing virtual thread receives a `Thread.interrupt()` signal.
+3. If the processor blocks on I/O, `InterruptedException` is raised.
+4. If an uncaught interrupt or timeout occurs, OxMQ captures `JobTimeoutException`.
+5. The thread's interrupt flag is safely cleared, allowing OxMQ to update Redis without `RedisCommandInterruptedException`.
+6. The job is marked `FAILED` with `Job execution timed out after X ms`.
+
+### 3. Cooperative Cancellation Tokens
+
+For long-running CPU loops or step-by-step algorithms, check the job's `CancellationToken`:
+
+```java
+public String processJob(Job<BatchInput> job) throws InterruptedException {
+    for (Record item : job.getData().getRecords()) {
+        // Option A: Throw JobCancelledException if cancelled or timed out
+        job.getCancellationToken().throwIfCancelled();
+
+        // Option B: Polling check
+        if (job.isCancelled()) {
+            return "PARTIALLY_CANCELLED";
+        }
+
+        processSingleRecord(item);
+    }
+    return "SUCCESS";
+}
+```
 
 ---
 
