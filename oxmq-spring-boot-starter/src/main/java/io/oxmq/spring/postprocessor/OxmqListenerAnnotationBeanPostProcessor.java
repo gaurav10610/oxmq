@@ -132,6 +132,10 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                             public long pollIntervalMs() { return oxListener.pollIntervalMs(); }
                             public int rateLimitMax() { return oxListener.rateLimitMax(); }
                             public long rateLimitDurationMs() { return oxListener.rateLimitDurationMs(); }
+                            public int groupConcurrency() { return 0; }
+                            public String groupConcurrencyString() { return ""; }
+                            public long jobTimeoutMs() { return 0; }
+                            public String jobTimeoutMsString() { return ""; }
                         };
                     }
                     return null;
@@ -233,6 +237,20 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         long lockDurationMs = listener.lockDurationMs();
         long pollIntervalMs = listener.pollIntervalMs();
 
+        int groupConcurrency = listener.groupConcurrency();
+        if (listener.groupConcurrencyString() != null && !listener.groupConcurrencyString().isBlank()) {
+            try {
+                groupConcurrency = Integer.parseInt(resolve(listener.groupConcurrencyString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        long jobTimeoutMs = listener.jobTimeoutMs();
+        if (listener.jobTimeoutMsString() != null && !listener.jobTimeoutMsString().isBlank()) {
+            try {
+                jobTimeoutMs = Long.parseLong(resolve(listener.jobTimeoutMsString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
         method.setAccessible(true);
         Class<?> payloadClass = determinePayloadClass(method);
 
@@ -244,6 +262,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 .serializer(serializer)
                 .metrics(metrics)
                 .concurrency(concurrency)
+                .groupConcurrency(groupConcurrency)
+                .defaultJobTimeoutMs(jobTimeoutMs)
                 .useVirtualThreads(useVirtualThreads)
                 .lockDurationMs(lockDurationMs)
                 .pollIntervalMs(pollIntervalMs);
@@ -310,6 +330,20 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
 
         final HandlerMethod finalDefaultHandler = defaultHandler;
 
+        int groupConcurrency = listener.groupConcurrency();
+        if (listener.groupConcurrencyString() != null && !listener.groupConcurrencyString().isBlank()) {
+            try {
+                groupConcurrency = Integer.parseInt(resolve(listener.groupConcurrencyString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        long jobTimeoutMs = listener.jobTimeoutMs();
+        if (listener.jobTimeoutMsString() != null && !listener.jobTimeoutMsString().isBlank()) {
+            try {
+                jobTimeoutMs = Long.parseLong(resolve(listener.jobTimeoutMsString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
         var builder = OxmqWorker.builder()
                 .prefix(prefix)
                 .queueName(queueName)
@@ -318,6 +352,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 .serializer(serializer)
                 .metrics(metrics)
                 .concurrency(concurrency)
+                .groupConcurrency(groupConcurrency)
+                .defaultJobTimeoutMs(jobTimeoutMs)
                 .useVirtualThreads(useVirtualThreads)
                 .lockDurationMs(listener.lockDurationMs())
                 .pollIntervalMs(listener.pollIntervalMs());
@@ -424,6 +460,32 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
             } catch (NumberFormatException ignored) {}
         }
 
+        int minBatchSize = batchListener.minBatchSize();
+        if (batchListener.minBatchSizeString() != null && !batchListener.minBatchSizeString().isBlank()) {
+            try {
+                minBatchSize = Integer.parseInt(resolve(batchListener.minBatchSizeString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        long batchTimeoutMs = batchListener.batchTimeoutMs();
+        if (batchListener.batchTimeoutMsString() != null && !batchListener.batchTimeoutMsString().isBlank()) {
+            try {
+                batchTimeoutMs = Long.parseLong(resolve(batchListener.batchTimeoutMsString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
+        boolean groupAffinity = batchListener.groupAffinity();
+        if (batchListener.groupAffinityString() != null && !batchListener.groupAffinityString().isBlank()) {
+            groupAffinity = Boolean.parseBoolean(resolve(batchListener.groupAffinityString()));
+        }
+
+        int groupConcurrency = batchListener.groupConcurrency();
+        if (batchListener.groupConcurrencyString() != null && !batchListener.groupConcurrencyString().isBlank()) {
+            try {
+                groupConcurrency = Integer.parseInt(resolve(batchListener.groupConcurrencyString()));
+            } catch (NumberFormatException ignored) {}
+        }
+
         method.setAccessible(true);
         Parameter[] params = method.getParameters();
 
@@ -462,6 +524,10 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 .prefix(prefix)
                 .queueName(queueName)
                 .batchSize(batchSize)
+                .minBatchSize(minBatchSize)
+                .batchTimeoutMs(batchTimeoutMs)
+                .groupAffinity(groupAffinity)
+                .groupConcurrency(groupConcurrency)
                 .concurrency(concurrency)
                 .maxBatchBytes(maxBatchBytes)
                 .connectionManager(connectionManager != null ? connectionManager : new RedisConnectionManager(redisClient))

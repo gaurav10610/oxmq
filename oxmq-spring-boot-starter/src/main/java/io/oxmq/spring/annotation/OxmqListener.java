@@ -61,4 +61,26 @@ public @interface OxmqListener {
      * Sliding window duration in milliseconds.
      */
     long rateLimitDurationMs() default 0;
+
+    /**
+     * Maximum concurrency per virtual group (0 = unlimited).
+     * Ensures fairness so no single tenant starves other tenants.
+     */
+    int groupConcurrency() default 0;
+
+    /**
+     * Property placeholder for groupConcurrency, e.g. {@code "${app.group.concurrency:2}"}.
+     */
+    String groupConcurrencyString() default "";
+
+    /**
+     * Maximum execution time before a running job is interrupted and marked FAILED.
+     * Defaults to 0 (no timeout).
+     */
+    long jobTimeoutMs() default 0;
+
+    /**
+     * Property placeholder for jobTimeoutMs, e.g. {@code "${app.job.timeout:30000}"}.
+     */
+    String jobTimeoutMsString() default "";
 }

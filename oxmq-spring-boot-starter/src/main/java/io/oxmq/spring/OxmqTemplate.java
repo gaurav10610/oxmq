@@ -5,6 +5,7 @@ import io.oxmq.FlowProducer;
 import io.oxmq.OxmqQueue;
 import io.oxmq.QueueEvents;
 import io.oxmq.client.RedisConnectionManager;
+import io.oxmq.lua.ExtensionScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.FlowJob;
@@ -14,6 +15,7 @@ import io.oxmq.model.JobRequest;
 import io.oxmq.model.JobState;
 import io.oxmq.serializer.JobSerializer;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -236,6 +238,83 @@ public class OxmqTemplate {
      */
     public void drain(String queueName) {
         drain(queueName, false);
+    }
+
+    /**
+     * Enqueues a job into a specific virtual queue group (multi-tenant isolation).
+     */
+    public <T> Job<T> sendGroup(String queueName, String groupId, T payload) {
+        return sendGroup(queueName, "default", groupId, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Enqueues a job with a name into a specific virtual queue group.
+     */
+    public <T> Job<T> sendGroup(String queueName, String jobName, String groupId, T payload) {
+        return sendGroup(queueName, jobName, groupId, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Enqueues a job with a name, group, and options into a specific virtual queue group.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> Job<T> sendGroup(String queueName, String jobName, String groupId, T payload, JobOptions options) {
+        JobOptions effectiveOpts = options != null ? options : JobOptions.defaults();
+        if (groupId != null && !groupId.isBlank()) {
+            effectiveOpts.group(groupId);
+        }
+        Class<T> clazz = payload != null ? (Class<T>) payload.getClass() : (Class<T>) Object.class;
+        return getQueue(queueName, clazz).add(jobName, payload, effectiveOpts);
+    }
+
+    /**
+     * Pauses processing for a specific virtual queue group.
+     */
+    public boolean pauseGroup(String queueName, String groupId) {
+        return getQueue(queueName).pauseGroup(groupId);
+    }
+
+    /**
+     * Resumes processing for a paused virtual queue group.
+     */
+    public boolean resumeGroup(String queueName, String groupId) {
+        return getQueue(queueName).resumeGroup(groupId);
+    }
+
+    /**
+     * Deletes all pending jobs in a virtual queue group and cleans up indices.
+     */
+    public long deleteGroup(String queueName, String groupId) {
+        return getQueue(queueName).deleteGroup(groupId);
+    }
+
+    /**
+     * Dynamically sets a cluster-wide rate limit duration on a virtual queue group.
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, Duration duration) {
+        return getQueue(queueName).setGroupRateLimit(groupId, duration);
+    }
+
+    /**
+     * Gets paginated groups by status ('waiting', 'limited', 'maxed', 'paused').
+     */
+    public List<ExtensionScripts.GroupEntry> getGroupsByStatus(String queueName, String status, long start, long stop) {
+        return getQueue(queueName).getGroupsByStatus(status, start, stop);
+    }
+
+    /**
+     * Gets paginated jobs in a virtual group.
+     */
+    public <T> List<Job<T>> getGroupJobs(String queueName, String groupId, long start, long stop) {
+        OxmqQueue<T> q = (OxmqQueue<T>) getQueue(queueName);
+        return q.getGroupJobs(groupId, start, stop);
+    }
+
+    /**
+     * Gets total waiting jobs count for a virtual group.
+     */
+    public long getGroupJobsCount(String queueName, String groupId) {
+        return getQueue(queueName).getGroupJobsCount(groupId);
     }
 
     /**
