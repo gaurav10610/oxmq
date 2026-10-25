@@ -161,6 +161,27 @@ public class OxmqTemplate {
     }
 
     /**
+     * Alias for {@link #send(String, Object)} for BullMQ API parity.
+     */
+    public <T> Job<T> add(String queueName, T payload) {
+        return send(queueName, payload);
+    }
+
+    /**
+     * Alias for {@link #send(String, String, Object)} for BullMQ API parity.
+     */
+    public <T> Job<T> add(String queueName, String jobName, T payload) {
+        return send(queueName, jobName, payload);
+    }
+
+    /**
+     * Alias for {@link #send(String, String, Object, JobOptions)} for BullMQ API parity.
+     */
+    public <T> Job<T> add(String queueName, String jobName, T payload, JobOptions options) {
+        return send(queueName, jobName, payload, options);
+    }
+
+    /**
      * Asynchronously enqueues a job.
      */
     public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload) {
@@ -293,6 +314,56 @@ public class OxmqTemplate {
      */
     public boolean setGroupRateLimit(String queueName, String groupId, Duration duration) {
         return getQueue(queueName).setGroupRateLimit(groupId, duration);
+    }
+
+    /**
+     * Returns remaining TTL (in milliseconds) for a rate-limited virtual group.
+     * Returns 0 if not currently rate-limited.
+     */
+    public long getGroupRateLimitTtl(String queueName, String groupId) {
+        return getQueue(queueName).getGroupRateLimitTtl(groupId);
+    }
+
+    /**
+     * Retrieves unique virtual group identifiers with pagination.
+     */
+    public List<String> getGroups(String queueName, long start, long stop) {
+        return getQueue(queueName).getGroups(start, stop);
+    }
+
+    /**
+     * Retrieves all unique virtual group identifiers in this queue.
+     */
+    public List<String> getGroups(String queueName) {
+        return getQueue(queueName).getGroups();
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across groups.
+     */
+    public java.util.Map<String, Long> getGroupsJobsCount(String queueName, int limit) {
+        return getQueue(queueName).getGroupsJobsCount(limit);
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across all groups.
+     */
+    public java.util.Map<String, Long> getGroupsJobsCount(String queueName) {
+        return getQueue(queueName).getGroupsJobsCount();
+    }
+
+    /**
+     * Self-heals and repairs a desynchronized virtual group stuck in maxed state.
+     */
+    public boolean repairGroup(String queueName, String groupId) {
+        return getQueue(queueName).repairGroup(groupId);
+    }
+
+    /**
+     * Audits and repairs all groups stuck in maxed state.
+     */
+    public int repairMaxedGroups(String queueName) {
+        return getQueue(queueName).repairMaxedGroups();
     }
 
     /**

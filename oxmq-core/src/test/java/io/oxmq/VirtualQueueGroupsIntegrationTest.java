@@ -399,4 +399,87 @@ class VirtualQueueGroupsIntegrationTest {
         assertTrue(queue.removeGroupConcurrency("vip-tenant"));
         assertNull(queue.getGroupConcurrency("vip-tenant"));
     }
+
+    @Test
+    @DisplayName("Query remaining rate-limit TTL for a virtual group")
+    void testGroupRateLimitTtl() {
+        assertEquals(0, queue.getGroupRateLimitTtl("non-limited-group"));
+
+        boolean set = queue.setGroupRateLimit("tenant-rate-limited", Duration.ofSeconds(10));
+        assertTrue(set, "Setting group rate limit should succeed");
+
+        long ttl = queue.getGroupRateLimitTtl("tenant-rate-limited");
+        assertTrue(ttl > 0, "Rate limit TTL should be greater than 0");
+        assertTrue(ttl <= 10_000, "Rate limit TTL should not exceed set duration");
+    }
+
+    @Test
+    @DisplayName("Pagination of virtual groups and global job count breakdown")
+    void testGetGroupsAndGroupsJobsCount() {
+        queue.add("job-1", "d1", JobOptions.builder().group("tenant-alpha").build());
+        queue.add("job-2", "d2", JobOptions.builder().group("tenant-alpha").build());
+        queue.add("job-3", "d3", JobOptions.builder().group("tenant-beta").build());
+        queue.add("job-4", "d4", JobOptions.builder().group("tenant-gamma").build());
+
+        List<String> allGroups = queue.getGroups();
+        assertTrue(allGroups.containsAll(List.of("tenant-alpha", "tenant-beta", "tenant-gamma")));
+
+        List<String> paged = queue.getGroups(0, 1);
+        assertEquals(2, paged.size());
+
+        Map<String, Long> counts = queue.getGroupsJobsCount();
+        assertEquals(2L, counts.get("tenant-alpha"));
+        assertEquals(1L, counts.get("tenant-beta"));
+        assertEquals(1L, counts.get("tenant-gamma"));
+    }
+
+    @Test
+    @DisplayName("Self-healing group repair un-sticks orphaned maxed groups after worker crash")
+    void testRepairGroupAndRepairMaxedGroups() throws Exception {
+        String stuckGroup = "orphaned-tenant";
+        queue.add("orphan-job-1", "d1", JobOptions.builder().group(stuckGroup).build());
+
+        // Simulate abrupt worker node failure:
+        // Group was moved to groups:maxed and active:count was set, but no job actually exists in 'active'
+        var sync = connectionManager.getCommandConnection().sync();
+        String prefix = queue.getQueueKeys().getQualifiedName();
+        sync.sadd(prefix + ":groups:maxed", stuckGroup);
+        sync.hset(prefix + ":groups:active:count", stuckGroup, "1");
+        sync.lrem(prefix + ":groups:waiting", 0, stuckGroup);
+
+        List<ExtensionScripts.GroupEntry> maxedBefore = queue.getGroupsByStatus("maxed", 0, -1);
+        assertTrue(maxedBefore.stream().anyMatch(g -> g.id().equals(stuckGroup)));
+
+        // Perform self-healing group repair
+        boolean repaired = queue.repairGroup(stuckGroup);
+        assertTrue(repaired, "repairGroup should successfully repair the desynchronized group");
+
+        List<ExtensionScripts.GroupEntry> maxedAfter = queue.getGroupsByStatus("maxed", 0, -1);
+        assertFalse(maxedAfter.stream().anyMatch(g -> g.id().equals(stuckGroup)));
+
+        List<ExtensionScripts.GroupEntry> waitingAfter = queue.getGroupsByStatus("waiting", 0, -1);
+        assertTrue(waitingAfter.stream().anyMatch(g -> g.id().equals(stuckGroup)));
+
+        // Verify worker now picks up and finishes the repaired job
+        CountDownLatch latch = new CountDownLatch(1);
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(job -> {
+                    latch.countDown();
+                    return "healed";
+                })
+                .build();
+        worker.start();
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "Repaired job should be processed by worker");
+
+        // Test repairMaxedGroups across multiple desynchronized groups
+        sync.sadd(prefix + ":groups:maxed", "orphaned-tenant-2", "orphaned-tenant-3");
+        sync.hset(prefix + ":groups:active:count", "orphaned-tenant-2", "2");
+        sync.hset(prefix + ":groups:active:count", "orphaned-tenant-3", "1");
+
+        int batchRepaired = queue.repairMaxedGroups();
+        assertEquals(2, batchRepaired, "repairMaxedGroups should repair both orphaned groups");
+    }
 }

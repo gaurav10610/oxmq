@@ -115,7 +115,13 @@ public class OxmqWorker<T> implements Worker<T> {
         this.queueKeys = new QueueKeys(builder.prefix, queueName);
         this.prefix = this.queueKeys.getQualifiedName();
         this.workerId = "worker:" + UUID.randomUUID();
-        this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
+        if (builder.processor != null) {
+            this.processor = builder.processor;
+        } else if (builder.reactiveProcessor != null) {
+            this.processor = job -> awaitReactiveCompletion(job, builder.reactiveProcessor.process(job));
+        } else {
+            throw new NullPointerException("Either processor or reactiveProcessor must be provided");
+        }
         this.payloadClass = builder.payloadClass;
         this.concurrency = Math.max(1, builder.concurrency);
         this.useVirtualThreads = builder.useVirtualThreads;
@@ -363,13 +369,21 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             log.debug("Executing job {} [id: {}] on queue {}", job.getName(), job.getId(), queueName);
-            Object result = processor.process(job);
+            Object rawResult = processor.process(job);
+            Object result = rawResult;
+            if (rawResult instanceof java.util.concurrent.Flow.Publisher<?> publisher) {
+                result = awaitReactiveCompletion(job, publisher);
+            } else if (rawResult instanceof org.reactivestreams.Publisher<?> rsPublisher) {
+                result = awaitReactiveCompletion(job, org.reactivestreams.FlowAdapters.toFlowPublisher(rsPublisher));
+            } else if (rawResult instanceof java.util.concurrent.Future<?> future) {
+                result = awaitFutureCompletion(job, future);
+            }
 
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
             completeJob(job, result, duration);
-            metrics.recordJobCompleted(queueName, duration);
+            metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
             // 2. Interceptor post-processing
@@ -394,7 +408,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 finalError = new io.oxmq.exception.JobTimeoutException(reason, Duration.ofMillis(effectiveTimeoutMs));
             }
             failJob(job, finalError, duration);
-            metrics.recordJobFailed(queueName, duration, finalError.getClass().getSimpleName());
+            metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
             log.info("Job {} [id: {}] was cancelled on queue {}: {}", job.getName(), job.getId(), queueName, reason);
         } catch (io.oxmq.exception.RateLimitException rle) {
             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
@@ -441,7 +455,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
             if (!handledByInterceptor) {
                 failJob(job, finalError, duration);
-                metrics.recordJobFailed(queueName, duration, finalError.getClass().getSimpleName());
+                metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
                 log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, finalError.toString(), finalError);
             }
         } finally {
@@ -451,6 +465,103 @@ public class OxmqWorker<T> implements Worker<T> {
             activeExecutions.remove(job.getId());
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();
+        }
+    }
+
+    private Object awaitFutureCompletion(Job<T> job, java.util.concurrent.Future<?> future) throws Exception {
+        if (future == null) {
+            return null;
+        }
+        job.getCancellationToken().onCancel(reason -> future.cancel(true));
+        try {
+            return future.get();
+        } catch (java.util.concurrent.ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof Exception ex) {
+                throw ex;
+            } else if (cause instanceof Error err) {
+                throw err;
+            } else {
+                throw new RuntimeException(cause);
+            }
+        }
+    }
+
+    private Object awaitReactiveCompletion(Job<T> job, java.util.concurrent.Flow.Publisher<?> publisher) throws Exception {
+        if (publisher == null) {
+            return null;
+        }
+
+        java.util.concurrent.CompletableFuture<Object> completionFuture = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Flow.Subscription> subscriptionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Object> lastItemRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+        publisher.subscribe(new java.util.concurrent.Flow.Subscriber<Object>() {
+            @Override
+            public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) {
+                subscriptionRef.set(subscription);
+                job.getCancellationToken().onCancel(reason -> {
+                    subscription.cancel();
+                    completionFuture.completeExceptionally(
+                            new io.oxmq.exception.JobCancelledException(reason != null ? reason : "Cancelled"));
+                });
+                subscription.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(Object item) {
+                lastItemRef.set(item);
+                if (item instanceof Number num) {
+                    try {
+                        job.updateProgress(num.intValue());
+                    } catch (Exception e) {
+                        log.debug("Failed to update progress from reactive emission for job {}: {}", job.getId(), e.getMessage());
+                    }
+                } else if (item != null) {
+                    try {
+                        if (item instanceof CharSequence seq) {
+                            try {
+                                int p = Integer.parseInt(seq.toString().trim());
+                                job.updateProgress(p);
+                                return;
+                            } catch (NumberFormatException ignored) {}
+                        }
+                        job.updateProgress(job.getProgress(), item);
+                    } catch (Exception e) {
+                        log.debug("Failed to checkpoint reactive payload for job {}: {}", job.getId(), e.getMessage());
+                    }
+                }
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                completionFuture.completeExceptionally(throwable);
+            }
+
+            @Override
+            public void onComplete() {
+                completionFuture.complete(lastItemRef.get());
+            }
+        });
+
+        try {
+            return completionFuture.get();
+        } catch (InterruptedException ie) {
+            java.util.concurrent.Flow.Subscription s = subscriptionRef.get();
+            if (s != null) {
+                s.cancel();
+            }
+            Thread.currentThread().interrupt();
+            throw ie;
+        } catch (java.util.concurrent.ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof Exception ex) {
+                throw ex;
+            } else if (cause instanceof Error err) {
+                throw err;
+            } else {
+                throw new RuntimeException(cause);
+            }
         }
     }
 
@@ -1069,6 +1180,7 @@ public class OxmqWorker<T> implements Worker<T> {
         private RedisClient redisClient;
         private String redisUri;
         private JobProcessor<T, ?> processor;
+        private io.oxmq.reactive.ReactiveJobProcessor<T, ?> reactiveProcessor;
         private Class<T> payloadClass;
         private int concurrency = 20;
         private int groupConcurrency = 0;
@@ -1113,6 +1225,16 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> processor(JobProcessor<T, ?> processor) {
             this.processor = processor;
+            return this;
+        }
+
+        public Builder<T> reactiveProcessor(io.oxmq.reactive.ReactiveJobProcessor<T, ?> reactiveProcessor) {
+            this.reactiveProcessor = reactiveProcessor;
+            return this;
+        }
+
+        public Builder<T> reactiveStreamsProcessor(io.oxmq.reactive.ReactiveStreamProcessor<T, ?> reactiveStreamsProcessor) {
+            this.reactiveProcessor = io.oxmq.reactive.ReactiveJobProcessor.from(reactiveStreamsProcessor);
             return this;
         }
 

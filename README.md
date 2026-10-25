@@ -124,7 +124,10 @@ public class PaymentOrderListener {
 | **Runtime Target** | Java 17+ LTS / Java 21+ Project Loom | Node.js 16+ / TypeScript |
 | **Concurrency Engine** | Project Loom Virtual Threads | Single-Threaded Event Loop |
 | **Virtual Queue Groups** | **Built-in ($O(1)$ fair circular round-robin)** | **Commercial Paywall (BullMQ Pro license)** |
-| **Group Concurrency & Rate Limiting** | **Built-in (`groupConcurrency`, `setGroupRateLimit`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Concurrency & Rate Limiting** | **Built-in (`groupConcurrency`, `setGroupRateLimit`, `getGroupRateLimitTtl`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Global Across-Groups Breakdown & Repair** | **Built-in (`getGroups`, `getGroupsJobsCount`, `repairGroup`, `repairMaxedGroups`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Reactive Stream Processors & Multi-Stage Checkpoints** | **Built-in (`reactiveProcessor`, `Flux`, `Mono`, `Flow.Publisher`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Spring Boot Actuator Group REST Endpoints** | **Built-in (`/actuator/oxmq-groups` GET & POST management)** | None / Custom API development |
 | **Batch Worker with Group Affinity** | **Built-in (homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro)** |
 | **Item-Level Batch Partial Failure** | **Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
 | **In-Flight Hard Timeouts** | **Built-in (`jobTimeout(Duration)`)** | Manual timer wrappers |

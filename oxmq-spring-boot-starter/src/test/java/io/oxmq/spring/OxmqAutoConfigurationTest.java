@@ -25,6 +25,7 @@ public class OxmqAutoConfigurationTest {
             assertThat(context).hasSingleBean(OxmqTemplate.class);
             assertThat(context).hasSingleBean(OxmqListenerAnnotationBeanPostProcessor.class);
             assertThat(context).hasSingleBean(TracingJobInterceptor.class);
+            assertThat(context).hasSingleBean(io.oxmq.spring.actuator.OxmqGroupsEndpoint.class);
         });
     }
 
@@ -40,12 +41,16 @@ public class OxmqAutoConfigurationTest {
         contextRunner.withPropertyValues(
                 "oxmq.redis.uri=redis://custom-host:6380",
                 "oxmq.default-concurrency=100",
-                "oxmq.virtual-threads=false"
+                "oxmq.virtual-threads=false",
+                "oxmq.group-metrics-enabled=true"
         ).run(context -> {
             OxmqProperties props = context.getBean(OxmqProperties.class);
             assertThat(props.getRedis().getUri()).isEqualTo("redis://custom-host:6380");
             assertThat(props.getDefaultConcurrency()).isEqualTo(100);
             assertThat(props.isVirtualThreads()).isFalse();
+            assertThat(props.isGroupMetricsEnabled()).isTrue();
+            OxmqMetrics metrics = context.getBean(OxmqMetrics.class);
+            assertThat(metrics.isGroupMetricsEnabled()).isTrue();
         });
     }
 }

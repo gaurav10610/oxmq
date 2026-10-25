@@ -315,4 +315,35 @@ public class ExtensionScripts {
         }
         return jobIds;
     }
+
+    /**
+     * Self-heals and repairs a desynchronized virtual group stuck in groups:maxed,
+     * or repairs all maxed groups if groupId is null/empty.
+     *
+     * @param connection Redis binary connection
+     * @param keys queue keys helper
+     * @param groupId virtual group identifier, or null/empty for all maxed groups
+     * @param defaultGroupConcurrency default group concurrency cap
+     * @return number of repaired groups
+     */
+    public int repairGroup(StatefulRedisConnection<String, byte[]> connection,
+                           QueueKeys keys, String groupId, int defaultGroupConcurrency) {
+        String[] redisKeys = new String[] {
+            keys.toKey("groups:waiting"),
+            keys.toKey("groups:maxed"),
+            keys.toKey("groups:active:count"),
+            keys.toKey("groups:paused"),
+            keys.toKey("groups:limited"),
+            keys.getKey("active")
+        };
+
+        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] concurrencyBytes = String.valueOf(defaultGroupConcurrency).getBytes(StandardCharsets.UTF_8);
+
+        Long result = scriptManager.evalBinary(connection, ExtensionLuaScript.REPAIR_GROUP,
+                ScriptOutputType.INTEGER, redisKeys, prefixBytes, groupBytes, concurrencyBytes);
+
+        return result != null ? result.intValue() : 0;
+    }
 }

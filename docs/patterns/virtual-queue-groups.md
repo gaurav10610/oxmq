@@ -313,7 +313,185 @@ public void scheduleExport(String tenantId, ExportRequest request) {
 
 ---
 
-## 7. Performance Characteristics
+## 7. Advanced Group Operations & Self-Healing
+
+OxMQ provides a full suite of administrative, diagnostic, and self-healing operations across virtual groups without external tools:
+
+### Rate-Limit Remaining TTL Query
+
+When a group is throttled via `setGroupRateLimit(groupId, duration)`, you can inspect the remaining TTL in milliseconds at any time:
+
+```java
+// Query remaining TTL in milliseconds (returns 0 if not currently rate-limited)
+long remainingTtlMs = queue.getGroupRateLimitTtl("tenant-beta");
+if (remainingTtlMs > 0) {
+    log.info("Tenant beta is throttled for another {} ms", remainingTtlMs);
+}
+```
+
+### Global Groups Pagination & Pending Jobs Breakdown
+
+Easily inspect all active virtual groups and their pending backlog across the entire cluster:
+
+```java
+// Paginate through virtual group identifiers
+List<String> groups = queue.getGroups(0, 49); // First 50 groups
+
+// Retrieve pending job count breakdown map (waiting + prioritized) per group
+Map<String, Long> backlogPerGroup = queue.getGroupsJobsCount(100);
+backlogPerGroup.forEach((groupId, count) -> {
+    log.info("Group {}: {} jobs pending", groupId, count);
+});
+```
+
+### Self-Healing Desynchronized Group Repair (`repairGroup` / `repairMaxedGroups`)
+
+In distributed architectures, if a worker node crashes abruptly or suffers an ungraceful container restart (`kill -9`, node preemption, OOM) while executing a job with group concurrency caps, the group's active count in Redis (`groups:active:count`) and maxed set (`groups:maxed`) can become desynchronized from the actual running workers.
+
+OxMQ introduces an atomic self-healing reconciliation script:
+
+```java
+// Repair a specific group stuck in maxed state:
+boolean repaired = queue.repairGroup("tenant-alpha");
+
+// Or audit and heal all stuck groups cluster-wide:
+int healedCount = queue.repairMaxedGroups();
+log.info("Self-healing audit repaired {} orphaned groups", healedCount);
+```
+
+**How the Self-Healing Script Works:**
+1. Audits `bull:<queue>:active` to determine which jobs are **truly executing** right now on surviving worker nodes.
+2. Cross-references the active job keys (`HGET groupKey`) to reconstruct real per-group active counts.
+3. Overwrites `bull:<queue>:groups:active:count` with the ground-truth active count.
+4. If the actual active count is below the group's concurrency limit, it atomically removes the group from `groups:maxed` and restores it to `groups:waiting` (if not paused or limited), allowing workers to immediately resume processing the tenant's jobs without manual Redis surgery.
+
+---
+
+## 8. Reactive Stream Processors (`Flow.Publisher`, `Flux`, `Mono`)
+
+OxMQ provides native support for Reactive Streams processors via standard Java 9+ `java.util.concurrent.Flow.Publisher` and Reactive Streams (`Publisher`), offering 100% compatibility with **Project Reactor (`Flux`, `Mono`)** and **RxJava 3 (`Flowable`)**.
+
+### Multi-Stage Streaming & Progress Checkpoints
+
+When a reactive processor emits items:
+- Intermediate emissions are automatically recorded as real-time **progress checkpoints** (`job.updateProgress(...)`).
+- The final emitted value becomes the completed job's return value stored in Redis.
+- If the stream emits an error, the job fails with full backoff retry support.
+- If the job is cancelled cluster-wide, the reactive subscription is cooperatively cancelled via `Subscription.cancel()`.
+
+```java
+import io.oxmq.OxmqWorker;
+import reactor.core.publisher.Flux;
+import java.time.Duration;
+
+OxmqWorker<ExportRequest> worker = OxmqWorker.<ExportRequest>builder()
+        .queueName("document-exports")
+        .redisUri("redis://localhost:6379")
+        .reactiveStreamsProcessor(job -> {
+            // Emits progressive pipeline stages
+            return Flux.just(25, 50, 75, 100)
+                    .delayElements(Duration.ofMillis(100))
+                    .doOnCancel(() -> log.info("Export cancelled cooperatively!"));
+        })
+        .onProgress((job, progress) -> {
+            log.info("Job {} progress: {}%", job.getId(), progress);
+        })
+        .build();
+
+worker.start();
+```
+
+### Reactive `@OxmqListener` in Spring Boot
+
+In Spring Boot, listener methods can directly return `Mono<T>`, `Flux<T>`, or `Flow.Publisher<T>`:
+
+```java
+@Component
+public class ReactiveOrderListener {
+
+    @OxmqListener(queue = "reactive-orders", concurrency = 20)
+    public Mono<PaymentReceipt> processOrder(Job<OrderPayload> job) {
+        return paymentGatewayClient.chargeAsync(job.getData())
+                .timeout(Duration.ofSeconds(10))
+                .map(receipt -> new PaymentReceipt(receipt.txnId(), "APPROVED"));
+    }
+}
+```
+
+---
+
+## 9. Spring Boot Actuator Management (`/actuator/oxmq-groups`)
+
+OxMQ auto-registers a production-grade Spring Boot Actuator endpoint at `/actuator/oxmq-groups` when `spring-boot-starter-actuator` is present on the classpath.
+
+### Endpoints Overview
+
+| Method | Endpoint | Query / Body Params | Description |
+|---|---|---|---|
+| `GET` | `/actuator/oxmq-groups` | `queue=orders&limit=50` | Overview of virtual groups & pending job counts breakdown |
+| `GET` | `/actuator/oxmq-groups/{groupId}` | `queue=orders` | Detailed status of a group (waiting jobs, rate-limit TTL, concurrency override) |
+| `POST` | `/actuator/oxmq-groups` | `queue`, `action`, `groupId`, `durationMs`, `concurrency` | Execute administrative actions: `pause`, `resume`, `repair`, `setRateLimit`, `setConcurrency`, `removeConcurrency` |
+
+### REST Examples
+
+#### 1. Query Group Status & Remaining Rate Limit
+```bash
+curl -X GET "http://localhost:8080/actuator/oxmq-groups/tenant-acme?queue=document-exports"
+```
+**Response:**
+```json
+{
+  "queue": "document-exports",
+  "groupId": "tenant-acme",
+  "waitingJobsCount": 42,
+  "rateLimitTtlMs": 3520,
+  "isRateLimited": true,
+  "concurrencyOverride": 5
+}
+```
+
+#### 2. Apply Dynamic Rate Limit
+```bash
+curl -X POST "http://localhost:8080/actuator/oxmq-groups" \
+     -H "Content-Type: application/json" \
+     -d '{"queue":"document-exports","action":"setRateLimit","groupId":"tenant-acme","durationMs":10000}'
+```
+
+#### 3. Self-Healing Repair Stuck Maxed Groups
+```bash
+curl -X POST "http://localhost:8080/actuator/oxmq-groups" \
+     -H "Content-Type: application/json" \
+     -d '{"queue":"document-exports","action":"repair"}'
+```
+
+---
+
+## 10. Opt-in Per-Group Prometheus Telemetry
+
+By default, OxMQ tags metrics by queue (`queue="document-exports"`). To avoid high-cardinality metric explosion in clusters with tens of thousands of dynamic tenants, per-group telemetry tagging is opt-in.
+
+### Enabling Group Metrics in `application.yml`
+
+```yaml
+oxmq:
+  group-metrics-enabled: true
+  metrics-enabled: true
+```
+
+When enabled, Micrometer timers and counters include the `group` tag:
+```
+# HELP oxmq_jobs_completed_total Total number of successfully processed jobs
+# TYPE oxmq_jobs_completed_total counter
+oxmq_jobs_completed_total{queue="document-exports",group="tenant-alpha"} 1284.0
+oxmq_jobs_completed_total{queue="document-exports",group="tenant-beta"} 842.0
+
+# HELP oxmq_job_duration_seconds Execution duration of processed jobs
+oxmq_job_duration_seconds_count{queue="document-exports",group="tenant-alpha"} 1284
+```
+
+---
+
+## 11. Performance Characteristics
 
 - **Enqueue Overhead:** $< 0.4 \text{ ms}$ per job ($O(1)$ hash and list operations).
 - **Fair Rotation Overhead:** Zero difference in throughput compared to flat FIFO queues; circular `RPOPLPUSH` operates entirely within Redis memory.

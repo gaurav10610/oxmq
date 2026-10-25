@@ -328,7 +328,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             if (!hasPartialFailures) {
                 completeBatch(jobs, result, duration);
                 for (Job<T> job : jobs) {
-                    metrics.recordJobCompleted(queueName, duration);
+                    metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
                 }
                 log.debug("Completed batch of {} jobs in {} ms", jobs.size(), duration.toMillis());
             } else {
@@ -337,7 +337,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     if (job.isMarkedFailed()) {
                         Throwable err = job.getBatchFailureReason();
                         failSingleJob(job, err, duration);
-                        metrics.recordJobFailed(queueName, duration, err != null ? err.getClass().getSimpleName() : "Error");
+                        metrics.recordJobFailed(queueName, job.getGroupKey(), duration, err != null ? err.getClass().getSimpleName() : "Error");
                         log.info("Batch job {} [id: {}] marked as failed: {}", job.getName(), job.getId(),
                                 err != null ? err.getMessage() : "Failed");
                     } else {
@@ -347,7 +347,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 if (!successfulJobs.isEmpty()) {
                     completeBatch(successfulJobs, result, duration);
                     for (Job<T> job : successfulJobs) {
-                        metrics.recordJobCompleted(queueName, duration);
+                        metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
                     }
                 }
                 log.info("Completed batch with partial failures on queue {}: {} succeeded, {} failed",
@@ -365,7 +365,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             }
             failBatch(jobs, ie, duration);
             for (Job<T> job : jobs) {
-                metrics.recordJobFailed(queueName, duration, "JobCancelledException");
+                metrics.recordJobFailed(queueName, job.getGroupKey(), duration, "JobCancelledException");
             }
             log.info("Batch of {} jobs was cancelled on queue {}: {}", jobs.size(), queueName, reason);
         } catch (Throwable t) {
@@ -374,7 +374,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
             failBatch(jobs, t, duration);
             for (Job<T> job : jobs) {
-                metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
+                metrics.recordJobFailed(queueName, job.getGroupKey(), duration, t.getClass().getSimpleName());
             }
             log.warn("Batch of {} jobs failed on queue {}: {}", jobs.size(), queueName, t.getMessage(), t);
         } finally {

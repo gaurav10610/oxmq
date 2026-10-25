@@ -22,9 +22,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -920,6 +923,87 @@ public class OxmqQueue<T> implements Queue<T> {
     public boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
         return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
                 duration != null ? duration.toMillis() : 0);
+    }
+
+    @Override
+    public long getGroupRateLimitTtl(String groupId) {
+        if (groupId == null || groupId.isBlank()) return 0;
+        try {
+            var sync = connectionManager.getCommandConnection().sync();
+            String groupsLimitedKey = queueKeys.toKey("groups:limited");
+            Double score = sync.zscore(groupsLimitedKey, groupId);
+            if (score == null) {
+                return 0;
+            }
+            long remaining = (long) (score - System.currentTimeMillis());
+            return Math.max(0, remaining);
+        } catch (Exception e) {
+            log.warn("Failed to get rate limit TTL for group {} in queue {}: {}", groupId, name, e.getMessage());
+            return 0;
+        }
+    }
+
+    @Override
+    public List<String> getGroups(long start, long stop) {
+        try {
+            var sync = connectionManager.getCommandConnection().sync();
+            LinkedHashSet<String> allGroups = new LinkedHashSet<>();
+            List<String> waiting = sync.lrange(queueKeys.toKey("groups:waiting"), 0, -1);
+            if (waiting != null) allGroups.addAll(waiting);
+            Set<String> maxed = sync.smembers(queueKeys.toKey("groups:maxed"));
+            if (maxed != null) allGroups.addAll(maxed);
+            List<String> limited = sync.zrange(queueKeys.toKey("groups:limited"), 0, -1);
+            if (limited != null) allGroups.addAll(limited);
+            Set<String> paused = sync.smembers(queueKeys.toKey("groups:paused"));
+            if (paused != null) allGroups.addAll(paused);
+
+            List<String> list = new ArrayList<>(allGroups);
+            int fromIndex = Math.min((int) Math.max(0, start), list.size());
+            int toIndex = stop < 0 ? list.size() : Math.min((int) (stop + 1), list.size());
+            if (fromIndex >= toIndex) return Collections.emptyList();
+            return list.subList(fromIndex, toIndex);
+        } catch (Exception e) {
+            log.warn("Failed to retrieve groups for queue {}: {}", name, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    @Override
+    public Map<String, Long> getGroupsJobsCount(int limit) {
+        try {
+            int max = limit > 0 ? limit : 1000;
+            List<String> groups = getGroups(0, max - 1);
+            if (groups.isEmpty()) return Collections.emptyMap();
+            var sync = connectionManager.getCommandConnection().sync();
+            Map<String, Long> counts = new LinkedHashMap<>(groups.size());
+            for (String gid : groups) {
+                Long waitLen = sync.llen(queueKeys.toKey("groups:" + gid));
+                Long prioLen = sync.zcard(queueKeys.toKey("groups:" + gid + ":prioritized"));
+                long total = (waitLen != null ? waitLen : 0) + (prioLen != null ? prioLen : 0);
+                counts.put(gid, total);
+            }
+            return counts;
+        } catch (Exception e) {
+            log.warn("Failed to get groups jobs count for queue {}: {}", name, e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
+
+    @Override
+    public Map<String, Long> getGroupsJobsCount() {
+        return getGroupsJobsCount(1000);
+    }
+
+    @Override
+    public boolean repairGroup(String groupId) {
+        if (groupId == null || groupId.isBlank()) return false;
+        int repaired = extensionScripts.repairGroup(connectionManager.getBinaryConnection(), queueKeys, groupId, 1);
+        return repaired > 0;
+    }
+
+    @Override
+    public int repairMaxedGroups() {
+        return extensionScripts.repairGroup(connectionManager.getBinaryConnection(), queueKeys, "", 1);
     }
 
     @Override

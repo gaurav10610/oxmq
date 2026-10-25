@@ -55,6 +55,12 @@ public class OxmqProperties {
     private boolean metricsEnabled = true;
 
     /**
+     * Whether per-group metrics tagging (group=<groupId>) is enabled.
+     * Disabled by default to avoid high-cardinality metric explosion.
+     */
+    private boolean groupMetricsEnabled = false;
+
+    /**
      * W3C OpenTelemetry distributed tracing and MDC propagation configuration.
      */
     private Tracing tracing = new Tracing();
@@ -143,6 +149,14 @@ public class OxmqProperties {
 
     public void setMetricsEnabled(boolean metricsEnabled) {
         this.metricsEnabled = metricsEnabled;
+    }
+
+    public boolean isGroupMetricsEnabled() {
+        return groupMetricsEnabled;
+    }
+
+    public void setGroupMetricsEnabled(boolean groupMetricsEnabled) {
+        this.groupMetricsEnabled = groupMetricsEnabled;
     }
 
     public static class Redis {

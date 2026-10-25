@@ -16,7 +16,8 @@ public enum ExtensionLuaScript {
     DELETE_GROUP("lua/extensions/deleteGroup-1.lua", 6),
     SET_GROUP_RATE_LIMIT("lua/extensions/setGroupRateLimit-1.lua", 3),
     GET_GROUPS_BY_STATUS("lua/extensions/getGroupsByStatus-1.lua", 1),
-    GET_GROUP_JOBS("lua/extensions/getGroupJobs-1.lua", 2);
+    GET_GROUP_JOBS("lua/extensions/getGroupJobs-1.lua", 2),
+    REPAIR_GROUP("lua/extensions/repairGroup-1.lua", 6);
 
     private final String resourcePath;
     private final int numberOfKeys;

@@ -20,6 +20,7 @@ public class OxmqMetrics {
     private final MeterRegistry registry;
     private final ConcurrentMap<String, Timer> durationTimers = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Timer> waitTimeTimers = new ConcurrentHashMap<>();
+    private volatile boolean groupMetricsEnabled = false;
 
     public OxmqMetrics() {
         this(Metrics.globalRegistry);
@@ -27,6 +28,14 @@ public class OxmqMetrics {
 
     public OxmqMetrics(MeterRegistry registry) {
         this.registry = registry != null ? registry : new CompositeMeterRegistry();
+    }
+
+    public boolean isGroupMetricsEnabled() {
+        return groupMetricsEnabled;
+    }
+
+    public void setGroupMetricsEnabled(boolean groupMetricsEnabled) {
+        this.groupMetricsEnabled = groupMetricsEnabled;
     }
 
     public void recordJobEnqueued(String queueName) {
@@ -38,27 +47,62 @@ public class OxmqMetrics {
     }
 
     public void recordJobCompleted(String queueName, Duration duration) {
-        Counter.builder("oxmq.jobs.completed")
-                .description("Total number of successfully processed jobs")
-                .tag("queue", queueName)
-                .register(registry)
-                .increment();
+        recordJobCompleted(queueName, null, duration);
+    }
 
-        if (duration != null) {
-            getOrCreateDurationTimer(queueName).record(duration);
+    public void recordJobCompleted(String queueName, String groupId, Duration duration) {
+        if (groupMetricsEnabled && groupId != null && !groupId.isBlank()) {
+            Counter.builder("oxmq.jobs.completed")
+                    .description("Total number of successfully processed jobs")
+                    .tag("queue", queueName)
+                    .tag("group", groupId)
+                    .register(registry)
+                    .increment();
+
+            if (duration != null) {
+                getOrCreateDurationTimer(queueName, groupId).record(duration);
+            }
+        } else {
+            Counter.builder("oxmq.jobs.completed")
+                    .description("Total number of successfully processed jobs")
+                    .tag("queue", queueName)
+                    .register(registry)
+                    .increment();
+
+            if (duration != null) {
+                getOrCreateDurationTimer(queueName, null).record(duration);
+            }
         }
     }
 
     public void recordJobFailed(String queueName, Duration duration, String errorType) {
-        Counter.builder("oxmq.jobs.failed")
-                .description("Total number of failed jobs")
-                .tag("queue", queueName)
-                .tag("error", errorType != null ? errorType : "Unknown")
-                .register(registry)
-                .increment();
+        recordJobFailed(queueName, null, duration, errorType);
+    }
 
-        if (duration != null) {
-            getOrCreateDurationTimer(queueName).record(duration);
+    public void recordJobFailed(String queueName, String groupId, Duration duration, String errorType) {
+        if (groupMetricsEnabled && groupId != null && !groupId.isBlank()) {
+            Counter.builder("oxmq.jobs.failed")
+                    .description("Total number of failed jobs")
+                    .tag("queue", queueName)
+                    .tag("group", groupId)
+                    .tag("error", errorType != null ? errorType : "Unknown")
+                    .register(registry)
+                    .increment();
+
+            if (duration != null) {
+                getOrCreateDurationTimer(queueName, groupId).record(duration);
+            }
+        } else {
+            Counter.builder("oxmq.jobs.failed")
+                    .description("Total number of failed jobs")
+                    .tag("queue", queueName)
+                    .tag("error", errorType != null ? errorType : "Unknown")
+                    .register(registry)
+                    .increment();
+
+            if (duration != null) {
+                getOrCreateDurationTimer(queueName, null).record(duration);
+            }
         }
     }
 
@@ -105,12 +149,17 @@ public class OxmqMetrics {
                 .register(registry);
     }
 
-    private Timer getOrCreateDurationTimer(String queueName) {
-        return durationTimers.computeIfAbsent(queueName, q -> Timer.builder("oxmq.job.duration")
-                .description("Execution duration of processed jobs")
-                .tag("queue", q)
-                .publishPercentileHistogram()
-                .register(registry));
+    private Timer getOrCreateDurationTimer(String queueName, String groupId) {
+        String key = (groupId != null && groupMetricsEnabled) ? queueName + "::" + groupId : queueName;
+        return durationTimers.computeIfAbsent(key, k -> {
+            var builder = Timer.builder("oxmq.job.duration")
+                    .description("Execution duration of processed jobs")
+                    .tag("queue", queueName);
+            if (groupId != null && groupMetricsEnabled) {
+                builder.tag("group", groupId);
+            }
+            return builder.publishPercentileHistogram().register(registry);
+        });
     }
 
     private Timer getOrCreateWaitTimeTimer(String queueName) {

@@ -439,6 +439,76 @@ public interface Queue<T> extends Closeable {
     }
 
     /**
+     * Returns the remaining time-to-live (in milliseconds) for a rate-limited virtual group.
+     * Returns 0 if the group is not currently rate-limited.
+     *
+     * @param groupId virtual group identifier
+     * @return remaining TTL in milliseconds, or 0 if not limited
+     */
+    default long getGroupRateLimitTtl(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Retrieves unique virtual group identifiers with pagination.
+     *
+     * @param start starting index (0-based)
+     * @param stop ending index (inclusive, or -1 for all)
+     * @return list of group IDs
+     */
+    default List<String> getGroups(long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Retrieves all unique virtual group identifiers in this queue.
+     *
+     * @return list of all group IDs
+     */
+    default List<String> getGroups() {
+        return getGroups(0, -1);
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across groups.
+     *
+     * @param limit maximum number of groups to inspect
+     * @return map of groupId to total pending job count
+     */
+    default java.util.Map<String, Long> getGroupsJobsCount(int limit) {
+        return java.util.Map.of();
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across all groups (default limit 1000).
+     *
+     * @return map of groupId to total pending job count
+     */
+    default java.util.Map<String, Long> getGroupsJobsCount() {
+        return getGroupsJobsCount(1000);
+    }
+
+    /**
+     * Self-heals and repairs a desynchronized virtual group stuck in the maxed state
+     * by reconciling active counts against actual running jobs in the active set.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was repaired
+     */
+    default boolean repairGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Audits and repairs all groups currently in the maxed state.
+     *
+     * @return number of groups repaired
+     */
+    default int repairMaxedGroups() {
+        return 0;
+    }
+
+    /**
      * Retrieves virtual groups by status ('waiting', 'limited', 'maxed', 'paused') with pagination.
      */
     default List<io.oxmq.lua.ExtensionScripts.GroupEntry> getGroupsByStatus(String status, long start, long stop) {
