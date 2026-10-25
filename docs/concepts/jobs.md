@@ -113,6 +113,53 @@ if (state.isCompleted()) {
 
 ---
 
+## Self-Contained Job Mutators & Lifecycle Operations
+
+Mirrored after BullMQ's rich `Job` class API, an OxMQ `Job<T>` returned by `queue.add()` or fetched via `queue.getJob()` is a fully connected, self-contained domain object with direct mutator methods:
+
+```java
+// 1. Dynamic Payload Updating (Mirrors BullMQ job.updateData)
+// Atomically updates payload in Redis while job is queued or active
+job.updateData(new OrderPayload("modified_order_v2"));
+
+// 2. Immediate Promotion of Delayed Jobs (Mirrors BullMQ job.promote)
+// Pulls a scheduled/delayed job out of delayed ZSET and enqueues into wait
+job.promote();
+
+// 3. Dynamic Delay Mutation (Mirrors BullMQ job.changeDelay)
+// Adjusts the remaining scheduled delay in milliseconds
+job.changeDelay(Duration.ofMinutes(15));
+
+// 4. Dynamic Priority Adjustment (Mirrors BullMQ job.changePriority)
+// Modifies execution priority (1 = highest priority)
+job.changePriority(1);
+
+// 5. Explicit Retry of Failed Jobs (Mirrors BullMQ job.retry)
+// Resets failed state and returns job to wait queue
+job.retry();
+
+// 6. Complete Removal from Redis (Mirrors BullMQ job.remove)
+// Atomically purges the job and locks from Redis
+boolean removed = job.remove();
+
+// 7. Clear Job Logs (Mirrors BullMQ job.clearLogs)
+// Flushes the job's append-only execution log list
+boolean logsCleared = job.clearLogs();
+
+// 8. Inspect Parent DAG Dependencies (Mirrors BullMQ job.getDependencies)
+// Returns child dependency status breakdown for workflow parents
+JobDependencies deps = job.getDependencies();
+System.out.println("Pending child jobs: " + deps.unprocessedChildKeys());
+System.out.println("Completed child results: " + deps.processedChildren());
+
+// 9. Inspect Workflow Execution Tree (Mirrors BullMQ job.getFlow)
+// Fetches the entire DAG tree hierarchy rooted at this parent job
+JobNode workflowTree = job.getFlow();
+System.out.println("Total child nodes: " + workflowTree.getChildren().size());
+```
+
+---
+
 ## Request-Reply Synchronization (`waitUntilFinished`)
 
 A producer or controller can await the final result of a background job directly from the `Job` instance:

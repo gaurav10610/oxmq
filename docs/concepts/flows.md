@@ -179,20 +179,40 @@ This guarantees that parent jobs in `WAITING_CHILDREN` will never resolve premat
 
 ## 📊 Inspecting & Managing DAG Dependencies
 
-OxMQ exposes detailed child dependency queries and programmatic management:
+OxMQ exposes detailed child dependency queries, hierarchical tree inspection, and programmatic management:
 
 ```java
-// 1. Query dependency counts breakdown
-JobDependencyCounts counts = queue.getDependencyCounts(parentJobId);
-System.out.println("Processed: " + counts.processed());
-System.out.println("Unprocessed: " + counts.unprocessed());
-System.out.println("Failed: " + counts.failed());
-System.out.println("Ignored: " + counts.ignored());
+// 1. Detailed Child Dependency Breakdown (Mirrors BullMQ job.getDependencies / queue.getDependencies)
+JobDependencies deps = queue.getDependencies(parentJobId);
+System.out.println("Pending child keys: " + deps.unprocessedChildKeys());
+System.out.println("Completed child outputs: " + deps.processedChildren());
+System.out.println("Failed child reasons: " + deps.failedChildren());
+System.out.println("Is DAG complete: " + deps.isComplete());
+System.out.println("Has failures: " + deps.hasFailures());
 
-// 2. Programmatically unlink a child dependency
+// Or directly from the Job instance:
+Job<WorkflowRequest> parentJob = queue.getJob(parentJobId);
+JobDependencies depsFromJob = parentJob.getDependencies();
+
+// 2. Hierarchical Workflow Tree Inspection (Mirrors BullMQ Pro FlowProducer.getFlow / job.getFlow)
+JobNode workflowTree = queue.getFlow(parentJobId); // Default depth: 10
+// Or with custom depth:
+JobNode shallowTree = queue.getFlow(parentJobId, 3);
+
+System.out.println("Root job: " + workflowTree.getJob().getName());
+for (JobNode childNode : workflowTree.getChildren()) {
+    System.out.println("  Child step: " + childNode.getJob().getName() + " -> " + childNode.getJob().getState());
+}
+
+// 3. Dependency Counts Summary
+JobDependencyCounts counts = queue.getDependencyCounts(parentJobId);
+System.out.println("Processed count: " + counts.processed());
+System.out.println("Unprocessed count: " + counts.unprocessed());
+
+// 4. Programmatically unlink a child dependency
 queue.removeChildDependency(parentJobId, "bull:child-queue:child_101");
 
-// 3. Remove all unstarted children of a parent job
+// 5. Remove all unstarted children of a parent job
 queue.removeUnprocessedChildren(parentJobId);
 ```
 

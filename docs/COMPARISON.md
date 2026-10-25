@@ -33,6 +33,10 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Cluster-Wide Job Cancellation** | **Native Built-in (`cancelJob(id, reason)` over Redis `<queue>:control` pub/sub)** | **Manual custom code or BullMQ Pro** |
 | **Resumable State Machines & Checkpointing** | **Native Built-in (`job.checkpoint(step, state)`, skips completed steps on retry)** | Requires manual database state persistence |
 | **Declarative Per-Job-Type Timeouts** | **Native Built-in (`worker.jobTimeout(name, dur)` & `@JobTimeout`)** | Manual application-level timer wrappers |
+| **Hierarchical Flow Tree Inspection** | **Native Built-in (`getFlow`, `job.getFlow`)** | **Commercial Paywall (BullMQ Pro FlowProducer)** |
+| **Granular DAG Dependency Breakdown** | **Native Built-in (`getDependencies`, `job.getDependencies`)** | **Built-in `job.getDependencies`** |
+| **Deduplication Key Query & Early Release** | **Native Built-in (`getDeduplicationJobId`, `removeDeduplicationKey`)** | Built-in `removeDeduplicationKey` |
+| **Self-Contained Connected Job Domain Object** | **Native Built-in (`job.updateData`, `job.promote`, `job.changeDelay`, `job.changePriority`, `job.retry`, `job.remove`, `job.clearLogs`)** | Standard `Job` methods in BullMQ |
 | **Dynamic Runtime Child Spawning in DAGs** | **Native Built-in (`job.addChild` / `job.addChildren`, yields virtual thread to `waiting-children`)** | **Commercial Paywall (BullMQ Pro Flows)** |
 | **Distributed Pub/Sub Control Plane / Relay** | **Native Built-in (`OxmqRelay`, hierarchical wildcards `*` / `>`, retained messages, node leases)** | Requires external NATS / broker / custom pubsub |
 | **Hard Watchdog Execution Timeouts** | **Native Built-in (`jobTimeout(Duration)`)** | Manual application-level timer wrappers |

@@ -4,10 +4,12 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.oxmq.QueueEvents;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -73,6 +75,36 @@ public class Job<T> {
 
     @JsonIgnore
     private transient volatile Throwable batchFailureReason;
+
+    @JsonIgnore
+    private transient Consumer<T> dataUpdater;
+
+    @JsonIgnore
+    private transient Runnable promoter;
+
+    @JsonIgnore
+    private transient Consumer<Duration> delayChanger;
+
+    @JsonIgnore
+    private transient Consumer<Integer> priorityChanger;
+
+    @JsonIgnore
+    private transient Runnable retrier;
+
+    @JsonIgnore
+    private transient Supplier<Boolean> remover;
+
+    @JsonIgnore
+    private transient Supplier<JobState> stateSupplier;
+
+    @JsonIgnore
+    private transient Supplier<JobDependencies> dependenciesSupplier;
+
+    @JsonIgnore
+    private transient Function<Integer, JobNode> flowSupplier;
+
+    @JsonIgnore
+    private transient Supplier<Boolean> logCleaner;
 
     public Job() {}
 
@@ -325,6 +357,13 @@ public class Job<T> {
     }
 
     public JobState getState() {
+        if (stateSupplier != null) {
+            JobState fetched = stateSupplier.get();
+            if (fetched != null) {
+                this.state = fetched;
+                return fetched;
+            }
+        }
         return state;
     }
 
@@ -531,6 +570,150 @@ public class Job<T> {
         if (child != null) {
             addChildren(java.util.List.of(child));
         }
+    }
+
+    public void setDataUpdater(Consumer<T> dataUpdater) {
+        this.dataUpdater = dataUpdater;
+    }
+
+    /**
+     * Updates the underlying job payload in Redis and in-memory.
+     * Mirrors BullMQ's job.updateData(data).
+     *
+     * @param data new payload data
+     */
+    public void updateData(T data) {
+        this.data = data;
+        if (dataUpdater != null) {
+            dataUpdater.accept(data);
+        }
+    }
+
+    public void setPromoter(Runnable promoter) {
+        this.promoter = promoter;
+    }
+
+    /**
+     * Promotes this delayed job to waiting state so it can be processed immediately.
+     * Mirrors BullMQ's job.promote().
+     */
+    public void promote() {
+        if (promoter != null) {
+            promoter.run();
+        }
+    }
+
+    public void setDelayChanger(Consumer<Duration> delayChanger) {
+        this.delayChanger = delayChanger;
+    }
+
+    /**
+     * Changes the delay for this job in Redis.
+     * Mirrors BullMQ's job.changeDelay(delay).
+     */
+    public void changeDelay(Duration delay) {
+        if (delayChanger != null && delay != null) {
+            delayChanger.accept(delay);
+        }
+    }
+
+    public void setPriorityChanger(Consumer<Integer> priorityChanger) {
+        this.priorityChanger = priorityChanger;
+    }
+
+    /**
+     * Changes the priority for this job in Redis.
+     * Mirrors BullMQ's job.changePriority(priority).
+     */
+    public void changePriority(int priority) {
+        if (priorityChanger != null) {
+            priorityChanger.accept(priority);
+        }
+    }
+
+    public void setRetrier(Runnable retrier) {
+        this.retrier = retrier;
+    }
+
+    /**
+     * Retries this job from failed or completed state.
+     * Mirrors BullMQ's job.retry().
+     */
+    public void retry() {
+        if (retrier != null) {
+            retrier.run();
+        }
+    }
+
+    public void setRemover(Supplier<Boolean> remover) {
+        this.remover = remover;
+    }
+
+    /**
+     * Completely removes this job from Redis.
+     * Mirrors BullMQ's job.remove().
+     */
+    public boolean remove() {
+        if (remover != null) {
+            return Boolean.TRUE.equals(remover.get());
+        }
+        return false;
+    }
+
+    public void setStateSupplier(Supplier<JobState> stateSupplier) {
+        this.stateSupplier = stateSupplier;
+    }
+
+    public void setDependenciesSupplier(Supplier<JobDependencies> dependenciesSupplier) {
+        this.dependenciesSupplier = dependenciesSupplier;
+    }
+
+    /**
+     * Retrieves child dependency breakdown (unprocessed, processed, failed) for a parent job in a DAG flow.
+     * Mirrors BullMQ's job.getDependencies().
+     */
+    public JobDependencies getDependencies() {
+        if (dependenciesSupplier != null) {
+            return dependenciesSupplier.get();
+        }
+        return new JobDependencies(id, List.of(), Map.of(), Map.of());
+    }
+
+    public void setFlowSupplier(Function<Integer, JobNode> flowSupplier) {
+        this.flowSupplier = flowSupplier;
+    }
+
+    /**
+     * Retrieves the full workflow tree starting from this job as root.
+     * Mirrors BullMQ's FlowProducer.getFlow().
+     */
+    public JobNode getFlow() {
+        return getFlow(10);
+    }
+
+    /**
+     * Retrieves the workflow tree starting from this job as root up to a max depth.
+     */
+    public JobNode getFlow(int maxDepth) {
+        if (flowSupplier != null) {
+            return flowSupplier.apply(maxDepth);
+        }
+        return null;
+    }
+
+    public void setLogCleaner(Supplier<Boolean> logCleaner) {
+        this.logCleaner = logCleaner;
+    }
+
+    /**
+     * Clears all log entries for this job in Redis.
+     * Mirrors BullMQ's job.clearLogs().
+     */
+    public boolean clearLogs() {
+        if (logCleaner != null) {
+            return Boolean.TRUE.equals(logCleaner.get());
+        }
+        return false;
     }
 
     @Override

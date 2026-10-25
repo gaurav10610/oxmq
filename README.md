@@ -130,6 +130,10 @@ public class PaymentOrderListener {
 | **Spring Boot Actuator Group REST Endpoints** | **Built-in (`/actuator/oxmq-groups` GET & POST management)** | None / Custom API development |
 | **Batch Worker with Group Affinity** | **Built-in (homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro)** |
 | **Item-Level Batch Partial Failure** | **Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Hierarchical Flow Tree Inspection** | **Built-in (`getFlow`, `job.getFlow`)** | **Commercial Paywall (BullMQ Pro FlowProducer)** |
+| **Granular DAG Dependency Breakdown** | **Built-in (`getDependencies`, `job.getDependencies`)** | **Built-in `job.getDependencies`** |
+| **Deduplication Key Query & Early Release** | **Built-in (`getDeduplicationJobId`, `removeDeduplicationKey`)** | Built-in `removeDeduplicationKey` |
+| **Connected Job Domain Mutators** | **Built-in (`job.updateData`, `job.promote`, `job.changeDelay`, `job.retry`, `job.remove`, `job.clearLogs`)** | Standard `Job` methods in BullMQ |
 | **In-Flight Hard Timeouts** | **Built-in (`jobTimeout(Duration)`)** | Manual timer wrappers |
 | **Transactional Outbox Engine** | **Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) |
 | **Batch Dequeue** | Native atomic batch dequeue (`OxmqBatchWorker`) | Single-job polling only |

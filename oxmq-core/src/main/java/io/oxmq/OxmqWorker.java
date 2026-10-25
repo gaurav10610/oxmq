@@ -25,10 +25,12 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -825,6 +827,44 @@ public class OxmqWorker<T> implements Worker<T> {
                 throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
             }
             throw new io.oxmq.exception.WaitingChildrenException();
+        });
+
+        job.setDataUpdater(newData -> {
+            try {
+                String serialized = serializer.serialize(newData);
+                bullScripts.updateData(connectionManager.getBinaryConnection(), queueKeys, jobId, serialized);
+            } catch (Exception e) {
+                log.warn("Failed to update data for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+            }
+        });
+
+        job.setDependenciesSupplier(() -> {
+            try {
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                String jobKey = queueKeys.toJobKey(jobId);
+                Set<String> unprocessed = sync.smembers(jobKey + ":dependencies");
+                Map<String, String> processed = sync.hgetall(jobKey + ":processed");
+                Map<String, String> failed = sync.hgetall(jobKey + ":failed");
+                return new io.oxmq.model.JobDependencies(
+                        jobId,
+                        unprocessed != null ? new ArrayList<>(unprocessed) : Collections.emptyList(),
+                        processed != null ? processed : Collections.emptyMap(),
+                        failed != null ? failed : Collections.emptyMap()
+                );
+            } catch (Exception e) {
+                return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+            }
+        });
+
+        job.setLogCleaner(() -> {
+            try {
+                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                Long del = sync.del(queueKeys.toJobLogsKey(jobId));
+                return del != null && del > 0;
+            } catch (Exception e) {
+                log.warn("Failed to clear logs for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                return false;
+            }
         });
 
         return job;

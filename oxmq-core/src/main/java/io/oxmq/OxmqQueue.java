@@ -256,6 +256,7 @@ public class OxmqQueue<T> implements Queue<T> {
         Job<T> job = new Job<>(jobId, jobName, data, options);
         job.setQueueName(name);
         job.setTimestamp(now);
+        wireJobLifecycle(job);
         return job;
     }
 
@@ -347,7 +348,24 @@ public class OxmqQueue<T> implements Queue<T> {
             return Map.of();
         });
 
+        wireJobLifecycle(job);
         return job;
+    }
+
+    private void wireJobLifecycle(Job<T> job) {
+        if (job == null) return;
+        job.setDataUpdater(newData -> updateData(job.getId(), newData));
+        job.setPromoter(() -> promote(job.getId()));
+        job.setDelayChanger(delay -> changeDelay(job.getId(), delay));
+        job.setPriorityChanger(priority -> changePriority(job.getId(), priority));
+        job.setRetrier(() -> retry(job.getId()));
+        job.setRemover(() -> remove(job.getId()));
+        job.setStateSupplier(() -> JobState.fromBullMqState(getState(job.getId())));
+        job.setDependenciesSupplier(() -> getDependencies(job.getId()));
+        job.setFlowSupplier(maxDepth -> getFlow(job.getId(), maxDepth));
+        job.setLogCleaner(() -> clearJobLogs(job.getId()));
+        job.setLogAppender(msg -> addJobLog(job.getId(), msg));
+        job.setProgressUpdater((p, payload) -> updateJobProgress(job.getId(), p));
     }
 
     @Override
@@ -522,6 +540,51 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     @Override
+    public boolean clearJobLogs(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return false;
+        }
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            Long del = sync.del(queueKeys.toJobLogsKey(jobId));
+            return del != null && del > 0;
+        } catch (Exception e) {
+            log.warn("Failed to clear logs for job {} in queue {}: {}", jobId, name, e.getMessage());
+            return false;
+        }
+    }
+
+    @Override
+    public long addJobLog(String jobId, String logRow) {
+        return addJobLog(jobId, logRow, 0);
+    }
+
+    @Override
+    public long addJobLog(String jobId, String logRow, int keepLogs) {
+        if (jobId == null || jobId.isBlank() || logRow == null) {
+            return 0L;
+        }
+        try {
+            return bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, logRow, keepLogs);
+        } catch (Exception e) {
+            log.warn("Failed to append log for job {} in queue {}: {}", jobId, name, e.getMessage());
+            return 0L;
+        }
+    }
+
+    @Override
+    public void updateJobProgress(String jobId, int progress) {
+        if (jobId == null || jobId.isBlank()) {
+            return;
+        }
+        try {
+            bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(progress));
+        } catch (Exception e) {
+            log.warn("Failed to update progress for job {} in queue {}: {}", jobId, name, e.getMessage());
+        }
+    }
+
+    @Override
     public boolean removeDeduplicationKey(String deduplicationId) {
         if (deduplicationId == null || deduplicationId.isBlank()) {
             return false;
@@ -529,6 +592,20 @@ public class OxmqQueue<T> implements Queue<T> {
         RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
         Long del = sync.del(queueKeys.toKey("de:" + deduplicationId));
         return del != null && del > 0;
+    }
+
+    @Override
+    public String getDeduplicationJobId(String deduplicationId) {
+        if (deduplicationId == null || deduplicationId.isBlank()) {
+            return null;
+        }
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            return sync.get(queueKeys.toKey("de:" + deduplicationId));
+        } catch (Exception e) {
+            log.warn("Failed to get deduplication job ID for key {} in queue {}: {}", deduplicationId, name, e.getMessage());
+            return null;
+        }
     }
 
     @Override
@@ -627,6 +704,46 @@ public class OxmqQueue<T> implements Queue<T> {
     @Override
     public io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId) {
         return backend.getDependencyCounts(jobId);
+    }
+
+    @Override
+    public io.oxmq.model.JobDependencies getDependencies(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+        }
+        try {
+            var sync = connectionManager.getCommandConnection().sync();
+            String jobKey = queueKeys.toJobKey(jobId);
+            Set<String> unprocessed = sync.smembers(jobKey + ":dependencies");
+            Map<String, String> processed = sync.hgetall(jobKey + ":processed");
+            Map<String, String> failed = sync.hgetall(jobKey + ":failed");
+
+            return new io.oxmq.model.JobDependencies(
+                    jobId,
+                    unprocessed != null ? new ArrayList<>(unprocessed) : Collections.emptyList(),
+                    processed != null ? processed : Collections.emptyMap(),
+                    failed != null ? failed : Collections.emptyMap()
+            );
+        } catch (Exception e) {
+            log.warn("Failed to get dependencies for job {} in queue {}: {}", jobId, name, e.getMessage());
+            return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+        }
+    }
+
+    @Override
+    public io.oxmq.model.JobNode getFlow(String jobId) {
+        return getFlow(jobId, 10);
+    }
+
+    @Override
+    public io.oxmq.model.JobNode getFlow(String jobId, int maxDepth) {
+        try {
+            FlowProducer flowProducer = new FlowProducer(connectionManager, scriptManager, serializer, queueKeys.getPrefix());
+            return flowProducer.getFlow(name, jobId, maxDepth);
+        } catch (Exception e) {
+            log.warn("Failed to get flow for job {} in queue {}: {}", jobId, name, e.getMessage());
+            return null;
+        }
     }
 
     @Override

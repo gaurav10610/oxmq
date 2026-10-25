@@ -459,10 +459,74 @@ public class OxmqTemplate {
     }
 
     /**
+     * Retrieves the Job ID that currently holds the active deduplication key lock.
+     */
+    public String getDeduplicationJobId(String queueName, String deduplicationId) {
+        return getQueue(queueName).getDeduplicationJobId(deduplicationId);
+    }
+
+    /**
+     * Clears a deduplication key lock in Redis.
+     */
+    public boolean removeDeduplicationKey(String queueName, String deduplicationId) {
+        return getQueue(queueName).removeDeduplicationKey(deduplicationId);
+    }
+
+    /**
+     * Clears all log entries for a job in Redis.
+     */
+    public boolean clearJobLogs(String queueName, String jobId) {
+        return getQueue(queueName).clearJobLogs(jobId);
+    }
+
+    /**
+     * Appends a log line to a job in Redis.
+     */
+    public long addJobLog(String queueName, String jobId, String logRow) {
+        return getQueue(queueName).addJobLog(jobId, logRow);
+    }
+
+    /**
+     * Appends a log line to a job in Redis with optional log retention limit.
+     */
+    public long addJobLog(String queueName, String jobId, String logRow, int keepLogs) {
+        return getQueue(queueName).addJobLog(jobId, logRow, keepLogs);
+    }
+
+    /**
+     * Updates the progress percentage of a job in Redis.
+     */
+    public void updateJobProgress(String queueName, String jobId, int progress) {
+        getQueue(queueName).updateJobProgress(jobId, progress);
+    }
+
+    /**
      * Retrieves child dependency counts for a parent job in a DAG workflow.
      */
     public io.oxmq.model.JobDependencyCounts getDependencyCounts(String queueName, String jobId) {
         return getQueue(queueName).getDependencyCounts(jobId);
+    }
+
+    /**
+     * Retrieves detailed child dependency breakdown (unprocessed keys, processed results, failed reasons)
+     * for a parent job in a workflow DAG.
+     */
+    public io.oxmq.model.JobDependencies getDependencies(String queueName, String jobId) {
+        return getQueue(queueName).getDependencies(jobId);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree starting from a parent job as root.
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId) {
+        return getQueue(queueName).getFlow(jobId);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree with a maximum recursion depth.
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId, int maxDepth) {
+        return getQueue(queueName).getFlow(jobId, maxDepth);
     }
 
     /**

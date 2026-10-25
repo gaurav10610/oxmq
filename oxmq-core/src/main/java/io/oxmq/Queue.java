@@ -129,9 +129,65 @@ public interface Queue<T> extends Closeable {
     List<String> getJobLogs(String jobId, int start, int end);
 
     /**
+     * Clears all log entries for a job in Redis.
+     *
+     * @param jobId job identifier
+     * @return true if logs were cleared
+     */
+    default boolean clearJobLogs(String jobId) {
+        return false;
+    }
+
+    /**
+     * Updates the progress percentage of an active job in Redis.
+     * Mirrors BullMQ's queue.updateJobProgress(jobId, progress).
+     *
+     * @param jobId    job identifier
+     * @param progress progress integer (0-100)
+     */
+    default void updateJobProgress(String jobId, int progress) {
+    }
+
+    /**
+     * Appends a log line to a job.
+     * Mirrors BullMQ's queue.addJobLog(jobId, logRow).
+     *
+     * @param jobId  job identifier
+     * @param logRow log message string
+     * @return total number of logs stored for this job
+     */
+    default long addJobLog(String jobId, String logRow) {
+        return addJobLog(jobId, logRow, 0);
+    }
+
+    /**
+     * Appends a log line to a job with optional max limit (keepLogs).
+     * Mirrors BullMQ's queue.addJobLog(jobId, logRow, keepLogs).
+     *
+     * @param jobId    job identifier
+     * @param logRow   log message string
+     * @param keepLogs maximum number of logs to retain (0 = unlimited)
+     * @return total number of logs stored for this job
+     */
+    default long addJobLog(String jobId, String logRow, int keepLogs) {
+        return 0L;
+    }
+
+    /**
      * Clears a deduplication key, allowing a new job with the same deduplication ID to be added.
      */
     boolean removeDeduplicationKey(String deduplicationId);
+
+    /**
+     * Retrieves the Job ID that currently holds the active deduplication key lock,
+     * or null if the deduplication key is not currently held.
+     *
+     * @param deduplicationId custom deduplication identifier
+     * @return job ID holding the deduplication key, or null
+     */
+    default String getDeduplicationJobId(String deduplicationId) {
+        return null;
+    }
 
     /**
      * Upserts a recurring job scheduler (cron or fixed interval).
@@ -187,6 +243,40 @@ public interface Queue<T> extends Closeable {
      * Retrieves child dependency counts for a parent job in a DAG workflow.
      */
     io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId);
+
+    /**
+     * Retrieves detailed dependency breakdown (unprocessed child keys, processed results,
+     * and failed reasons) for a parent job in a workflow DAG.
+     * Mirrors BullMQ's job.getDependencies().
+     *
+     * @param jobId parent job identifier
+     * @return JobDependencies record containing child keys and results
+     */
+    default io.oxmq.model.JobDependencies getDependencies(String jobId) {
+        return new io.oxmq.model.JobDependencies(jobId, java.util.List.of(), java.util.Map.of(), java.util.Map.of());
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree starting from this job as root.
+     * Mirrors BullMQ's FlowProducer.getFlow().
+     *
+     * @param jobId parent/root job identifier
+     * @return populated JobNode tree with children dependencies, or null
+     */
+    default io.oxmq.model.JobNode getFlow(String jobId) {
+        return getFlow(jobId, 10);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree with a maximum recursion depth.
+     *
+     * @param jobId parent/root job identifier
+     * @param maxDepth maximum recursion depth
+     * @return populated JobNode tree with children dependencies, or null
+     */
+    default io.oxmq.model.JobNode getFlow(String jobId, int maxDepth) {
+        return null;
+    }
 
     /**
      * Removes a child dependency from its parent job.
