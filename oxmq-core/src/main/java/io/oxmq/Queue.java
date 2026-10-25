@@ -397,6 +397,75 @@ public interface Queue<T> extends Closeable {
      */
     boolean removeRateLimitKey();
 
+    /**
+     * Pauses processing for a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was paused, false if already paused
+     */
+    default boolean pauseGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Resumes processing for a paused virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was resumed, false if not paused
+     */
+    default boolean resumeGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Deletes all pending jobs in a virtual group and cleans up group indices.
+     *
+     * @param groupId virtual group identifier
+     * @return number of deleted pending jobs
+     */
+    default long deleteGroup(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Applies a temporary rate-limit / throttling window to a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @param duration duration of the rate limit
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
+        return false;
+    }
+
+    /**
+     * Retrieves virtual groups by status ('waiting', 'limited', 'maxed', 'paused') with pagination.
+     */
+    default List<io.oxmq.lua.ExtensionScripts.GroupEntry> getGroupsByStatus(String status, long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Retrieves paginated jobs belonging to a virtual group.
+     */
+    default List<Job<T>> getGroupJobs(String groupId, long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Returns total pending jobs in a virtual group.
+     */
+    default long getGroupJobsCount(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Returns active (currently processing) jobs count for a virtual group.
+     */
+    default long getGroupActiveCount(String groupId) {
+        return 0;
+    }
+
     @Override
     void close();
 }

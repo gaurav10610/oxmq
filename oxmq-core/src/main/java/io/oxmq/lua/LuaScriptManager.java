@@ -25,9 +25,33 @@ public class LuaScriptManager {
 
     private final Map<LuaScript, String> scriptSources = new EnumMap<>(LuaScript.class);
     private final Map<LuaScript, String> scriptShas = new EnumMap<>(LuaScript.class);
+    private final Map<ExtensionLuaScript, String> extensionSources = new EnumMap<>(ExtensionLuaScript.class);
+    private final Map<ExtensionLuaScript, String> extensionShas = new EnumMap<>(ExtensionLuaScript.class);
 
     public LuaScriptManager() {
         loadAllScripts();
+        loadAllExtensionScripts();
+    }
+
+    private void loadAllExtensionScripts() {
+        for (ExtensionLuaScript script : ExtensionLuaScript.values()) {
+            try (InputStream in = getClass().getClassLoader().getResourceAsStream(script.getResourcePath())) {
+                if (in == null) {
+                    throw new IllegalStateException("Missing extension Lua script resource: " + script.getResourcePath());
+                }
+                String source = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))
+                        .lines().collect(Collectors.joining("\n"));
+                extensionSources.put(script, source);
+
+                MessageDigest sha1 = MessageDigest.getInstance("SHA-1");
+                byte[] hash = sha1.digest(source.getBytes(StandardCharsets.UTF_8));
+                String sha = HexFormat.of().formatHex(hash);
+                extensionShas.put(script, sha);
+                log.debug("Loaded extension script {} with SHA-1: {}", script.name(), sha);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to load extension script: " + script.getResourcePath(), e);
+            }
+        }
     }
 
     private void loadAllScripts() {
@@ -105,5 +129,61 @@ public class LuaScriptManager {
 
     public String getSha(LuaScript script) {
         return scriptShas.get(script);
+    }
+
+    /**
+     * Executes an extension Lua script using EVALSHA with automatic fallback on NOSCRIPT.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T eval(StatefulRedisConnection<String, String> connection, ExtensionLuaScript script,
+                      ScriptOutputType outputType, String[] keys, String... args) {
+        String sha = extensionShas.get(script);
+        String source = extensionSources.get(script);
+        RedisCommands<String, String> commands = connection.sync();
+
+        try {
+            return (T) commands.evalsha(sha, outputType, keys, args);
+        } catch (RedisException e) {
+            if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                log.debug("Extension script {} SHA {} not cached in Redis, falling back to EVAL", script.name(), sha);
+                try {
+                    commands.scriptLoad(source);
+                } catch (Exception ignored) {}
+                return (T) commands.eval(source, outputType, keys, args);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * Executes an extension Lua script with binary arguments using EVALSHA with automatic fallback on NOSCRIPT.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> T evalBinary(StatefulRedisConnection<String, byte[]> connection, ExtensionLuaScript script,
+                            ScriptOutputType outputType, String[] keys, byte[]... args) {
+        String sha = extensionShas.get(script);
+        String source = extensionSources.get(script);
+        RedisCommands<String, byte[]> commands = connection.sync();
+
+        try {
+            return (T) commands.evalsha(sha, outputType, keys, args);
+        } catch (RedisException e) {
+            if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                log.debug("Extension script {} SHA {} not cached in Redis, falling back to EVAL", script.name(), sha);
+                try {
+                    commands.scriptLoad(source.getBytes(StandardCharsets.UTF_8));
+                } catch (Exception ignored) {}
+                return (T) commands.eval(source, outputType, keys, args);
+            }
+            throw e;
+        }
+    }
+
+    public String getSource(ExtensionLuaScript script) {
+        return extensionSources.get(script);
+    }
+
+    public String getSha(ExtensionLuaScript script) {
+        return extensionShas.get(script);
     }
 }

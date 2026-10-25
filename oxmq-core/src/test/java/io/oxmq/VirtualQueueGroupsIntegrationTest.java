@@ -1,0 +1,324 @@
+package io.oxmq;
+
+import io.oxmq.client.RedisConnectionManager;
+import io.oxmq.exception.GroupMaxSizeExceededException;
+import io.oxmq.lua.ExtensionScripts;
+import io.oxmq.model.GroupOptions;
+import io.oxmq.model.Job;
+import io.oxmq.model.JobOptions;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@DisplayName("Virtual Queue Groups & Fair Multi-Tenant Scheduling Integration Tests")
+class VirtualQueueGroupsIntegrationTest {
+
+    private String queueName;
+    private RedisConnectionManager connectionManager;
+    private OxmqQueue<String> queue;
+    private OxmqWorker<String> worker;
+    private OxmqBatchWorker<String> batchWorker;
+
+    @BeforeEach
+    void setUp() {
+        queueName = "groups-queue-" + UUID.randomUUID();
+        connectionManager = new RedisConnectionManager("redis://localhost:6379");
+        queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        if (worker != null) {
+            try { worker.close(); } catch (Exception ignored) {}
+        }
+        if (batchWorker != null) {
+            try { batchWorker.close(); } catch (Exception ignored) {}
+        }
+        if (queue != null) {
+            try { queue.obliterate(); } catch (Exception ignored) {}
+            try { queue.close(); } catch (Exception ignored) {}
+        }
+        if (connectionManager != null) {
+            try { connectionManager.close(); } catch (Exception ignored) {}
+        }
+    }
+
+    @Test
+    @DisplayName("Fair round-robin scheduling interleaves jobs across virtual groups without starvation")
+    void testFairRoundRobinSchedulingInterleavesTenants() throws Exception {
+        int tenantAJobs = 10;
+        int tenantBJobs = 5;
+        int totalJobs = tenantAJobs + tenantBJobs;
+
+        List<String> executionOrder = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch latch = new CountDownLatch(totalJobs);
+
+        for (int i = 0; i < tenantAJobs; i++) {
+            queue.add("job-A-" + i, "data-A-" + i, JobOptions.builder().group("tenant-A").build());
+        }
+        for (int i = 0; i < tenantBJobs; i++) {
+            queue.add("job-B-" + i, "data-B-" + i, JobOptions.builder().group("tenant-B").build());
+        }
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(1)
+                .processor(job -> {
+                    executionOrder.add(job.getGroupKey());
+                    latch.countDown();
+                    return "ok";
+                })
+                .build();
+
+        worker.start();
+        assertTrue(latch.await(10, TimeUnit.SECONDS), "All jobs should complete within 10s");
+
+        assertEquals(totalJobs, executionOrder.size());
+
+        // Verify interleaving: Tenant B jobs should not wait until all Tenant A jobs are done
+        int firstTenantBIndex = executionOrder.indexOf("tenant-B");
+        assertTrue(firstTenantBIndex < 3, "Tenant B should be processed early via round-robin, was at index: " + firstTenantBIndex);
+
+        // Verify fair rotation (no group dominates completely)
+        boolean hasAlternation = false;
+        for (int i = 0; i < executionOrder.size() - 1; i++) {
+            if (!executionOrder.get(i).equals(executionOrder.get(i + 1))) {
+                hasAlternation = true;
+                break;
+            }
+        }
+        assertTrue(hasAlternation, "Jobs from different tenants must alternate fairly");
+    }
+
+    @Test
+    @DisplayName("Per-group concurrency cap restricts active jobs per tenant even under high overall concurrency")
+    void testGroupConcurrencyLimitsSimultaneousTenantJobs() throws Exception {
+        int totalTenantJobs = 8;
+        int maxGroupConcurrency = 2;
+        AtomicInteger activeConcurrentForTenant = new AtomicInteger(0);
+        AtomicInteger maxObservedConcurrent = new AtomicInteger(0);
+        CountDownLatch latch = new CountDownLatch(totalTenantJobs);
+
+        for (int i = 0; i < totalTenantJobs; i++) {
+            queue.add("job-tenant-C-" + i, "payload", JobOptions.builder().group("tenant-C").build());
+        }
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(10) // Overall worker can take up to 10 jobs
+                .groupConcurrency(maxGroupConcurrency) // But tenant-C can run at most 2 at a time!
+                .processor(job -> {
+                    int current = activeConcurrentForTenant.incrementAndGet();
+                    maxObservedConcurrent.accumulateAndGet(current, Math::max);
+                    try {
+                        Thread.sleep(150); // Simulate processing time
+                    } finally {
+                        activeConcurrentForTenant.decrementAndGet();
+                        latch.countDown();
+                    }
+                    return "ok";
+                })
+                .build();
+
+        worker.start();
+        assertTrue(latch.await(10, TimeUnit.SECONDS), "All jobs should finish within 10s");
+
+        assertEquals(totalTenantJobs, latch.getCount() == 0 ? totalTenantJobs : 0);
+        assertTrue(maxObservedConcurrent.get() <= maxGroupConcurrency,
+                "Observed simultaneous jobs (" + maxObservedConcurrent.get() + ") must not exceed groupConcurrency (" + maxGroupConcurrency + ")");
+    }
+
+    @Test
+    @DisplayName("Group maxSize bounds backlog and throws GroupMaxSizeExceededException when exceeded")
+    void testGroupMaxSizeEnforcementThrowsException() {
+        GroupOptions boundedGroup = GroupOptions.builder()
+                .id("tenant-bounded")
+                .maxSize(3)
+                .build();
+
+        // Adding up to maxSize (3) should succeed
+        assertDoesNotThrow(() -> queue.add("job-1", "d1", JobOptions.builder().group(boundedGroup).build()));
+        assertDoesNotThrow(() -> queue.add("job-2", "d2", JobOptions.builder().group(boundedGroup).build()));
+        assertDoesNotThrow(() -> queue.add("job-3", "d3", JobOptions.builder().group(boundedGroup).build()));
+
+        // Adding 4th job must fail with GroupMaxSizeExceededException
+        GroupMaxSizeExceededException ex = assertThrows(GroupMaxSizeExceededException.class, () -> {
+            queue.add("job-4", "d4", JobOptions.builder().group(boundedGroup).build());
+        });
+
+        assertEquals("tenant-bounded", ex.getGroupId());
+        assertEquals(3, ex.getMaxSize());
+    }
+
+    @Test
+    @DisplayName("Dynamic rate limiting throttles a specific virtual group across workers")
+    void testGroupRateLimitingThrottlesTenant() throws Exception {
+        CountDownLatch tenantELatch = new CountDownLatch(2);
+        CountDownLatch tenantDLatch = new CountDownLatch(2);
+
+        for (int i = 0; i < 2; i++) {
+            queue.add("job-D-" + i, "d", JobOptions.builder().group("tenant-D").build());
+            queue.add("job-E-" + i, "e", JobOptions.builder().group("tenant-E").build());
+        }
+
+        // Apply 800ms rate limit to tenant-D
+        queue.setGroupRateLimit("tenant-D", Duration.ofMillis(800));
+
+        List<String> completionOrder = Collections.synchronizedList(new ArrayList<>());
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(2)
+                .processor(job -> {
+                    completionOrder.add(job.getGroupKey());
+                    if ("tenant-E".equals(job.getGroupKey())) {
+                        tenantELatch.countDown();
+                    } else if ("tenant-D".equals(job.getGroupKey())) {
+                        tenantDLatch.countDown();
+                    }
+                    return "done";
+                })
+                .build();
+
+        worker.start();
+
+        // Tenant-E should complete immediately (< 1s)
+        assertTrue(tenantELatch.await(1500, TimeUnit.MILLISECONDS), "Tenant E should complete without delay");
+        assertEquals(2, tenantDLatch.getCount(), "Tenant D must still be throttled and incomplete");
+
+        // Tenant-D should complete after rate limit expires
+        assertTrue(tenantDLatch.await(5000, TimeUnit.MILLISECONDS), "Tenant D should complete after rate limit expires");
+    }
+
+    @Test
+    @DisplayName("Pausing and resuming a virtual group halts and continues only that tenant")
+    void testPauseAndResumeGroup() throws Exception {
+        CountDownLatch activeLatch = new CountDownLatch(2);
+        CountDownLatch pausedLatch = new CountDownLatch(2);
+
+        // Pause tenant-P
+        queue.pauseGroup("tenant-P");
+
+        for (int i = 0; i < 2; i++) {
+            queue.add("job-P-" + i, "p", JobOptions.builder().group("tenant-P").build());
+            queue.add("job-Q-" + i, "q", JobOptions.builder().group("tenant-Q").build());
+        }
+
+        worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(2)
+                .processor(job -> {
+                    if ("tenant-Q".equals(job.getGroupKey())) {
+                        activeLatch.countDown();
+                    } else if ("tenant-P".equals(job.getGroupKey())) {
+                        pausedLatch.countDown();
+                    }
+                    return "ok";
+                })
+                .build();
+
+        worker.start();
+
+        assertTrue(activeLatch.await(2, TimeUnit.SECONDS), "Tenant Q jobs must process immediately");
+        assertEquals(2, pausedLatch.getCount(), "Tenant P jobs must not process while paused");
+
+        // Resume tenant-P
+        queue.resumeGroup("tenant-P");
+
+        assertTrue(pausedLatch.await(3, TimeUnit.SECONDS), "Tenant P jobs must resume and process after unpausing");
+    }
+
+    @Test
+    @DisplayName("Deleting a virtual group purges all its waiting and prioritized jobs")
+    void testDeleteGroupPurgesJobsAndMetadata() {
+        for (int i = 0; i < 5; i++) {
+            queue.add("job-del-" + i, "del", JobOptions.builder().group("tenant-delete").build());
+        }
+
+        assertEquals(5, queue.getGroupJobsCount("tenant-delete"));
+
+        long deletedCount = queue.deleteGroup("tenant-delete");
+        assertEquals(5, deletedCount);
+
+        assertEquals(0, queue.getGroupJobsCount("tenant-delete"));
+    }
+
+    @Test
+    @DisplayName("OxmqBatchWorker with groupAffinity(true) delivers strictly homogeneous tenant batches")
+    void testBatchWorkerWithGroupAffinity() throws Exception {
+        int jobsPerTenant = 4;
+        for (int i = 0; i < jobsPerTenant; i++) {
+            queue.add("job-T1-" + i, "t1", JobOptions.builder().group("tenant-batch-1").build());
+            queue.add("job-T2-" + i, "t2", JobOptions.builder().group("tenant-batch-2").build());
+        }
+
+        List<List<String>> observedBatches = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch latch = new CountDownLatch(jobsPerTenant * 2);
+
+        batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(4)
+                .groupAffinity(true) // homogeneous batches!
+                .concurrency(2)
+                .processor(jobs -> {
+                    List<String> groupsInBatch = new ArrayList<>();
+                    for (Job<String> job : jobs) {
+                        groupsInBatch.add(job.getGroupKey());
+                        latch.countDown();
+                    }
+                    observedBatches.add(groupsInBatch);
+                    return "batch-ok";
+                })
+                .build();
+
+        batchWorker.start();
+
+        assertTrue(latch.await(10, TimeUnit.SECONDS), "All batch jobs should be processed");
+
+        // Verify that every single batch contains jobs from only ONE group!
+        for (List<String> batch : observedBatches) {
+            assertFalse(batch.isEmpty());
+            String expectedGroup = batch.get(0);
+            for (String group : batch) {
+                assertEquals(expectedGroup, group, "Every batch must be homogeneous with groupAffinity enabled!");
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Group status inspection and paginated job queries operate seamlessly")
+    void testGetGroupsByStatusAndGroupJobs() {
+        queue.add("inspect-1", "d1", JobOptions.builder().group("group-alpha").build());
+        queue.add("inspect-2", "d2", JobOptions.builder().group("group-beta").build());
+
+        List<ExtensionScripts.GroupEntry> waitingGroups = queue.getGroupsByStatus("waiting", 0, 10);
+        assertNotNull(waitingGroups);
+        assertTrue(waitingGroups.size() >= 2);
+
+        boolean foundAlpha = waitingGroups.stream().anyMatch(g -> "group-alpha".equals(g.id()));
+        boolean foundBeta = waitingGroups.stream().anyMatch(g -> "group-beta".equals(g.id()));
+        assertTrue(foundAlpha, "group-alpha should be in waiting groups list");
+        assertTrue(foundBeta, "group-beta should be in waiting groups list");
+
+        List<Job<String>> alphaJobs = queue.getGroupJobs("group-alpha", 0, 10);
+        assertEquals(1, alphaJobs.size());
+        assertEquals("inspect-1", alphaJobs.get(0).getName());
+        assertEquals("group-alpha", alphaJobs.get(0).getGroupKey());
+    }
+}

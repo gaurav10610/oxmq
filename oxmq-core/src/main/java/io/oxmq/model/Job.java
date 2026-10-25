@@ -33,6 +33,7 @@ public class Job<T> {
     private String failedReason;
     private String parentKey;
     private String repeatJobKey;
+    private String groupKey;
     private String queueName;
     private Map<String, Object> childrenValues;
 
@@ -61,6 +62,9 @@ public class Job<T> {
 
     @JsonIgnore
     private transient CancellationToken cancellationToken = new CancellationToken();
+
+    @JsonIgnore
+    private transient volatile Throwable batchFailureReason;
 
     public Job() {}
 
@@ -209,6 +213,17 @@ public class Job<T> {
 
     public void setRepeatJobKey(String repeatJobKey) {
         this.repeatJobKey = repeatJobKey;
+    }
+
+    public String getGroupKey() {
+        if (groupKey != null) {
+            return groupKey;
+        }
+        return opts != null ? opts.getGroupKey() : null;
+    }
+
+    public void setGroupKey(String groupKey) {
+        this.groupKey = groupKey;
     }
 
     public String getQueueName() {
@@ -383,6 +398,37 @@ public class Job<T> {
             cancellationToken = new CancellationToken();
         }
         return cancellationToken;
+    }
+
+    /**
+     * Convenient alias for {@link #getCancellationToken()}.
+     */
+    public CancellationToken cancellationToken() {
+        return getCancellationToken();
+    }
+
+    /**
+     * Marks this specific job as failed within a batch execution.
+     * Non-failed jobs in the same batch will still complete successfully.
+     *
+     * @param error the failure reason or exception
+     */
+    public void setAsFailed(Throwable error) {
+        this.batchFailureReason = error != null ? error : new RuntimeException("Job marked as failed");
+    }
+
+    /**
+     * Returns true if this job was marked as failed via {@link #setAsFailed(Throwable)}.
+     */
+    public boolean isMarkedFailed() {
+        return batchFailureReason != null;
+    }
+
+    /**
+     * Returns the failure reason passed to {@link #setAsFailed(Throwable)}, if any.
+     */
+    public Throwable getBatchFailureReason() {
+        return batchFailureReason;
     }
 
     @Override

@@ -8,6 +8,7 @@ import io.lettuce.core.api.sync.RedisCommands;
 import io.oxmq.client.QueueKeys;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.BullScripts;
+import io.oxmq.lua.ExtensionScripts;
 import io.oxmq.lua.LuaScript;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
@@ -18,6 +19,8 @@ import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -40,6 +43,7 @@ public class OxmqQueue<T> implements Queue<T> {
     private final RedisConnectionManager connectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
+    private final io.oxmq.lua.ExtensionScripts extensionScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final Class<T> payloadClass;
@@ -55,6 +59,7 @@ public class OxmqQueue<T> implements Queue<T> {
         this.connectionManager = connectionManager;
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
+        this.extensionScripts = new io.oxmq.lua.ExtensionScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.metrics = metrics != null ? metrics : new OxmqMetrics();
         this.payloadClass = payloadClass;
@@ -224,7 +229,16 @@ public class OxmqQueue<T> implements Queue<T> {
 
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         String jobId;
-        if (delayMs > 0) {
+        String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
+            int priority = options.getGroup() != null && options.getGroup().getPriority() > 0
+                    ? options.getGroup().getPriority()
+                    : options.getPriority();
+            String dedupId = options.getDeduplicationId();
+            jobId = extensionScripts.addGroupJob(binConn, queueKeys, customJobId, jobName,
+                    serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
+        } else if (delayMs > 0) {
             jobId = bullScripts.addDelayedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
         } else if (options.getPriority() > 0) {
             jobId = bullScripts.addPrioritizedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
@@ -880,6 +894,70 @@ public class OxmqQueue<T> implements Queue<T> {
     @Override
     public boolean removeRateLimitKey() {
         return backend.removeRateLimitKey();
+    }
+
+    @Override
+    public boolean pauseGroup(String groupId) {
+        return extensionScripts.pauseGroup(connectionManager.getBinaryConnection(), queueKeys, groupId);
+    }
+
+    @Override
+    public boolean resumeGroup(String groupId) {
+        return extensionScripts.resumeGroup(connectionManager.getBinaryConnection(), queueKeys, groupId);
+    }
+
+    @Override
+    public long deleteGroup(String groupId) {
+        return extensionScripts.deleteGroup(connectionManager.getBinaryConnection(), queueKeys, groupId);
+    }
+
+    @Override
+    public boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
+        return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
+                duration != null ? duration.toMillis() : 0);
+    }
+
+    @Override
+    public List<io.oxmq.lua.ExtensionScripts.GroupEntry> getGroupsByStatus(String status, long start, long stop) {
+        return extensionScripts.getGroupsByStatus(connectionManager.getBinaryConnection(), queueKeys, status, start, stop);
+    }
+
+    @Override
+    public List<Job<T>> getGroupJobs(String groupId, long start, long stop) {
+        List<String> jobIds = extensionScripts.getGroupJobs(connectionManager.getBinaryConnection(), queueKeys, groupId, start, stop);
+        if (jobIds == null || jobIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Job<T>> result = new ArrayList<>(jobIds.size());
+        for (String id : jobIds) {
+            Job<T> job = getJob(id);
+            if (job != null) {
+                result.add(job);
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public long getGroupJobsCount(String groupId) {
+        if (groupId == null || groupId.isBlank()) return 0;
+        var sync = connectionManager.getCommandConnection().sync();
+        Long waitLen = sync.llen(prefix + ":groups:" + groupId);
+        Long prioLen = sync.zcard(prefix + ":groups:" + groupId + ":prioritized");
+        return (waitLen != null ? waitLen : 0) + (prioLen != null ? prioLen : 0);
+    }
+
+    @Override
+    public long getGroupActiveCount(String groupId) {
+        if (groupId == null || groupId.isBlank()) return 0;
+        var sync = connectionManager.getCommandConnection().sync();
+        String val = sync.hget(prefix + ":groups:active:count", groupId);
+        if (val == null || val.isBlank()) return 0;
+        try {
+            return Long.parseLong(val);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private static String toStr(Object obj) {

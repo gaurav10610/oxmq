@@ -66,11 +66,14 @@ public class OxmqWorker<T> implements Worker<T> {
     private final long pollIntervalMs;
     private final int maxStalledCount;
     private final int maxStartedAttempts;
+    private final long defaultJobTimeoutMs;
+    private final int groupConcurrency;
 
     private final RedisConnectionManager connectionManager;
     private final boolean ownsConnectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
+    private final io.oxmq.lua.ExtensionScripts extensionScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final RateLimiter rateLimiter;
@@ -85,6 +88,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
     private StalledJobSentinel stalledJobSentinel;
+    private java.util.concurrent.ScheduledExecutorService timeoutWatchdog;
 
     @FunctionalInterface
     public interface CustomBackoffStrategy<T> {
@@ -119,11 +123,14 @@ public class OxmqWorker<T> implements Worker<T> {
         this.pollIntervalMs = builder.pollIntervalMs;
         this.maxStalledCount = builder.maxStalledCount;
         this.maxStartedAttempts = builder.maxStartedAttempts;
+        this.defaultJobTimeoutMs = builder.defaultJobTimeoutMs;
+        this.groupConcurrency = Math.max(0, builder.groupConcurrency);
         this.ownsConnectionManager = builder.ownsConnectionManager;
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
+        this.extensionScripts = new io.oxmq.lua.ExtensionScripts(this.scriptManager);
         this.serializer = builder.serializer != null ? builder.serializer : new JacksonJobSerializer();
         this.metrics = builder.metrics != null ? builder.metrics : new OxmqMetrics();
         this.interceptors = builder.interceptors != null && !builder.interceptors.isEmpty()
@@ -171,6 +178,12 @@ public class OxmqWorker<T> implements Worker<T> {
             this.lockExtender = new LockExtender(connectionManager.getBinaryConnection(), bullScripts,
                     queueKeys, workerId, lockDurationMs);
 
+            this.timeoutWatchdog = Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "oxmq-watchdog-" + queueName);
+                t.setDaemon(true);
+                return t;
+            });
+
             this.stalledJobSentinel = new StalledJobSentinel(connectionManager.getBinaryConnection(),
                     bullScripts, queueKeys, metrics, lockDurationMs, maxStalledCount);
 
@@ -203,6 +216,17 @@ public class OxmqWorker<T> implements Worker<T> {
                 long now = System.currentTimeMillis();
                 List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
                         (int) lockDurationMs, null, workerId, now);
+
+                if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                        || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                    // Standard queue is empty; check virtual queue groups via round-robin!
+                    List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                            lockDurationMs, groupConcurrency, now);
+                    if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                            && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                        rawResult = groupResult;
+                    }
+                }
 
                 if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
                     concurrencySemaphore.release();
@@ -268,6 +292,26 @@ public class OxmqWorker<T> implements Worker<T> {
         long startTime = System.nanoTime();
         activeExecutions.put(job.getId(), new ActiveExecution<>(job, Thread.currentThread()));
         emitActive(job);
+
+        long effectiveTimeoutMs = job.getOpts() != null && job.getOpts().getJobTimeoutMs() > 0
+                ? job.getOpts().getJobTimeoutMs()
+                : defaultJobTimeoutMs;
+
+        java.util.concurrent.ScheduledFuture<?> timeoutFuture = null;
+        if (effectiveTimeoutMs > 0 && timeoutWatchdog != null && !timeoutWatchdog.isShutdown()) {
+            final Thread jobThread = Thread.currentThread();
+            timeoutFuture = timeoutWatchdog.schedule(() -> {
+                if (activeExecutions.containsKey(job.getId())) {
+                    String timeoutReason = "Job execution timed out after " + effectiveTimeoutMs + " ms";
+                    log.warn("Job {} [id: {}] timed out after {} ms on queue {}",
+                            job.getName(), job.getId(), effectiveTimeoutMs, queueName);
+                    job.setCancelled(true, timeoutReason);
+                    job.getCancellationToken().cancel(timeoutReason);
+                    jobThread.interrupt();
+                }
+            }, effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+        }
+
         try {
             // 1. Interceptor pre-processing
             if (!interceptors.isEmpty()) {
@@ -308,12 +352,17 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
         } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
+            Thread.interrupted(); // Clear interrupted flag so Redis cleanup commands can complete
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
             String reason = job.getCancelReason() != null ? job.getCancelReason() : (ie.getMessage() != null ? ie.getMessage() : "Job cancelled");
             job.setCancelled(true, reason);
-            failJob(job, ie, duration);
-            metrics.recordJobFailed(queueName, duration, "JobCancelledException");
+            Throwable finalError = ie;
+            if (reason.toLowerCase().contains("timed out") || ie instanceof io.oxmq.exception.JobTimeoutException) {
+                finalError = new io.oxmq.exception.JobTimeoutException(reason, Duration.ofMillis(effectiveTimeoutMs));
+            }
+            failJob(job, finalError, duration);
+            metrics.recordJobFailed(queueName, duration, finalError.getClass().getSimpleName());
             log.info("Job {} [id: {}] was cancelled on queue {}: {}", job.getName(), job.getId(), queueName, reason);
         } catch (io.oxmq.exception.RateLimitException rle) {
             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
@@ -330,14 +379,20 @@ public class OxmqWorker<T> implements Worker<T> {
         } catch (io.oxmq.exception.WaitingChildrenException wce) {
             log.debug("Job {} [id: {}] moved to waiting-children state via WaitingChildrenException", job.getName(), job.getId());
         } catch (Throwable t) {
+            Thread.interrupted(); // Clear interrupted flag if set
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
+
+            Throwable finalError = t;
+            if (job.isCancelled() && job.getCancelReason() != null && job.getCancelReason().toLowerCase().contains("timed out")) {
+                finalError = new io.oxmq.exception.JobTimeoutException(job.getCancelReason(), Duration.ofMillis(effectiveTimeoutMs));
+            }
 
             boolean handledByInterceptor = false;
             if (!interceptors.isEmpty()) {
                 for (io.oxmq.interceptor.JobInterceptor interceptor : interceptors) {
                     try {
-                        io.oxmq.interceptor.ErrorDecision decision = interceptor.onError(job, t, duration);
+                        io.oxmq.interceptor.ErrorDecision decision = interceptor.onError(job, finalError, duration);
                         if (decision != null && (decision.isCooldown() || decision.isDelay())) {
                             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
                                     job.getId(), workerId, decision.delayMs(), decision.skipAttempt());
@@ -353,11 +408,14 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             if (!handledByInterceptor) {
-                failJob(job, t, duration);
-                metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
-                log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
+                failJob(job, finalError, duration);
+                metrics.recordJobFailed(queueName, duration, finalError.getClass().getSimpleName());
+                log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, finalError.toString(), finalError);
             }
         } finally {
+            if (timeoutFuture != null) {
+                timeoutFuture.cancel(false);
+            }
             activeExecutions.remove(job.getId());
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();
@@ -369,6 +427,16 @@ public class OxmqWorker<T> implements Worker<T> {
         JobOptions opts = job.getOpts();
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 serializedResult, "returnvalue", "completed", workerId, false, opts != null ? opts.toMap() : Map.of());
+
+        String groupId = job.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            try {
+                extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+            } catch (Exception e) {
+                log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
+            }
+        }
+
         emitCompleted(job, result);
     }
 
@@ -404,11 +472,14 @@ public class OxmqWorker<T> implements Worker<T> {
             stackTrace = stackTrace.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
         }
 
+        boolean isTimeout = (error instanceof io.oxmq.exception.JobTimeoutException) ||
+                            (job.getCancelReason() != null && job.getCancelReason().toLowerCase().contains("timed out"));
+
         boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
                                   (error.getCause() instanceof UnrecoverableError) ||
-                                  (error instanceof io.oxmq.exception.JobCancelledException) ||
-                                  (error instanceof InterruptedException) ||
-                                  job.isCancelled() ||
+                                  (!isTimeout && (error instanceof io.oxmq.exception.JobCancelledException)) ||
+                                  (!isTimeout && (error instanceof InterruptedException)) ||
+                                  (!isTimeout && job.isCancelled()) ||
                                   job.isDiscarded();
 
         if (maxStartedAttempts > 0 && job.getAttemptsStarted() >= maxStartedAttempts) {
@@ -420,7 +491,9 @@ public class OxmqWorker<T> implements Worker<T> {
         int currentAttempts = job.getAttemptsMade() + 1;
 
         String failedReasonValue;
-        if (job.isCancelled()) {
+        if (isTimeout) {
+            failedReasonValue = job.getCancelReason() != null ? job.getCancelReason() : error.getMessage();
+        } else if (job.isCancelled()) {
             failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
         } else {
             failedReasonValue = stackTrace;
@@ -429,6 +502,15 @@ public class OxmqWorker<T> implements Worker<T> {
         Map<String, Object> fieldsToUpdate = new HashMap<>();
         fieldsToUpdate.put("failedReason", failedReasonValue);
         fieldsToUpdate.put("stacktrace", serializer.serialize(List.of(stackTrace)));
+
+        String groupId = job.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            try {
+                extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+            } catch (Exception e) {
+                log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
+            }
+        }
 
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
             BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
@@ -479,6 +561,10 @@ public class OxmqWorker<T> implements Worker<T> {
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
+        String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
         if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
         if (timestampStr != null) {
@@ -689,6 +775,18 @@ public class OxmqWorker<T> implements Worker<T> {
         return paused.get();
     }
 
+    /**
+     * Dynamically throttles a virtual group across the cluster for the specified duration.
+     *
+     * @param groupId virtual group identifier
+     * @param duration duration to throttle
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, Duration duration) {
+        return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
+                duration != null ? duration.toMillis() : 0);
+    }
+
     @Override
     public boolean cancelJob(String jobId) {
         return cancelJob(jobId, "User requested cancellation");
@@ -845,6 +943,10 @@ public class OxmqWorker<T> implements Worker<T> {
                 stalledJobSentinel.close();
             }
 
+            if (timeoutWatchdog != null) {
+                timeoutWatchdog.shutdownNow();
+            }
+
             if (dispatcherExecutor != null && customExecutor == null) {
                 dispatcherExecutor.shutdown();
                 try {
@@ -878,11 +980,13 @@ public class OxmqWorker<T> implements Worker<T> {
         private JobProcessor<T, ?> processor;
         private Class<T> payloadClass;
         private int concurrency = 20;
+        private int groupConcurrency = 0;
         private boolean useVirtualThreads = true;
         private ExecutorService customExecutor;
         private long lockDurationMs = 30_000;
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
+        private long defaultJobTimeoutMs = 0;
         private int maxStalledCount = 2;
         private int maxStartedAttempts = 0;
         private int rateLimitMax = 0;
@@ -931,6 +1035,11 @@ public class OxmqWorker<T> implements Worker<T> {
             return this;
         }
 
+        public Builder<T> groupConcurrency(int groupConcurrency) {
+            this.groupConcurrency = Math.max(0, groupConcurrency);
+            return this;
+        }
+
         public Builder<T> useVirtualThreads(boolean useVirtualThreads) {
             this.useVirtualThreads = useVirtualThreads;
             return this;
@@ -958,6 +1067,16 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> drainTimeoutMs(long drainTimeoutMs) {
             this.drainTimeoutMs = drainTimeoutMs;
+            return this;
+        }
+
+        public Builder<T> defaultJobTimeout(Duration defaultJobTimeout) {
+            this.defaultJobTimeoutMs = defaultJobTimeout != null ? defaultJobTimeout.toMillis() : 0;
+            return this;
+        }
+
+        public Builder<T> defaultJobTimeoutMs(long defaultJobTimeoutMs) {
+            this.defaultJobTimeoutMs = defaultJobTimeoutMs;
             return this;
         }
 

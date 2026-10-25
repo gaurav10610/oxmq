@@ -21,6 +21,18 @@ public class CancellationToken {
     }
 
     /**
+     * Throws {@link io.oxmq.exception.JobCancelledException} if cancellation has been requested.
+     *
+     * @throws io.oxmq.exception.JobCancelledException if cancelled or thread interrupted
+     */
+    public void throwIfCancelled() {
+        if (isCancelled()) {
+            throw new io.oxmq.exception.JobCancelledException(
+                    reason != null ? reason : "Job cancelled or thread interrupted");
+        }
+    }
+
+    /**
      * Returns the cancellation reason, if any.
      */
     public String getReason() {
