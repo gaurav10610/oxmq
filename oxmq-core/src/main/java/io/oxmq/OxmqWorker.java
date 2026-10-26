@@ -353,11 +353,7 @@ public class OxmqWorker<T> implements Worker<T> {
             this.lockExtender = new LockExtender(connectionManager.getBinaryConnection(), bullScripts,
                     queueKeys, workerId, lockDurationMs);
 
-            this.timeoutWatchdog = Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "oxmq-watchdog-" + queueName);
-                t.setDaemon(true);
-                return t;
-            });
+            this.timeoutWatchdog = io.oxmq.watchdog.WatchdogScheduler.sharedScheduler();
 
             this.stalledJobSentinel = new StalledJobSentinel(connectionManager.getBinaryConnection(),
                     bullScripts, queueKeys, metrics, lockDurationMs, maxStalledCount);
@@ -746,11 +742,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
         String groupId = job.getGroupKey();
         if (groupId != null && !groupId.isBlank()) {
-            try {
-                extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
-            } catch (Exception e) {
-                log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
-            }
+            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
         }
 
         emitCompleted(job, result);
@@ -821,11 +813,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
         String groupId = job.getGroupKey();
         if (groupId != null && !groupId.isBlank()) {
-            try {
-                extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
-            } catch (Exception e) {
-                log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
-            }
+            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
         }
 
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
@@ -1295,10 +1283,6 @@ public class OxmqWorker<T> implements Worker<T> {
 
             if (stalledJobSentinel != null) {
                 stalledJobSentinel.close();
-            }
-
-            if (timeoutWatchdog != null) {
-                timeoutWatchdog.shutdownNow();
             }
 
             if (dispatcherExecutor != null && customExecutor == null) {

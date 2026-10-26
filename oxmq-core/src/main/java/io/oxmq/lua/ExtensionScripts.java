@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 /**
  * High-performance Java bridge for invoking OxMQ Extension Lua scripts.
@@ -77,7 +79,7 @@ public class ExtensionScripts {
         }
     }
 
-    public io.lettuce.core.RedisFuture<Object> addGroupJobAsync(StatefulRedisConnection<String, byte[]> connection,
+    public CompletableFuture<String> addGroupJobAsync(StatefulRedisConnection<String, byte[]> connection,
                                                                QueueKeys keys, String customJobId, String jobName,
                                                                String jsonData, String optsJson, String groupId,
                                                                long maxSize, int priority, String deduplicationId,
@@ -108,7 +110,24 @@ public class ExtensionScripts {
         return scriptManager.evalBinaryAsync(connection, ExtensionLuaScript.ADD_GROUP_JOB,
                 ScriptOutputType.VALUE, redisKeys,
                 prefixBytes, customIdBytes, nameBytes, tsBytes, dataBytes, optsBytes,
-                groupBytes, maxSizeBytes, prioBytes, dedupBytes);
+                groupBytes, maxSizeBytes, prioBytes, dedupBytes)
+                .toCompletableFuture()
+                .handle((result, ex) -> {
+                    if (ex != null) {
+                        Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+                        if (cause.getMessage() != null && cause.getMessage().contains("GROUP_MAX_SIZE_EXCEEDED")) {
+                            throw new GroupMaxSizeExceededException(groupId, maxSize);
+                        }
+                        if (cause instanceof RuntimeException re) {
+                            throw re;
+                        }
+                        throw new CompletionException(cause);
+                    }
+                    if (result instanceof byte[] b) {
+                        return new String(b, StandardCharsets.UTF_8);
+                    }
+                    return result != null ? result.toString() : null;
+                });
     }
 
     /**
@@ -214,6 +233,29 @@ public class ExtensionScripts {
                 ScriptOutputType.INTEGER, redisKeys,
                 prefixBytes, groupBytes, concBytes);
         return result != null ? result : 0;
+    }
+
+    /**
+     * Asynchronously decrements the group's active count when a job finishes or fails.
+     */
+    public CompletableFuture<Long> decrementGroupActiveAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                             QueueKeys keys, String groupId, int maxGroupConcurrency) {
+        String[] redisKeys = new String[] {
+            keys.toKey("groups:waiting"),
+            keys.toKey("groups:active:count"),
+            keys.toKey("groups:maxed"),
+            keys.toKey("groups:paused")
+        };
+
+        byte[] prefixBytes = keys.getPrefixBytes();
+        byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] concBytes = String.valueOf(maxGroupConcurrency).getBytes(StandardCharsets.UTF_8);
+
+        return scriptManager.evalBinaryAsync(connection, ExtensionLuaScript.DECREMENT_GROUP_ACTIVE,
+                ScriptOutputType.INTEGER, redisKeys,
+                prefixBytes, groupBytes, concBytes)
+                .toCompletableFuture()
+                .thenApply(res -> res instanceof Number n ? n.longValue() : 0L);
     }
 
     /**

@@ -15,7 +15,9 @@ public class RateLimiter {
     private final LuaScriptManager scriptManager;
     private final String limiterKey;
     private final String metaKey;
+    private final String[] keys;
     private final int max;
+    private final String maxString;
     private final long durationMs;
 
     public RateLimiter(StatefulRedisConnection<String, String> connection, LuaScriptManager scriptManager,
@@ -24,7 +26,9 @@ public class RateLimiter {
         this.scriptManager = scriptManager;
         this.limiterKey = queuePrefix + ":limiter";
         this.metaKey = queuePrefix + ":meta";
+        this.keys = new String[]{this.limiterKey, this.metaKey};
         this.max = max;
+        this.maxString = String.valueOf(max);
         this.durationMs = duration.toMillis();
     }
 
@@ -35,8 +39,8 @@ public class RateLimiter {
      */
     public boolean tryAcquire() {
         Long ttl = scriptManager.eval(connection, LuaScript.GET_RATE_LIMIT_TTL, ScriptOutputType.INTEGER,
-                new String[]{limiterKey, metaKey},
-                String.valueOf(max)
+                keys,
+                maxString
         );
         return ttl == null || ttl <= 0;
     }

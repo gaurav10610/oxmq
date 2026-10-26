@@ -33,6 +33,7 @@ public class OxmqRelay implements AutoCloseable {
     private final String eventsChannel;
     private final String nodesKeyPrefix;
     private final String retainedKeyPrefix;
+    private final String retainedTopicsSetKey;
 
     private final StatefulRedisPubSubConnection<String, String> pubSubConn;
     private final List<RegisteredSubscription> subscriptions = new CopyOnWriteArrayList<>();
@@ -41,6 +42,9 @@ public class OxmqRelay implements AutoCloseable {
 
     private static class RegisteredSubscription implements RelaySubscription {
         private final String pattern;
+        private final String[] patternSegments;
+        private final boolean isCatchAll;
+        private final boolean isExact;
         private final Consumer<RelayMessage> handler;
         private final AtomicBoolean active = new AtomicBoolean(true);
         private final Set<String> seenMessageIds = Collections.synchronizedSet(
@@ -55,6 +59,9 @@ public class OxmqRelay implements AutoCloseable {
         RegisteredSubscription(String pattern, Consumer<RelayMessage> handler) {
             this.pattern = pattern;
             this.handler = handler;
+            this.isCatchAll = "*".equals(pattern) || ">".equals(pattern);
+            this.isExact = !isCatchAll && !pattern.contains("*") && !pattern.contains(">");
+            this.patternSegments = (isExact || isCatchAll) ? null : pattern.split("\\.");
         }
 
         @Override
@@ -70,6 +77,14 @@ public class OxmqRelay implements AutoCloseable {
         @Override
         public boolean isActive() {
             return active.get();
+        }
+
+        public boolean matches(String topic) {
+            if (topic == null) return false;
+            if (isCatchAll || pattern.equals(topic)) return true;
+            if (isExact) return false;
+            String[] tSegments = topic.split("\\.");
+            return matchesSegments(patternSegments, tSegments);
         }
 
         public boolean tryDeliver(RelayMessage msg) {
@@ -98,6 +113,7 @@ public class OxmqRelay implements AutoCloseable {
         this.eventsChannel = prefix + ":events";
         this.nodesKeyPrefix = prefix + ":nodes:";
         this.retainedKeyPrefix = prefix + ":retained:";
+        this.retainedTopicsSetKey = prefix + ":retained_topics";
 
         this.pubSubConn = connectionManager.getClient().connectPubSub();
         this.pubSubConn.addListener(new RedisPubSubAdapter<>() {
@@ -163,6 +179,7 @@ public class OxmqRelay implements AutoCloseable {
             String retainKey = retainedKeyPrefix + topic;
             sync.set(retainKey, messageJson);
             sync.pexpire(retainKey, retain.toMillis());
+            sync.sadd(retainedTopicsSetKey, topic);
         }
 
         sync.publish(eventsChannel, messageJson);
@@ -197,15 +214,15 @@ public class OxmqRelay implements AutoCloseable {
     private void dispatchRetainedMessages(RegisteredSubscription sub) {
         try {
             RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-            List<String> retainedKeys = sync.keys(retainedKeyPrefix + "*");
-            if (retainedKeys == null || retainedKeys.isEmpty()) {
+            Set<String> retainedTopics = sync.smembers(retainedTopicsSetKey);
+            if (retainedTopics == null || retainedTopics.isEmpty()) {
                 return;
             }
 
-            for (String key : retainedKeys) {
+            for (String topic : retainedTopics) {
                 if (!sub.isActive()) break;
-                String topic = key.substring(retainedKeyPrefix.length());
-                if (matchesPattern(sub.getPattern(), topic)) {
+                if (sub.matches(topic)) {
+                    String key = retainedKeyPrefix + topic;
                     String json = sync.get(key);
                     if (json != null && !json.isBlank()) {
                         try {
@@ -214,6 +231,8 @@ public class OxmqRelay implements AutoCloseable {
                         } catch (Exception ex) {
                             log.warn("Failed to dispatch retained relay message for topic {}", topic, ex);
                         }
+                    } else {
+                        sync.srem(retainedTopicsSetKey, topic);
                     }
                 }
             }
@@ -230,7 +249,7 @@ public class OxmqRelay implements AutoCloseable {
             }
 
             for (RegisteredSubscription sub : subscriptions) {
-                if (sub.isActive() && matchesPattern(sub.getPattern(), msg.getTopic())) {
+                if (sub.isActive() && sub.matches(msg.getTopic())) {
                     sub.tryDeliver(msg);
                 }
             }
@@ -253,8 +272,11 @@ public class OxmqRelay implements AutoCloseable {
 
         String[] pSegments = pattern.split("\\.");
         String[] tSegments = topic.split("\\.");
-        int pi = 0, ti = 0;
+        return matchesSegments(pSegments, tSegments);
+    }
 
+    private static boolean matchesSegments(String[] pSegments, String[] tSegments) {
+        int pi = 0, ti = 0;
         while (pi < pSegments.length && ti < tSegments.length) {
             String p = pSegments[pi];
             if (">".equals(p)) {

@@ -324,6 +324,54 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     @Override
+    public CompletableFuture<Job<T>> addAsync(String jobName, T data) {
+        return addAsync(jobName, data, null);
+    }
+
+    @Override
+    public CompletableFuture<Job<T>> addAsync(String jobName, T data, JobOptions opts) {
+        Objects.requireNonNull(jobName, "jobName must not be null");
+        JobOptions options = resolveJobOptions(opts);
+
+        String serializedData = serializer.serialize(data);
+        long now = System.currentTimeMillis();
+        long delayMs = options.getDelayMs();
+        String customJobId = options.getJobId() != null ? options.getJobId() : "";
+
+        Map<String, Object> optsMap = options.toMap();
+
+        StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+        CompletableFuture<String> futureJobId;
+        String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
+            int priority = options.getGroup() != null && options.getGroup().getPriority() > 0
+                    ? options.getGroup().getPriority()
+                    : options.getPriority();
+            String dedupId = options.getDeduplicationId();
+            futureJobId = extensionScripts.addGroupJobAsync(binConn, queueKeys, customJobId, jobName,
+                    serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
+        } else if (delayMs > 0) {
+            futureJobId = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+        } else if (options.getPriority() > 0) {
+            futureJobId = bullScripts.addPrioritizedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
+        } else {
+            futureJobId = bullScripts.addStandardJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now);
+        }
+
+        return futureJobId.thenApply(jobId -> {
+            metrics.recordJobEnqueued(name);
+            log.debug("Enqueued job {} [id: {}] in queue {}", jobName, jobId, name);
+
+            Job<T> job = new Job<>(jobId, jobName, data, options);
+            job.setQueueName(name);
+            job.setTimestamp(now);
+            wireJobLifecycle(job);
+            return job;
+        });
+    }
+
+    @Override
     public Job<T> getJob(String jobId) {
         if (jobId == null || jobId.isBlank()) {
             return null;
@@ -487,7 +535,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         long now = System.currentTimeMillis();
-        List<io.lettuce.core.RedisFuture<Object>> futures = new java.util.ArrayList<>(jobs.size());
+        List<CompletableFuture<String>> futures = new java.util.ArrayList<>(jobs.size());
         List<PreparedJob<T>> prepared = new java.util.ArrayList<>(jobs.size());
 
         for (io.oxmq.model.JobRequest<T> req : jobs) {
@@ -500,7 +548,7 @@ public class OxmqQueue<T> implements Queue<T> {
             Map<String, Object> optsMap = options.toMap();
 
             String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
-            io.lettuce.core.RedisFuture<Object> future;
+            CompletableFuture<String> future;
 
             if (groupId != null && !groupId.isBlank()) {
                 long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
@@ -523,7 +571,7 @@ public class OxmqQueue<T> implements Queue<T> {
         }
 
         try {
-            io.lettuce.core.LettuceFutures.awaitAll(java.time.Duration.ofSeconds(30), futures.toArray(new io.lettuce.core.RedisFuture[0]));
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get(30, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception e) {
             log.warn("Error awaiting pipelined addBulk futures on queue {}", name, e);
         }
@@ -531,15 +579,11 @@ public class OxmqQueue<T> implements Queue<T> {
         List<Job<T>> createdJobs = new java.util.ArrayList<>(jobs.size());
         for (int i = 0; i < jobs.size(); i++) {
             PreparedJob<T> prep = prepared.get(i);
-            io.lettuce.core.RedisFuture<Object> fut = futures.get(i);
+            CompletableFuture<String> fut = futures.get(i);
             String jobId;
             try {
-                Object rawRes = fut.get();
-                if (rawRes instanceof byte[] b) {
-                    jobId = new String(b, java.nio.charset.StandardCharsets.UTF_8);
-                } else if (rawRes != null) {
-                    jobId = rawRes.toString();
-                } else {
+                jobId = fut.get();
+                if (jobId == null) {
                     jobId = "unknown";
                 }
             } catch (Exception ex) {

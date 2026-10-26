@@ -35,6 +35,7 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
     private final Duration purgeRetention;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicLong currentDelayMs = new java.util.concurrent.atomic.AtomicLong(100);
     private ScheduledExecutorService executor;
     private long lastPurgeTimestamp = 0;
 
@@ -67,7 +68,31 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
                 t.setDaemon(true);
                 return t;
             });
-            executor.scheduleWithFixedDelay(this::publishCycle, 0, pollIntervalMs, TimeUnit.MILLISECONDS);
+            currentDelayMs.set(pollIntervalMs);
+            executor.schedule(this::runAdaptiveCycle, 0, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void runAdaptiveCycle() {
+        if (!running.get()) return;
+        try {
+            int count = publishCycle();
+            if (count > 0) {
+                currentDelayMs.set(pollIntervalMs);
+                if (running.get() && executor != null && !executor.isShutdown()) {
+                    executor.schedule(this::runAdaptiveCycle, 0, TimeUnit.MILLISECONDS);
+                }
+            } else {
+                long next = Math.min(1000, Math.max(pollIntervalMs, currentDelayMs.get() * 2));
+                currentDelayMs.set(next);
+                if (running.get() && executor != null && !executor.isShutdown()) {
+                    executor.schedule(this::runAdaptiveCycle, next, TimeUnit.MILLISECONDS);
+                }
+            }
+        } catch (Throwable t) {
+            if (running.get() && executor != null && !executor.isShutdown()) {
+                executor.schedule(this::runAdaptiveCycle, pollIntervalMs, TimeUnit.MILLISECONDS);
+            }
         }
     }
 

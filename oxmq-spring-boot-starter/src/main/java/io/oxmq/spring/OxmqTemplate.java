@@ -182,17 +182,54 @@ public class OxmqTemplate {
     }
 
     /**
-     * Asynchronously enqueues a job.
+     * Asynchronously enqueues a job with default name and options.
      */
     public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload) {
-        return CompletableFuture.supplyAsync(() -> send(queueName, payload));
+        return sendAsync(queueName, "default", payload, JobOptions.defaults());
     }
 
     /**
-     * Asynchronously enqueues a job with a name and options.
+     * Asynchronously enqueues a job with a default job name and options.
      */
+    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload, JobOptions options) {
+        return sendAsync(queueName, "default", payload, options);
+    }
+
+    /**
+     * Asynchronously enqueues a job with a specific job name and default options.
+     */
+    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, String jobName, T payload) {
+        return sendAsync(queueName, jobName, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Asynchronously enqueues a job with a name and options without blocking threads.
+     */
+    @SuppressWarnings("unchecked")
     public <T> CompletableFuture<Job<T>> sendAsync(String queueName, String jobName, T payload, JobOptions options) {
-        return CompletableFuture.supplyAsync(() -> send(queueName, jobName, payload, options));
+        Class<T> clazz = payload != null ? (Class<T>) payload.getClass() : (Class<T>) Object.class;
+        return getQueue(queueName, clazz).addAsync(jobName, payload, options);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, Object)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, T payload) {
+        return sendAsync(queueName, payload);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, String, Object)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T payload) {
+        return sendAsync(queueName, jobName, payload);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, String, Object, JobOptions)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T payload, JobOptions options) {
+        return sendAsync(queueName, jobName, payload, options);
     }
 
     /**

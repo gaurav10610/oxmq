@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +43,7 @@ public class QueueEvents implements Closeable {
     private final boolean ownsConnectionManager;
     private final JobSerializer serializer;
     private final Map<String, List<BiConsumer<String, Map<String, Object>>>> eventListeners = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, List<CompletableFuture<Object>>> pendingJobFutures = new ConcurrentHashMap<>();
     private Thread streamThread;
     private volatile boolean running = false;
 
@@ -114,10 +116,11 @@ public class QueueEvents implements Closeable {
         try {
             conn = connectionManager.createDedicatedConnection();
             var sync = conn.sync();
+            XReadArgs xreadArgs = XReadArgs.Builder.block(Duration.ofSeconds(2)).count(100);
             while (running && !Thread.currentThread().isInterrupted()) {
                 try {
                     List<StreamMessage<String, String>> messages = sync.xread(
-                            XReadArgs.Builder.block(Duration.ofSeconds(2)).count(100),
+                            xreadArgs,
                             StreamOffset.from(channelName, lastId)
                     );
                     if (messages != null && !messages.isEmpty()) {
@@ -158,6 +161,25 @@ public class QueueEvents implements Closeable {
         String event = body.get("event");
         String jobId = body.get("jobId");
         if (event != null) {
+            // Direct O(1) resolution for waiting futures
+            if (jobId != null && ("completed".equals(event) || "failed".equals(event))) {
+                List<CompletableFuture<Object>> futures = pendingJobFutures.remove(jobId);
+                if (futures != null && !futures.isEmpty()) {
+                    if ("completed".equals(event)) {
+                        Object retVal = body.get("returnvalue");
+                        for (CompletableFuture<Object> f : futures) {
+                            f.complete(retVal);
+                        }
+                    } else {
+                        String reason = body.get("failedReason");
+                        RuntimeException ex = new RuntimeException(reason != null ? reason : "Job " + jobId + " failed");
+                        for (CompletableFuture<Object> f : futures) {
+                            f.completeExceptionally(ex);
+                        }
+                    }
+                }
+            }
+
             Map<String, Object> payload = new HashMap<>(body);
             List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(event);
             if (listeners != null) {
@@ -230,27 +252,16 @@ public class QueueEvents implements Closeable {
             start();
         }
         CompletableFuture<Object> future = new CompletableFuture<>();
-        @SuppressWarnings("unchecked")
-        BiConsumer<String, Map<String, Object>>[] listenerRef = new BiConsumer[2];
-
-        listenerRef[0] = (jId, payload) -> {
-            if (Objects.equals(jobId, jId)) {
-                future.complete(payload.get("returnvalue"));
-            }
-        };
-        listenerRef[1] = (jId, payload) -> {
-            if (Objects.equals(jobId, jId)) {
-                String reason = (String) payload.get("failedReason");
-                future.completeExceptionally(new RuntimeException(reason != null ? reason : "Job " + jobId + " failed"));
-            }
-        };
-
-        on("completed", listenerRef[0]);
-        on("failed", listenerRef[1]);
+        pendingJobFutures.computeIfAbsent(jobId, k -> new CopyOnWriteArrayList<>()).add(future);
 
         future.whenComplete((res, err) -> {
-            off("completed", listenerRef[0]);
-            off("failed", listenerRef[1]);
+            List<CompletableFuture<Object>> list = pendingJobFutures.get(jobId);
+            if (list != null) {
+                list.remove(future);
+                if (list.isEmpty()) {
+                    pendingJobFutures.remove(jobId);
+                }
+            }
         });
 
         return future;

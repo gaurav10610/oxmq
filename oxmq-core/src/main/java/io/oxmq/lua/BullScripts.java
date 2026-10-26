@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Strongly-typed caller for BullMQ Lua scripts executing on Redis.
@@ -62,9 +63,9 @@ public class BullScripts {
         return parseJobIdResult(result, "addStandardJob");
     }
 
-    public io.lettuce.core.RedisFuture<Object> addStandardJobAsync(StatefulRedisConnection<String, byte[]> connection,
-                                                                   QueueKeys keys, String customId, String name,
-                                                                   String jsonData, Map<String, Object> opts, long timestamp) {
+    public CompletableFuture<String> addStandardJobAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                           QueueKeys keys, String customId, String name,
+                                                           String jsonData, Map<String, Object> opts, long timestamp) {
         String[] redisKeys = new String[] {
             keys.getKey("wait"),
             keys.getKey("paused"),
@@ -92,7 +93,9 @@ public class BullScripts {
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
 
         return scriptManager.evalBinaryAsync(connection, LuaScript.ADD_STANDARD_JOB,
-            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes);
+            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes)
+            .toCompletableFuture()
+            .thenApply(res -> parseJobIdResult(res, "addStandardJob"));
     }
 
     public String addDelayedJob(StatefulRedisConnection<String, byte[]> connection,
@@ -127,9 +130,9 @@ public class BullScripts {
         return parseJobIdResult(result, "addDelayedJob");
     }
 
-    public io.lettuce.core.RedisFuture<Object> addDelayedJobAsync(StatefulRedisConnection<String, byte[]> connection,
-                                                                 QueueKeys keys, String customId, String name,
-                                                                 String jsonData, Map<String, Object> opts, long timestamp, long delay) {
+    public CompletableFuture<String> addDelayedJobAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                         QueueKeys keys, String customId, String name,
+                                                         String jsonData, Map<String, Object> opts, long timestamp, long delay) {
         String[] redisKeys = new String[] {
             keys.getKey("marker"),
             keys.getKey("meta"),
@@ -154,7 +157,9 @@ public class BullScripts {
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
 
         return scriptManager.evalBinaryAsync(connection, LuaScript.ADD_DELAYED_JOB,
-            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes);
+            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes)
+            .toCompletableFuture()
+            .thenApply(res -> parseJobIdResult(res, "addDelayedJob"));
     }
 
     public String addPrioritizedJob(StatefulRedisConnection<String, byte[]> connection,
@@ -192,9 +197,9 @@ public class BullScripts {
         return parseJobIdResult(result, "addPrioritizedJob");
     }
 
-    public io.lettuce.core.RedisFuture<Object> addPrioritizedJobAsync(StatefulRedisConnection<String, byte[]> connection,
-                                                                      QueueKeys keys, String customId, String name,
-                                                                      String jsonData, Map<String, Object> opts, long timestamp, int priority) {
+    public CompletableFuture<String> addPrioritizedJobAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                             QueueKeys keys, String customId, String name,
+                                                             String jsonData, Map<String, Object> opts, long timestamp, int priority) {
         String[] redisKeys = new String[] {
             keys.getKey("marker"),
             keys.getKey("meta"),
@@ -222,7 +227,9 @@ public class BullScripts {
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
 
         return scriptManager.evalBinaryAsync(connection, LuaScript.ADD_PRIORITIZED_JOB,
-            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes);
+            ScriptOutputType.VALUE, redisKeys, packedArgs, dataBytes, packedOpts, tsBytes)
+            .toCompletableFuture()
+            .thenApply(res -> parseJobIdResult(res, "addPrioritizedJob"));
     }
 
     public String addParentJob(StatefulRedisConnection<String, byte[]> connection,

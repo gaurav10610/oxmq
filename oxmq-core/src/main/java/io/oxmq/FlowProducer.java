@@ -193,12 +193,66 @@ public class FlowProducer implements Closeable {
                 if (node.getOpts().isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
             }
 
-            // Recursively add all children
+            // Recursively add all children (pipelining leaf tasks for high-speed DAG ingestion)
+            java.util.List<FlowJob<?>> leafChildren = new java.util.ArrayList<>();
             for (FlowJob<?> child : node.getChildren()) {
-                addNode(child, nodeParentKey, childParentObj);
+                if (child.getChildren().isEmpty()) {
+                    leafChildren.add(child);
+                } else {
+                    addNode(child, nodeParentKey, childParentObj);
+                }
+            }
+
+            if (!leafChildren.isEmpty()) {
+                addLeafChildrenPipelined(leafChildren, nodeParentKey, childParentObj);
             }
 
             return parentId;
+        }
+    }
+
+    private void addLeafChildrenPipelined(java.util.List<FlowJob<?>> leaves, String parentKey, Map<String, Object> parentObj) {
+        if (leaves.size() == 1) {
+            addNode(leaves.get(0), parentKey, parentObj);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        java.util.List<java.util.concurrent.CompletableFuture<String>> futures = new java.util.ArrayList<>(leaves.size());
+        io.lettuce.core.api.StatefulRedisConnection<String, byte[]> conn = connectionManager.getBinaryConnection();
+
+        for (FlowJob<?> leaf : leaves) {
+            String queueName = leaf.getQueueName();
+            String nodePrefix = leaf.getPrefix() != null && !leaf.getPrefix().isBlank() ? leaf.getPrefix() : defaultPrefix;
+            QueueKeys queueKeys = (clusterTag != null && !clusterTag.isBlank())
+                    ? QueueKeys.forClusterFlow(clusterTag, nodePrefix, queueName)
+                    : new QueueKeys(nodePrefix, queueName);
+
+            String customJobId = leaf.getOpts() != null ? leaf.getOpts().getJobId() : null;
+            String serializedData = serializer.serialize(leaf.getData());
+
+            Map<String, Object> optsMap = leaf.getOpts() != null ? leaf.getOpts().toMap() : new HashMap<>();
+            if (parentKey != null) {
+                optsMap.put("parentKey", parentKey);
+            }
+            if (parentObj != null) {
+                Map<String, Object> effectiveParentObj = new HashMap<>(parentObj);
+                if (leaf.getOpts() != null) {
+                    if (leaf.getOpts().isFailParentOnFailure()) effectiveParentObj.put("fpof", true);
+                    if (leaf.getOpts().isContinueParentOnFailure()) effectiveParentObj.put("cpof", true);
+                    if (leaf.getOpts().isIgnoreDependencyOnFailure()) effectiveParentObj.put("idof", true);
+                    if (leaf.getOpts().isRemoveDependencyOnFailure()) effectiveParentObj.put("rdof", true);
+                }
+                optsMap.put("parent", effectiveParentObj);
+            }
+
+            futures.add(bullScripts.addStandardJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now));
+        }
+
+        try {
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Error awaiting pipelined leaf flow jobs: {}", e.getMessage(), e);
         }
     }
 

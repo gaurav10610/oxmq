@@ -58,16 +58,17 @@ public class BullMsgPack {
     public static byte[] buildAddJobArgs(String keyPrefix, String customId, String name,
                                          long timestamp, String parentKey, Map<String, Object> parent,
                                          String repeatJobKey, String deduplicationId) {
-        List<Object> args = new ArrayList<>(9);
-        args.add(keyPrefix != null ? keyPrefix : "");
-        args.add(customId != null ? customId : "");
-        args.add(name != null ? name : "");
-        args.add(timestamp);
-        args.add(parentKey);
-        args.add(parentKey != null && !parentKey.isBlank() ? parentKey + ":dependencies" : null);
-        args.add(parent);
-        args.add(repeatJobKey);
-        args.add(deduplicationId != null && !deduplicationId.isBlank() ? keyPrefix + "de:" + deduplicationId : null);
+        Object[] args = new Object[]{
+            keyPrefix != null ? keyPrefix : "",
+            customId != null ? customId : "",
+            name != null ? name : "",
+            timestamp,
+            parentKey,
+            parentKey != null && !parentKey.isBlank() ? parentKey + ":dependencies" : null,
+            parent,
+            repeatJobKey,
+            deduplicationId != null && !deduplicationId.isBlank() ? keyPrefix + "de:" + deduplicationId : null
+        };
         return pack(args);
     }
 
@@ -78,7 +79,17 @@ public class BullMsgPack {
         if (opts == null || opts.isEmpty()) {
             return Map.of();
         }
-        Map<String, Object> encoded = new HashMap<>();
+        boolean hasSpecialKey = false;
+        for (String k : OPTS_ENCODE_MAP.keySet()) {
+            if (opts.containsKey(k)) {
+                hasSpecialKey = true;
+                break;
+            }
+        }
+        if (!hasSpecialKey) {
+            return opts;
+        }
+        Map<String, Object> encoded = new HashMap<>(opts.size());
         for (Map.Entry<String, Object> entry : opts.entrySet()) {
             String key = OPTS_ENCODE_MAP.getOrDefault(entry.getKey(), entry.getKey());
             encoded.put(key, entry.getValue());

@@ -29,6 +29,20 @@ public interface Queue<T> extends Closeable {
     Job<T> add(String name, T data, JobOptions opts);
 
     /**
+     * Asynchronously enqueues a job with default options.
+     */
+    default java.util.concurrent.CompletableFuture<Job<T>> addAsync(String name, T data) {
+        return addAsync(name, data, null);
+    }
+
+    /**
+     * Asynchronously enqueues a job with custom options.
+     */
+    default java.util.concurrent.CompletableFuture<Job<T>> addAsync(String name, T data, JobOptions opts) {
+        return java.util.concurrent.CompletableFuture.completedFuture(add(name, data, opts));
+    }
+
+    /**
      * Fetches a job by its unique ID.
      */
     Job<T> getJob(String jobId);
