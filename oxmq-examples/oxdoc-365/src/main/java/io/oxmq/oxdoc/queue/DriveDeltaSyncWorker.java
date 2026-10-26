@@ -13,6 +13,7 @@ import io.oxmq.oxdoc.model.DriveItem;
 import io.oxmq.oxdoc.model.DriveType;
 import io.oxmq.oxdoc.model.MonitoredDrive;
 import io.oxmq.oxdoc.model.ScanOrigin;
+import io.oxmq.oxdoc.service.BackpressureService;
 import io.oxmq.oxdoc.service.DocumentCatalogRepository;
 import io.oxmq.oxdoc.service.TenantCooldownService;
 import io.oxmq.plugin.CheckpointStatePlugin;
@@ -20,6 +21,7 @@ import io.oxmq.spring.OxmqTemplate;
 import io.oxmq.spring.annotation.Header;
 import io.oxmq.spring.annotation.OxmqListener;
 import io.oxmq.tracing.TraceContext;
+import java.time.Duration;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +33,7 @@ import org.springframework.stereotype.Component;
  * Enforces Forward (Priority 1) vs Backward (Priority 10) priority arbitration,
  * yields capacity when tenant token headroom &lt; 25%, and dispatches OxMQ FlowProducer DAGs.
  * Checkpoints delta tokens using native OxMQ CheckpointStatePlugin and PostgreSQL for seamless crash recovery.
+ * Protects strict 200 MB Redis memory ceiling via BackpressureService.
  */
 @Component
 public class DriveDeltaSyncWorker {
@@ -42,6 +45,7 @@ public class DriveDeltaSyncWorker {
     private final DocumentCatalogRepository catalogRepository;
     private final CheckpointStatePlugin checkpointStatePlugin;
     private final OxmqTemplate oxmqTemplate;
+    private final BackpressureService backpressureService;
 
     @Autowired
     public DriveDeltaSyncWorker(
@@ -49,13 +53,15 @@ public class DriveDeltaSyncWorker {
             FlowProducer flowProducer,
             DocumentCatalogRepository catalogRepository,
             @Autowired(required = false) CheckpointStatePlugin checkpointStatePlugin,
-            @Autowired(required = false) OxmqTemplate oxmqTemplate
+            @Autowired(required = false) OxmqTemplate oxmqTemplate,
+            @Autowired(required = false) BackpressureService backpressureService
     ) {
         this.graphClient = graphClient;
         this.flowProducer = flowProducer;
         this.catalogRepository = catalogRepository;
         this.checkpointStatePlugin = checkpointStatePlugin;
         this.oxmqTemplate = oxmqTemplate;
+        this.backpressureService = backpressureService;
     }
 
     public DriveDeltaSyncWorker(
@@ -66,7 +72,7 @@ public class DriveDeltaSyncWorker {
             CheckpointStatePlugin checkpointStatePlugin,
             OxmqTemplate oxmqTemplate
     ) {
-        this(graphClient, flowProducer, catalogRepository, checkpointStatePlugin, oxmqTemplate);
+        this(graphClient, flowProducer, catalogRepository, checkpointStatePlugin, oxmqTemplate, null);
     }
 
     public DriveDeltaSyncWorker(
@@ -75,7 +81,7 @@ public class DriveDeltaSyncWorker {
             FlowProducer flowProducer,
             DocumentCatalogRepository catalogRepository
     ) {
-        this(graphClient, flowProducer, catalogRepository, null, null);
+        this(graphClient, flowProducer, catalogRepository, null, null, null);
     }
 
     public DriveDeltaSyncWorker(
@@ -83,7 +89,7 @@ public class DriveDeltaSyncWorker {
             TenantCooldownService cooldownService,
             FlowProducer flowProducer
     ) {
-        this(graphClient, flowProducer, null, null, null);
+        this(graphClient, flowProducer, null, null, null, null);
     }
 
     @OxmqListener(queue = OxDocQueueConstants.QUEUE_DRIVE_DELTA, concurrency = 20)
@@ -93,6 +99,29 @@ public class DriveDeltaSyncWorker {
     ) {
         log.info("Starting Drive Delta Sync for drive [{}] (tenant={}, origin={}, jobId={})",
                 payload.driveId(), payload.tenantId(), payload.scanOrigin(), jobId);
+
+        // Strict 200 MB Redis Memory Ceiling Guard: defer backward baseline crawls when backpressured
+        if (payload.scanOrigin() != ScanOrigin.FORWARD && backpressureService != null && backpressureService.shouldThrottle()) {
+            long delay = backpressureService.getBackoffDelayMs();
+            log.warn("[BACKPRESSURE] Redis memory ceiling guarded ({}/200 MB, backlog: {}). Deferring drive delta sync [{}] by {}ms. Zero data loss.",
+                    backpressureService.getRedisUsedMemoryMB(), backpressureService.getDownstreamBacklogJobs(), payload.driveId(), delay);
+            if (oxmqTemplate != null) {
+                JobOptions retryOpts = JobOptions.builder()
+                        .priority(10)
+                        .attempts(3)
+                        .delay(Duration.ofMillis(delay))
+                        .backoff(new BackoffStrategy.Exponential(1000L))
+                        .removeOnComplete(true)
+                        .build();
+                oxmqTemplate.send(
+                        OxDocQueueConstants.QUEUE_DRIVE_DELTA,
+                        "delta-defer-" + payload.driveId() + "-" + System.nanoTime(),
+                        payload,
+                        retryOpts
+                );
+            }
+            return 0;
+        }
 
         // Checkpoint Recovery: load continuation page token or existing delta token from CheckpointStatePlugin (or DB fallback).
         // Uses CheckpointStatePlugin.getCurrentCheckpoint() first to avoid a redundant synchronous Redis GET round-trip.
@@ -150,20 +179,33 @@ public class DriveDeltaSyncWorker {
                     payload.scanOrigin(),
                     deltaResult.nextLink()
             );
-            JobOptions continuationOptions = JobOptions.builder()
+
+            long delay = 0L;
+            if (backpressureService != null && backpressureService.shouldThrottle() && payload.scanOrigin() != ScanOrigin.FORWARD) {
+                delay = backpressureService.getBackoffDelayMs();
+                log.warn("[BACKPRESSURE] Redis memory ceiling 200MB guarded. Pacing continuation page for drive [{}] by {}ms",
+                        payload.driveId(), delay);
+            }
+
+            JobOptions.Builder continuationOptBuilder = JobOptions.builder()
                     .priority(contPriority)
                     .attempts(3)
                     .backoff(new BackoffStrategy.Exponential(1000L))
-                    .build();
+                    .removeOnComplete(true);
+
+            if (delay > 0) {
+                continuationOptBuilder.delay(Duration.ofMillis(delay));
+            }
+
             try {
                 oxmqTemplate.send(
                         OxDocQueueConstants.QUEUE_DRIVE_DELTA,
                         "delta-page-" + payload.driveId() + "-" + System.nanoTime(),
                         continuationPayload,
-                        continuationOptions
+                        continuationOptBuilder.build()
                 );
-                log.info("Pipelined continuation delta sync page for drive [{}] (tenant={})",
-                        payload.driveId(), payload.tenantId());
+                log.info("Pipelined continuation delta sync page for drive [{}] (tenant={}, delay={}ms)",
+                        payload.driveId(), payload.tenantId(), delay);
             } catch (Exception e) {
                 log.error("Failed to enqueue delta continuation page for drive [{}]: {}", payload.driveId(), e.getMessage());
             }

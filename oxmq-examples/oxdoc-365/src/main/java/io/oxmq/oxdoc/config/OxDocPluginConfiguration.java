@@ -7,7 +7,9 @@ import io.oxmq.interceptor.InterceptorDecision;
 import io.oxmq.interceptor.JobInterceptor;
 import io.oxmq.model.Job;
 import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
+import io.oxmq.oxdoc.model.ScanOrigin;
 import io.oxmq.oxdoc.model.TenantScopedPayload;
+import io.oxmq.oxdoc.service.BackpressureService;
 import io.oxmq.oxdoc.service.TenantCooldownService;
 import io.oxmq.oxdoc.service.TenantSubscriptionService;
 import io.oxmq.plugin.AdaptiveRateLimiterPlugin;
@@ -57,6 +59,29 @@ public class OxDocPluginConfiguration {
             public InterceptorDecision beforeProcess(Job<?> job) {
                 if (job != null && job.getData() instanceof TenantScopedPayload tsp) {
                     cooldownService.recordTenantApiCall(tsp.tenantId(), tsp.scanOrigin());
+                }
+                return InterceptorDecision.proceed();
+            }
+        };
+    }
+
+    @Bean
+    public JobInterceptor backpressureJobInterceptor(BackpressureService backpressureService) {
+        log.info("Configuring native OxMQ JobInterceptor for strict 200 MB Redis memory ceiling and queue backpressure...");
+        return new JobInterceptor() {
+            @Override
+            public InterceptorDecision beforeProcess(Job<?> job) {
+                if (job == null) return InterceptorDecision.proceed();
+                Object data = job.getData();
+                if (data instanceof DriveDeltaSyncPayload payload) {
+                    if (payload.scanOrigin() != ScanOrigin.FORWARD && backpressureService.shouldThrottle()) {
+                        long delayMs = backpressureService.getBackoffDelayMs();
+                        log.warn("[BACKPRESSURE INTERCEPTOR] Redis memory ceiling guarded ({}/200 MB, backlog: {}). " +
+                                 "Moving delta sync job [{}] (drive={}) to delayed ({} ms, skipAttempt=true)",
+                                backpressureService.getRedisUsedMemoryMB(), backpressureService.getDownstreamBacklogJobs(),
+                                job.getId(), payload.driveId(), delayMs);
+                        return InterceptorDecision.delay(delayMs, true);
+                    }
                 }
                 return InterceptorDecision.proceed();
             }

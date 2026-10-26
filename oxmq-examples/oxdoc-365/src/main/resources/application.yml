@@ -62,6 +62,15 @@ oxdoc:
     evaluation-interval-ms: 15000 # 15s background evaluation cycle
     damping-window-ms: 30000     # 30s damping freeze after downgrade
     clean-windows-for-upgrade: 2  # 2 clean intervals required to step up tier
+  backpressure:
+    enabled: true
+    max-redis-memory-bytes: 209715200 # 200 MB strict ceiling
+    high-memory-threshold-pct: 0.85   # 85% = 170 MB triggers backpressure
+    low-memory-threshold-pct: 0.60    # 60% = 120 MB releases backpressure
+    high-queue-watermark: 35000       # 35,000 jobs triggers queue backpressure
+    low-queue-watermark: 10000        # 10,000 jobs releases queue backpressure
+    backoff-delay-ms: 2500            # 2.5s pacing delay on delayed continuation jobs
+    sample-interval-ms: 1000          # 1s Redis INFO memory sample rate
   overrides: {}                  # Optional static overrides: e.g. { "tenant-custom": "ENTERPRISE" }
 
 management:

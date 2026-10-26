@@ -15,6 +15,7 @@ import io.oxmq.oxdoc.model.TenantDiscoveryPayload;
 import io.oxmq.oxdoc.model.TenantProfile;
 import io.oxmq.oxdoc.model.TenantTier;
 import io.oxmq.oxdoc.queue.OxDocQueueConstants;
+import io.oxmq.oxdoc.service.BackpressureService;
 import io.oxmq.oxdoc.service.DocumentCatalogRepository;
 import io.oxmq.oxdoc.service.LiveMetricsService;
 import io.oxmq.oxdoc.service.TenantCooldownService;
@@ -62,6 +63,28 @@ public class DashboardController {
     @Autowired(required = false)
     private MockGraphClient mockGraphClient;
 
+    @Autowired(required = false)
+    private BackpressureService backpressureService;
+
+    @Autowired
+    public DashboardController(
+            DocumentCatalogRepository repository,
+            LiveMetricsService metricsService,
+            OxmqTemplate oxmqTemplate,
+            TenantCooldownService cooldownService,
+            MockAdminClient mockAdminClient,
+            TenantSubscriptionService tenantSubscriptionService,
+            @Autowired(required = false) BackpressureService backpressureService
+    ) {
+        this.repository = repository;
+        this.metricsService = metricsService;
+        this.oxmqTemplate = oxmqTemplate;
+        this.cooldownService = cooldownService;
+        this.mockAdminClient = mockAdminClient;
+        this.tenantSubscriptionService = tenantSubscriptionService;
+        this.backpressureService = backpressureService;
+    }
+
     public DashboardController(
             DocumentCatalogRepository repository,
             LiveMetricsService metricsService,
@@ -70,12 +93,7 @@ public class DashboardController {
             MockAdminClient mockAdminClient,
             TenantSubscriptionService tenantSubscriptionService
     ) {
-        this.repository = repository;
-        this.metricsService = metricsService;
-        this.oxmqTemplate = oxmqTemplate;
-        this.cooldownService = cooldownService;
-        this.mockAdminClient = mockAdminClient;
-        this.tenantSubscriptionService = tenantSubscriptionService;
+        this(repository, metricsService, oxmqTemplate, cooldownService, mockAdminClient, tenantSubscriptionService, null);
     }
 
     /**
@@ -127,7 +145,36 @@ public class DashboardController {
         map.put("totalFilesScanned", metrics.get("totalFiles"));
         map.put("totalDocumentsIndexed", metrics.get("totalDocuments"));
         map.put("totalDrivesMonitored", metrics.get("totalDrives"));
+
+        if (backpressureService != null) {
+            map.put("redisUsedMemoryBytes", backpressureService.getRedisUsedMemoryBytes());
+            map.put("redisUsedMemoryMB", backpressureService.getRedisUsedMemoryMB());
+            map.put("redisMaxMemoryCeilingMB", backpressureService.getRedisMaxMemoryCeilingMB());
+            map.put("isBackpressureActive", backpressureService.isBackpressureActive());
+            map.put("backpressureYields", backpressureService.getTotalYields());
+            map.put("downstreamBacklogJobs", backpressureService.getDownstreamBacklogJobs());
+            map.put("lastThrottleReason", backpressureService.getLastThrottleReason());
+        } else {
+            map.put("redisUsedMemoryBytes", 0L);
+            map.put("redisUsedMemoryMB", 0.0);
+            map.put("redisMaxMemoryCeilingMB", 200.0);
+            map.put("isBackpressureActive", false);
+            map.put("backpressureYields", 0L);
+            map.put("downstreamBacklogJobs", 0L);
+            map.put("lastThrottleReason", "NONE");
+        }
         return ResponseEntity.ok(map);
+    }
+
+    /**
+     * Exposes real-time Redis memory ceiling and queue backpressure telemetry.
+     */
+    @GetMapping("/backpressure")
+    public ResponseEntity<Map<String, Object>> getBackpressureTelemetry() {
+        if (backpressureService != null) {
+            return ResponseEntity.ok(backpressureService.getTelemetry());
+        }
+        return ResponseEntity.ok(Map.of("enabled", false, "message", "BackpressureService not configured"));
     }
 
     @GetMapping("/metrics")
