@@ -270,6 +270,10 @@ public class OxmqWorker<T> implements Worker<T> {
 
                     int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
                     log.debug("Moved parent job {} to waiting-children: result code {}", jobId, moveRes);
+                    if (moveRes == 1) {
+                        bullScripts.moveJobFromActiveToWait(binConn, queueKeys, jobId, workerId);
+                        log.debug("All child dependencies already completed; moved parent job {} back to wait", jobId);
+                    }
                 } catch (Exception e) {
                     throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
                 }
