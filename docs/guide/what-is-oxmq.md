@@ -26,8 +26,9 @@ OxMQ provides the modern Java ecosystem with the same ergonomic, battle-tested d
 - **Synchronous & Reactive Request-Reply (`waitUntilFinished`)**: Await background task completion directly from REST controllers or workflow coordinators via Redis Streams and `isFinished-3.lua` without loop-polling.
 - **Automated Memory Retention (`KeepJobs`)**: Prevent Redis memory creep with structured retention policies (`count`, `ageSeconds`, `limit`) integrated atomically into `moveToFinished-14.lua`.
 - **Full Polyglot & Bull-Board Compatibility**: Uses standard `{prefix}:{queue}:*` Redis keys and MessagePack serialization, allowing instant plug-and-play with the open-source **[Bull-Board Web UI](https://github.com/felixmosh/bull-board)** and cross-language Node.js/Python producers and workers.
-- **Pluggable Storage Backend (`QueueBackend`)**: Clean abstraction mirroring BullMQ v6 architecture with `RedisQueueBackend` implementation.
-- **Spring Boot 3+ Enterprise Integration**: Declarative `@OxmqListener` and `@OxmqBatchListener` annotations, multi-event `@OxmqHandler` routing, auto-configuration, and Spring Boot Actuator health checks.
+- **Virtual Queue Groups & Multi-Tenancy**: Built-in fair circular round-robin scheduling across virtual tenant groups with intra-group priorities (`group.priority`), per-group concurrency limits (`groups:concurrency`), and dynamic throttling (100% Free & Open-Source, NO Pro tier or paywall).
+- **Strict Memory Ceilings & Zero-Data-Loss Backpressure**: Protect Redis from crawler spikes and enforce strict memory budgets (e.g. 200 MB) via non-blocking `JobInterceptor` admission gates and `moveToDelayed(skipAttempt: true)`. Eliminates destructive Redis LRU key evictions.
+- **Spring Boot 3+ Enterprise Integration**: Declarative `@OxmqListener` and `@OxmqBatchListener` annotations, multi-event `@OxmqHandler` routing, auto-configuration, `@EnableOxmqOutbox` transactional outbox, and Spring Boot Actuator health checks.
 
 ---
 

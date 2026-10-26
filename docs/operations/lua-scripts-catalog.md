@@ -101,6 +101,7 @@ All extension scripts are strictly isolated in `oxmq-core/src/main/resources/lua
 | `setGroupRateLimit-1.lua` | `extensions/` | Applies dynamic, cluster-wide throttling to a virtual group (e.g. upon upstream HTTP 429). |
 | `getGroupsByStatus-1.lua` | `extensions/` | Returns paginated virtual groups by status (`waiting`, `limited`, `maxed`, `paused`). |
 | `getGroupJobs-1.lua` | `extensions/` | Returns paginated job IDs waiting inside a specific virtual group. |
+| `repairGroup-1.lua` | `extensions/` | Self-healing atomic reconciliation of orphaned or desynchronized maxed virtual groups after ungraceful worker crashes. |
 
 ---
 

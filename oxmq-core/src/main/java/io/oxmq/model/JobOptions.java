@@ -557,7 +557,22 @@ public class JobOptions {
         }
 
         public Builder deduplicationTtl(Duration ttl) {
-            options.setDeduplicationTtlMs(ttl.toMillis());
+            options.setDeduplicationTtlMs(ttl != null ? ttl.toMillis() : 0);
+            return this;
+        }
+
+        public Builder debounce(Duration duration) {
+            return debounceDuration(duration);
+        }
+
+        public Builder debounceDuration(Duration duration) {
+            options.setDeduplicationTtlMs(duration != null ? duration.toMillis() : 0);
+            return this;
+        }
+
+        public Builder debounce(String id, Duration duration) {
+            options.setDeduplicationId(id);
+            options.setDeduplicationTtlMs(duration != null ? duration.toMillis() : 0);
             return this;
         }
 

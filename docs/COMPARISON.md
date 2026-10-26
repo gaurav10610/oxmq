@@ -43,6 +43,7 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Transactional Outbox Engine** | **Native Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) or custom code |
 | **Request-Reply Pattern** | **Native `waitUntilFinished` & `waitUntilFinishedAsync` (Redis Streams)** | `Job.waitUntilFinished` (Redis Streams) |
 | **Memory Retention (`KeepJobs`)** | **Built-in `KeepJobs` (`count`, `ageSeconds`, `limit`) via `moveToFinished-14.lua`** | Built-in `keepJobs` via `moveToFinished-14.lua` |
+| **Strict Redis Memory Ceiling** | **Supported via `JobInterceptor` + `moveToDelayed(skipAttempt: true)`** | Not supported (Redis LRU eviction destroys active queues) |
 | **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy (including `dn:` & `pc`) | Standard `bull:<queue>:*` hierarchy |
 | **Job Lifecycle States** | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED |
 | **Parent-Child DAG Workflows** | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) |
@@ -126,7 +127,7 @@ OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq
 ./mvnw clean test-compile -pl oxmq-benchmarks
 
 # Run benchmarks against your local or remote Redis instance
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.5.0.jar
+java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.8.0.jar
 ```
 
 ---

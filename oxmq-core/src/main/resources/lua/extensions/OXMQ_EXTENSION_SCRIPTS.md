@@ -17,3 +17,4 @@
 | `setGroupRateLimit-1.lua` | Applies dynamic cooldown / rate limiting to a specific virtual group. |
 | `getGroupsByStatus-1.lua` | Paginates virtual groups by status (`waiting`, `limited`, `maxed`, `paused`) for Bull-Board Pro adapter compatibility. |
 | `getGroupJobs-1.lua` | Returns paginated job IDs for a specific virtual group. |
+| `repairGroup-1.lua` | Atomically reconciles desynchronized group active counts and restores orphaned groups from `groups:maxed` back to `groups:waiting`. |

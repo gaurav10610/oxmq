@@ -11,7 +11,7 @@ OxMQ is engineered around 6 foundational pillars:
 2. **Virtual Thread Native**: Built for Java 21+ Project Loom Virtual Threads (with automatic fallback to platform thread pools on Java 17 LTS), enabling 10,000+ concurrent I/O-bound workers with ~1 KB heap footprint per task.
 3. **High-Throughput Batch Dequeue**: Bulk pop up to $N$ jobs atomically in a single Redis call (`OxmqBatchWorker`) with `maxBatchBytes` memory safety for fast database ingestion.
 4. **100% BullMQ Wire & Script Parity**: Reuses the official 49 BullMQ Lua scripts with standard Redis key topologies, unlocking seamless polyglot interoperability (Java &harr; Node.js) and instant compatibility with **Bull-Board UI**.
-5. **Pluggable Storage Backend (`QueueBackend`)**: Decouples high-level queue abstractions from the underlying Lettuce Redis driver (`RedisQueueBackend`).
+5. **Strict Memory Ceilings & Zero-Data-Loss Backpressure**: Application-layer admission control via `JobInterceptor` and `moveToDelayed(skipAttempt: true)` enforcing strict byte-level Redis memory budgets (e.g. 200 MB) without destructive Redis LRU key evictions.
 6. **Microsecond Observability**: Built-in Micrometer instrumentation, OpenTelemetry W3C distributed tracing, and pre-configured Grafana dashboards.
 
 ```mermaid

@@ -1,6 +1,6 @@
 # BullMQ Wire Compatibility & Cross-Language Interop
 
-OxMQ is architected with **100% wire and protocol compatibility with BullMQ v5**.
+OxMQ is architected with **100% wire and protocol compatibility with BullMQ v5 and v6**.
 
 This means you can produce jobs in TypeScript/Node.js and consume them in Java with OxMQ, or produce jobs in Java with OxMQ and consume them with BullMQ in Python or Node.js.
 
