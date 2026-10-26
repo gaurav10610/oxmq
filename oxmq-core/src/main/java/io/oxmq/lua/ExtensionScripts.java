@@ -21,6 +21,8 @@ import java.util.concurrent.CompletionException;
 public class ExtensionScripts {
 
     private final LuaScriptManager scriptManager;
+    private static final byte[] EMPTY_BYTES = new byte[0];
+    private static final byte[] DEFAULT_JSON_BYTES = "{}".getBytes(StandardCharsets.UTF_8);
 
     public ExtensionScripts(LuaScriptManager scriptManager) {
         this.scriptManager = scriptManager;
@@ -38,28 +40,18 @@ public class ExtensionScripts {
                               String jsonData, String optsJson, String groupId,
                               long maxSize, int priority, String deduplicationId,
                               long timestamp) {
-        String[] redisKeys = new String[] {
-            keys.toKey("groups:waiting"),
-            keys.toKey("groups:" + groupId),
-            keys.toKey("groups:" + groupId + ":prioritized"),
-            keys.toKey("groups:paused"),
-            keys.toKey("groups:maxed"),
-            keys.toKey("groups:limited"),
-            keys.getKey("id"),
-            keys.getKey("events"),
-            keys.getKey("marker")
-        };
+        String[] redisKeys = keys.getAddGroupJobKeys(groupId);
 
         byte[] prefixBytes = keys.getPrefixBytes();
-        byte[] customIdBytes = (customJobId != null ? customJobId : "").getBytes(StandardCharsets.UTF_8);
-        byte[] nameBytes = (jobName != null ? jobName : "").getBytes(StandardCharsets.UTF_8);
+        byte[] customIdBytes = (customJobId != null && !customJobId.isEmpty()) ? customJobId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
+        byte[] nameBytes = (jobName != null && !jobName.isEmpty()) ? jobName.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
-        byte[] dataBytes = (jsonData != null ? jsonData : "{}").getBytes(StandardCharsets.UTF_8);
-        byte[] optsBytes = (optsJson != null ? optsJson : "{}").getBytes(StandardCharsets.UTF_8);
-        byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] dataBytes = (jsonData != null && !jsonData.isEmpty()) ? jsonData.getBytes(StandardCharsets.UTF_8) : DEFAULT_JSON_BYTES;
+        byte[] optsBytes = (optsJson != null && !optsJson.isEmpty()) ? optsJson.getBytes(StandardCharsets.UTF_8) : DEFAULT_JSON_BYTES;
+        byte[] groupBytes = (groupId != null && !groupId.isEmpty()) ? groupId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
         byte[] maxSizeBytes = String.valueOf(maxSize).getBytes(StandardCharsets.UTF_8);
         byte[] prioBytes = String.valueOf(priority).getBytes(StandardCharsets.UTF_8);
-        byte[] dedupBytes = (deduplicationId != null ? deduplicationId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] dedupBytes = (deduplicationId != null && !deduplicationId.isEmpty()) ? deduplicationId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
 
         try {
             Object result = scriptManager.evalBinary(connection, ExtensionLuaScript.ADD_GROUP_JOB,
@@ -84,28 +76,18 @@ public class ExtensionScripts {
                                                                String jsonData, String optsJson, String groupId,
                                                                long maxSize, int priority, String deduplicationId,
                                                                long timestamp) {
-        String[] redisKeys = new String[] {
-            keys.toKey("groups:waiting"),
-            keys.toKey("groups:" + groupId),
-            keys.toKey("groups:" + groupId + ":prioritized"),
-            keys.toKey("groups:paused"),
-            keys.toKey("groups:maxed"),
-            keys.toKey("groups:limited"),
-            keys.getKey("id"),
-            keys.getKey("events"),
-            keys.getKey("marker")
-        };
+        String[] redisKeys = keys.getAddGroupJobKeys(groupId);
 
         byte[] prefixBytes = keys.getPrefixBytes();
-        byte[] customIdBytes = (customJobId != null ? customJobId : "").getBytes(StandardCharsets.UTF_8);
-        byte[] nameBytes = (jobName != null ? jobName : "").getBytes(StandardCharsets.UTF_8);
+        byte[] customIdBytes = (customJobId != null && !customJobId.isEmpty()) ? customJobId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
+        byte[] nameBytes = (jobName != null && !jobName.isEmpty()) ? jobName.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
-        byte[] dataBytes = (jsonData != null ? jsonData : "{}").getBytes(StandardCharsets.UTF_8);
-        byte[] optsBytes = (optsJson != null ? optsJson : "{}").getBytes(StandardCharsets.UTF_8);
-        byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] dataBytes = (jsonData != null && !jsonData.isEmpty()) ? jsonData.getBytes(StandardCharsets.UTF_8) : DEFAULT_JSON_BYTES;
+        byte[] optsBytes = (optsJson != null && !optsJson.isEmpty()) ? optsJson.getBytes(StandardCharsets.UTF_8) : DEFAULT_JSON_BYTES;
+        byte[] groupBytes = (groupId != null && !groupId.isEmpty()) ? groupId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
         byte[] maxSizeBytes = String.valueOf(maxSize).getBytes(StandardCharsets.UTF_8);
         byte[] prioBytes = String.valueOf(priority).getBytes(StandardCharsets.UTF_8);
-        byte[] dedupBytes = (deduplicationId != null ? deduplicationId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] dedupBytes = (deduplicationId != null && !deduplicationId.isEmpty()) ? deduplicationId.getBytes(StandardCharsets.UTF_8) : EMPTY_BYTES;
 
         return scriptManager.evalBinaryAsync(connection, ExtensionLuaScript.ADD_GROUP_JOB,
                 ScriptOutputType.VALUE, redisKeys,

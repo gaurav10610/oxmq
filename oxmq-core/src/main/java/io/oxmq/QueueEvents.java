@@ -117,17 +117,19 @@ public class QueueEvents implements Closeable {
             conn = connectionManager.createDedicatedConnection();
             var sync = conn.sync();
             XReadArgs xreadArgs = XReadArgs.Builder.block(Duration.ofSeconds(2)).count(100);
+            StreamOffset<String> streamOffset = StreamOffset.from(channelName, lastId);
             while (running && !Thread.currentThread().isInterrupted()) {
                 try {
                     List<StreamMessage<String, String>> messages = sync.xread(
                             xreadArgs,
-                            StreamOffset.from(channelName, lastId)
+                            streamOffset
                     );
                     if (messages != null && !messages.isEmpty()) {
                         for (StreamMessage<String, String> message : messages) {
                             lastId = message.getId();
                             handleStreamPayload(message.getBody());
                         }
+                        streamOffset = StreamOffset.from(channelName, lastId);
                     }
                 } catch (Exception e) {
                     if (!running) {

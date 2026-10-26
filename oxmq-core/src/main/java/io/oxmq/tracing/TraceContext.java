@@ -68,7 +68,17 @@ public record TraceContext(String version, String traceId, String spanId, String
         if (traceparent == null || traceparent.isBlank()) {
             return null;
         }
-        String[] parts = traceparent.trim().split("-");
+        String tp = traceparent.trim();
+        int len = tp.length();
+        // Zero-regex fast-path for standard 55-char W3C traceparent (version 2, traceId 32, spanId 16, flags 2)
+        if (len == 55 && tp.charAt(2) == '-' && tp.charAt(35) == '-' && tp.charAt(52) == '-') {
+            String version = tp.substring(0, 2);
+            String traceId = tp.substring(3, 35);
+            String spanId = tp.substring(36, 52);
+            String flags = tp.substring(53, 55);
+            return new TraceContext(version, traceId, spanId, flags, tracestate);
+        }
+        String[] parts = tp.split("-");
         if (parts.length != 4) {
             return null;
         }

@@ -425,8 +425,10 @@ public class OxmqQueue<T> implements Queue<T> {
         if (state != null) {
             job.setState(state);
         } else {
-            String stateStr = getState(jobId);
-            job.setState(JobState.fromBullMqState(stateStr));
+            job.setStateSupplier(() -> {
+                String stateStr = getState(jobId);
+                return JobState.fromBullMqState(stateStr);
+            });
         }
 
         // Memory optimization: lazily load children values only when requested
@@ -538,17 +540,19 @@ public class OxmqQueue<T> implements Queue<T> {
 
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         long now = System.currentTimeMillis();
-        List<CompletableFuture<String>> futures = new java.util.ArrayList<>(jobs.size());
-        List<PreparedJob<T>> prepared = new java.util.ArrayList<>(jobs.size());
+        int size = jobs.size();
+        List<CompletableFuture<String>> futures = new java.util.ArrayList<>(size);
+        JobOptions[] resolvedOptions = new JobOptions[size];
 
-        for (io.oxmq.model.JobRequest<T> req : jobs) {
+        for (int i = 0; i < size; i++) {
+            io.oxmq.model.JobRequest<T> req = jobs.get(i);
             String jobName = req.name() != null ? req.name() : "default";
             T data = req.data();
             JobOptions options = resolveJobOptions(req.options());
+            resolvedOptions[i] = options;
             String serializedData = serializer.serialize(data);
             long delayMs = options.getDelayMs();
             String customJobId = options.getJobId() != null ? options.getJobId() : "";
-            Map<String, Object> optsMap = options.toMap();
 
             String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
             CompletableFuture<String> future;
@@ -561,16 +565,18 @@ public class OxmqQueue<T> implements Queue<T> {
                 String dedupId = options.getDeduplicationId();
                 future = extensionScripts.addGroupJobAsync(binConn, queueKeys, customJobId, jobName,
                         serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
-            } else if (delayMs > 0) {
-                future = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
-            } else if (options.getPriority() > 0) {
-                future = bullScripts.addPrioritizedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
             } else {
-                future = bullScripts.addStandardJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now);
+                Map<String, Object> optsMap = options.toMap();
+                if (delayMs > 0) {
+                    future = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+                } else if (options.getPriority() > 0) {
+                    future = bullScripts.addPrioritizedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
+                } else {
+                    future = bullScripts.addStandardJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now);
+                }
             }
 
             futures.add(future);
-            prepared.add(new PreparedJob<>(jobName, data, options));
         }
 
         try {
@@ -579,9 +585,10 @@ public class OxmqQueue<T> implements Queue<T> {
             log.warn("Error awaiting pipelined addBulk futures on queue {}", name, e);
         }
 
-        List<Job<T>> createdJobs = new java.util.ArrayList<>(jobs.size());
-        for (int i = 0; i < jobs.size(); i++) {
-            PreparedJob<T> prep = prepared.get(i);
+        List<Job<T>> createdJobs = new java.util.ArrayList<>(size);
+        for (int i = 0; i < size; i++) {
+            io.oxmq.model.JobRequest<T> req = jobs.get(i);
+            JobOptions options = resolvedOptions[i];
             CompletableFuture<String> fut = futures.get(i);
             String jobId;
             try {
@@ -594,7 +601,8 @@ public class OxmqQueue<T> implements Queue<T> {
                 jobId = "unknown";
             }
 
-            Job<T> job = new Job<>(jobId, prep.name(), prep.data(), prep.options());
+            String jobName = req.name() != null ? req.name() : "default";
+            Job<T> job = new Job<>(jobId, jobName, req.data(), options);
             job.setQueueName(name);
             job.setTimestamp(now);
             wireJobLifecycle(job);
@@ -604,8 +612,6 @@ public class OxmqQueue<T> implements Queue<T> {
 
         return createdJobs;
     }
-
-    private record PreparedJob<T>(String name, T data, JobOptions options) {}
 
     @Override
     public void promote(String jobId) {
@@ -809,7 +815,7 @@ public class OxmqQueue<T> implements Queue<T> {
         long nextMillis = io.oxmq.util.CronEvaluator.parse(cronPattern).nextExecution(now, null);
         String serializedData = serializer.serialize(data);
         JobOptions options = opts != null ? opts : JobOptions.defaults();
-        return backend.addJobScheduler(schedulerId, nextMillis, jobName, serializedData, options.toMap(), null, cronPattern, null);
+        return bullScripts.addJobScheduler(connectionManager.getBinaryConnection(), queueKeys, schedulerId, nextMillis, jobName, serializedData, options.toMap(), null, cronPattern, null);
     }
 
     @Override
@@ -826,7 +832,7 @@ public class OxmqQueue<T> implements Queue<T> {
         long iterations = 0;
         Long cursor;
         do {
-            cursor = backend.moveJobsToWait(stateStr, batchCount, ts);
+            cursor = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, batchCount, ts);
             iterations++;
         } while (cursor != null && cursor == 1L);
         return iterations;
@@ -834,12 +840,19 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long promoteJobs(int count) {
-        return backend.promoteJobs(count);
+        int batchCount = count > 0 ? count : 1000;
+        long iterations = 0;
+        Long res;
+        do {
+            res = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", batchCount, Long.MAX_VALUE);
+            iterations++;
+        } while (res != null && res == 1L);
+        return iterations;
     }
 
     @Override
     public void trimEvents(long maxLength) {
-        backend.trimEvents(maxLength);
+        connectionManager.getCommandConnection().sync().xtrim(queueKeys.getKey("events"), maxLength);
     }
 
     @Override
@@ -847,7 +860,7 @@ public class OxmqQueue<T> implements Queue<T> {
         if (priorities == null || priorities.length == 0) {
             return Map.of();
         }
-        List<Long> counts = backend.getCountsPerPriority(priorities);
+        List<Long> counts = bullScripts.getCountsPerPriority(connectionManager.getBinaryConnection(), queueKeys, priorities);
         Map<Integer, Long> map = new java.util.LinkedHashMap<>();
         for (int i = 0; i < priorities.length; i++) {
             map.put(priorities[i], i < counts.size() ? counts.get(i) : 0L);
@@ -864,7 +877,7 @@ public class OxmqQueue<T> implements Queue<T> {
         for (int i = 0; i < states.length; i++) {
             stateNames[i] = states[i] == JobState.WAITING ? "wait" : states[i].name().toLowerCase();
         }
-        List<List<String>> raw = backend.getRanges(start, end, asc, stateNames);
+        List<List<String>> raw = bullScripts.getRanges(connectionManager.getBinaryConnection(), queueKeys, start, end, asc, stateNames);
         Map<JobState, List<String>> result = new java.util.LinkedHashMap<>();
         for (int i = 0; i < states.length; i++) {
             result.put(states[i], i < raw.size() ? raw.get(i) : List.of());
@@ -874,7 +887,13 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId) {
-        return backend.getDependencyCounts(jobId);
+        List<Long> counts = bullScripts.getDependencyCounts(connectionManager.getBinaryConnection(), queueKeys, jobId,
+                "processed", "unprocessed", "failed", "ignored");
+        long processed = !counts.isEmpty() ? counts.get(0) : 0L;
+        long unprocessed = counts.size() > 1 ? counts.get(1) : 0L;
+        long failed = counts.size() > 2 ? counts.get(2) : 0L;
+        long ignored = counts.size() > 3 ? counts.get(3) : 0L;
+        return new io.oxmq.model.JobDependencyCounts(processed, unprocessed, failed, ignored);
     }
 
     @Override
@@ -919,17 +938,17 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public boolean removeChildDependency(String jobId, String parentKey) {
-        return backend.removeChildDependency(jobId, parentKey);
+        return bullScripts.removeChildDependency(connectionManager.getBinaryConnection(), queueKeys, jobId, parentKey);
     }
 
     @Override
     public void removeUnprocessedChildren(String jobId) {
-        backend.removeUnprocessedChildren(jobId);
+        bullScripts.removeUnprocessedChildren(connectionManager.getBinaryConnection(), queueKeys, jobId);
     }
 
     @Override
     public Map<String, Object> getJobScheduler(String schedulerId) {
-        List<Object> raw = backend.getJobScheduler(schedulerId);
+        List<Object> raw = bullScripts.getJobScheduler(connectionManager.getBinaryConnection(), queueKeys, schedulerId);
         Map<String, Object> map = new java.util.LinkedHashMap<>();
         if (raw != null && raw.size() >= 2) {
             if (raw.get(0) instanceof Map<?, ?> m) {
@@ -944,17 +963,18 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long getJobSchedulersCount() {
-        return backend.getJobSchedulersCount();
+        Long card = connectionManager.getCommandConnection().sync().zcard(queueKeys.getKey("repeat"));
+        return card != null ? card : 0L;
     }
 
     @Override
     public boolean isMaxed() {
-        return backend.isMaxed();
+        return bullScripts.isMaxed(connectionManager.getBinaryConnection(), queueKeys);
     }
 
     @Override
     public long removeOrphanedJobs(List<String> candidateJobIds) {
-        Long removed = backend.removeOrphanedJobs(candidateJobIds);
+        Long removed = bullScripts.removeOrphanedJobs(connectionManager.getBinaryConnection(), queueKeys, candidateJobIds);
         return removed != null ? removed : 0L;
     }
 
@@ -986,7 +1006,7 @@ public class OxmqQueue<T> implements Queue<T> {
         if (jobId == null || jobId.isBlank()) {
             return List.of();
         }
-        return backend.isFinished(jobId, fetchValue);
+        return bullScripts.isFinished(connectionManager.getBinaryConnection(), queueKeys, jobId, fetchValue);
     }
 
     private volatile QueueEvents internalQueueEvents;
@@ -1070,7 +1090,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
         List<Job<T>> result = new java.util.ArrayList<>();
         try {
-            List<Object> rawResults = backend.getJobs(start, end, asc, 1000, stateStrings);
+            List<Object> rawResults = bullScripts.getJobs(connectionManager.getBinaryConnection(), queueKeys, start, end, asc, 1000, stateStrings);
             if (rawResults != null && !rawResults.isEmpty()) {
                 for (int sIdx = 0; sIdx < rawResults.size(); sIdx++) {
                     JobState currentState = sIdx < states.size() ? states.get(sIdx) : null;
@@ -1144,7 +1164,7 @@ public class OxmqQueue<T> implements Queue<T> {
         for (int i = 0; i < states.length; i++) {
             typeNames[i] = states[i].getBullMqName();
         }
-        List<Long> countsList = backend.getCounts(typeNames);
+        List<Long> countsList = bullScripts.getCounts(connectionManager.getBinaryConnection(), queueKeys, typeNames);
         Map<JobState, Long> result = new java.util.EnumMap<>(JobState.class);
         for (int i = 0; i < states.length; i++) {
             result.put(states[i], i < countsList.size() && countsList.get(i) != null ? countsList.get(i) : 0L);
@@ -1154,42 +1174,58 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public Long getRateLimitTtl() {
-        return backend.getRateLimitTtl(0);
+        return bullScripts.getRateLimitTtl(connectionManager.getBinaryConnection(), queueKeys, 0);
     }
 
     @Override
     public void setGlobalConcurrency(int concurrency) {
-        backend.setGlobalConcurrency(concurrency);
+        connectionManager.getCommandConnection().sync().hset(queueKeys.getKey("meta"), "concurrency", String.valueOf(concurrency));
     }
 
     @Override
     public Integer getGlobalConcurrency() {
-        return backend.getGlobalConcurrency();
+        String val = connectionManager.getCommandConnection().sync().hget(queueKeys.getKey("meta"), "concurrency");
+        return val != null ? Integer.parseInt(val) : null;
     }
 
     @Override
     public boolean removeGlobalConcurrency() {
-        return backend.removeGlobalConcurrency();
+        Long removed = connectionManager.getCommandConnection().sync().hdel(queueKeys.getKey("meta"), "concurrency");
+        return removed != null && removed > 0;
     }
 
     @Override
     public void setGlobalRateLimit(int max, long durationMillis) {
-        backend.setGlobalRateLimit(max, durationMillis);
+        Map<String, String> fields = Map.of(
+            "max", String.valueOf(max),
+            "duration", String.valueOf(durationMillis)
+        );
+        connectionManager.getCommandConnection().sync().hset(queueKeys.getKey("meta"), fields);
     }
 
     @Override
     public io.oxmq.model.GlobalRateLimit getGlobalRateLimit() {
-        return backend.getGlobalRateLimit();
+        var sync = connectionManager.getCommandConnection().sync();
+        String maxStr = sync.hget(queueKeys.getKey("meta"), "max");
+        String durStr = sync.hget(queueKeys.getKey("meta"), "duration");
+        if (maxStr != null && durStr != null) {
+            try {
+                return new io.oxmq.model.GlobalRateLimit(Integer.parseInt(maxStr), Long.parseLong(durStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        return null;
     }
 
     @Override
     public boolean removeGlobalRateLimit() {
-        return backend.removeGlobalRateLimit();
+        Long removed = connectionManager.getCommandConnection().sync().hdel(queueKeys.getKey("meta"), "max", "duration");
+        return removed != null && removed > 0;
     }
 
     @Override
     public boolean removeRateLimitKey() {
-        return backend.removeRateLimitKey();
+        Long removed = connectionManager.getCommandConnection().sync().del(queueKeys.getKey("limiter"));
+        return removed != null && removed > 0;
     }
 
     @Override

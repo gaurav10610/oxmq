@@ -226,13 +226,17 @@ public class FlowProducer implements Closeable {
         long now = System.currentTimeMillis();
         java.util.List<java.util.concurrent.CompletableFuture<String>> futures = new java.util.ArrayList<>(leaves.size());
         io.lettuce.core.api.StatefulRedisConnection<String, byte[]> conn = connectionManager.getBinaryConnection();
+        Map<String, QueueKeys> localKeysCache = new HashMap<>();
 
         for (FlowJob<?> leaf : leaves) {
             String queueName = leaf.getQueueName();
             String nodePrefix = leaf.getPrefix() != null && !leaf.getPrefix().isBlank() ? leaf.getPrefix() : defaultPrefix;
-            QueueKeys queueKeys = (clusterTag != null && !clusterTag.isBlank())
-                    ? QueueKeys.forClusterFlow(clusterTag, nodePrefix, queueName)
-                    : new QueueKeys(nodePrefix, queueName);
+            String cacheKey = (nodePrefix != null ? nodePrefix : "") + ":" + queueName;
+            QueueKeys queueKeys = localKeysCache.computeIfAbsent(cacheKey, k ->
+                    (clusterTag != null && !clusterTag.isBlank())
+                            ? QueueKeys.forClusterFlow(clusterTag, nodePrefix, queueName)
+                            : new QueueKeys(nodePrefix, queueName)
+            );
 
             String customJobId = leaf.getOpts() != null ? leaf.getOpts().getJobId() : null;
             String serializedData = serializer.serialize(leaf.getData());

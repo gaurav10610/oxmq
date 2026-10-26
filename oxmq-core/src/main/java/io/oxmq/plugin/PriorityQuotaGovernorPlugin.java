@@ -36,6 +36,7 @@ public class PriorityQuotaGovernorPlugin implements JobInterceptor {
     private final MeterRegistry meterRegistry;
 
     private final ConcurrentMap<String, AtomicLong> yieldCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> yieldMetricCounters = new ConcurrentHashMap<>();
 
     public PriorityQuotaGovernorPlugin(
             GroupRateLimiterPlugin rateLimiter,
@@ -92,11 +93,12 @@ public class PriorityQuotaGovernorPlugin implements JobInterceptor {
             yieldCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
             if (meterRegistry != null) {
                 try {
-                    Counter.builder("oxmq.plugin.governor.yields")
+                    String q = job.getQueueName() != null ? job.getQueueName() : "unknown";
+                    yieldMetricCounters.computeIfAbsent(groupKey + "::" + q, k -> Counter.builder("oxmq.plugin.governor.yields")
                             .description("Low-priority jobs yielded to protect high-priority quota headroom")
                             .tag("group", groupKey)
-                            .tag("queue", job.getQueueName() != null ? job.getQueueName() : "unknown")
-                            .register(meterRegistry)
+                            .tag("queue", q)
+                            .register(meterRegistry))
                             .increment();
                 } catch (Exception ignored) {}
             }

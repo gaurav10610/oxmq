@@ -366,13 +366,17 @@ public class Job<T> {
     }
 
     public JobState getState() {
+        if (this.state != null) {
+            return this.state;
+        }
         if (context != null) {
             JobState fetched = context.getState(this.id);
             if (fetched != null) {
                 this.state = fetched;
                 return fetched;
             }
-        } else if (callbacks != null && callbacks.stateSupplier != null) {
+        }
+        if (callbacks != null && callbacks.stateSupplier != null) {
             JobState fetched = callbacks.stateSupplier.get();
             if (fetched != null) {
                 this.state = fetched;
