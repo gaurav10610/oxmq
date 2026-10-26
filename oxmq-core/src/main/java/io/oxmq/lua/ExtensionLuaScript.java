@@ -9,6 +9,7 @@ package io.oxmq.lua;
 public enum ExtensionLuaScript {
     ADD_GROUP_JOB("lua/extensions/addGroupJob-1.lua", 8),
     MOVE_TO_ACTIVE_GROUP("lua/extensions/moveToActiveGroup-1.lua", 7),
+    MOVE_TO_ACTIVE_BATCH("lua/extensions/moveToActiveBatch-1.lua", 6),
     MOVE_TO_ACTIVE_BATCH_GROUP("lua/extensions/moveToActiveBatchGroup-1.lua", 7),
     DECREMENT_GROUP_ACTIVE("lua/extensions/decrementGroupActive-1.lua", 4),
     PAUSE_GROUP("lua/extensions/pauseGroup-1.lua", 3),

@@ -25,6 +25,17 @@ public interface OxmqOutboxRepository {
     void markPublished(String id);
 
     /**
+     * Marks multiple records as successfully published to Redis in a single batch operation.
+     */
+    default void markAllPublished(List<String> ids) {
+        if (ids != null) {
+            for (String id : ids) {
+                markPublished(id);
+            }
+        }
+    }
+
+    /**
      * Records a publishing error and increments retry attempts.
      */
     void markFailed(String id, String error);

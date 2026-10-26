@@ -12,6 +12,8 @@ public class QueueKeys {
     private final String queueName;
     private final String qualifiedName;
     private final Map<String, String> keyMap = new HashMap<>();
+    private byte[] prefixBytes;
+    private String[] moveToActiveKeys;
 
     public static String resolvePrefix(String explicitPrefix) {
         if (explicitPrefix != null && !explicitPrefix.isBlank()) {
@@ -98,6 +100,28 @@ public class QueueKeys {
         for (String type : types) {
             keyMap.put(type, toKey(type));
         }
+        this.prefixBytes = toKey("").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        this.moveToActiveKeys = new String[] {
+            getKey("wait"),
+            getKey("active"),
+            getKey("prioritized"),
+            getKey("events"),
+            getKey("stalled"),
+            getKey("limiter"),
+            getKey("delayed"),
+            getKey("paused"),
+            getKey("meta"),
+            getKey("pc"),
+            getKey("marker")
+        };
+    }
+
+    public byte[] getPrefixBytes() {
+        return prefixBytes;
+    }
+
+    public String[] getMoveToActiveKeys() {
+        return moveToActiveKeys;
     }
 
     public String toKey(String type) {

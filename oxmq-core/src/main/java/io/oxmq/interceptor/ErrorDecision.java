@@ -20,8 +20,10 @@ public record ErrorDecision(Action action, long delayMs, boolean skipAttempt, St
         COOLDOWN
     }
 
+    public static final ErrorDecision BUBBLE_UP = new ErrorDecision(Action.BUBBLE_UP, 0, false, null);
+
     public static ErrorDecision bubbleUp() {
-        return new ErrorDecision(Action.BUBBLE_UP, 0, false, null);
+        return BUBBLE_UP;
     }
 
     public static ErrorDecision delay(long delayMs, boolean skipAttempt) {

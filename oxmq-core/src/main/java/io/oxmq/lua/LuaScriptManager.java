@@ -123,6 +123,17 @@ public class LuaScriptManager {
         }
     }
 
+    /**
+     * Executes a Lua script asynchronously using EVALSHA.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> io.lettuce.core.RedisFuture<T> evalBinaryAsync(StatefulRedisConnection<String, byte[]> connection, LuaScript script,
+                                                             ScriptOutputType outputType, String[] keys, byte[]... args) {
+        String sha = scriptShas.get(script);
+        io.lettuce.core.api.async.RedisAsyncCommands<String, byte[]> commands = connection.async();
+        return (io.lettuce.core.RedisFuture<T>) commands.evalsha(sha, outputType, keys, args);
+    }
+
     public String getSource(LuaScript script) {
         return scriptSources.get(script);
     }
@@ -177,6 +188,17 @@ public class LuaScriptManager {
             }
             throw e;
         }
+    }
+
+    /**
+     * Executes an extension Lua script asynchronously using EVALSHA.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> io.lettuce.core.RedisFuture<T> evalBinaryAsync(StatefulRedisConnection<String, byte[]> connection, ExtensionLuaScript script,
+                                                             ScriptOutputType outputType, String[] keys, byte[]... args) {
+        String sha = extensionShas.get(script);
+        io.lettuce.core.api.async.RedisAsyncCommands<String, byte[]> commands = connection.async();
+        return (io.lettuce.core.RedisFuture<T>) commands.evalsha(sha, outputType, keys, args);
     }
 
     public String getSource(ExtensionLuaScript script) {

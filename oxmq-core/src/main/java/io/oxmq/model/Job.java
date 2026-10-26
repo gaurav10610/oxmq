@@ -106,6 +106,9 @@ public class Job<T> {
     @JsonIgnore
     private transient Supplier<Boolean> logCleaner;
 
+    @JsonIgnore
+    private transient JobContext context;
+
     public Job() {}
 
     public Job(String id, String name, T data, JobOptions opts) {
@@ -122,12 +125,22 @@ public class Job<T> {
         updateProgress(percentage, null);
     }
 
+    public void setContext(JobContext context) {
+        this.context = context;
+    }
+
+    public JobContext getContext() {
+        return context;
+    }
+
     /**
      * Updates real-time progress percentage (0-100) and structured payload.
      */
     public void updateProgress(int percentage, Object payload) {
         this.progress = Math.min(100, Math.max(0, percentage));
-        if (progressUpdater != null) {
+        if (context != null) {
+            context.updateProgress(this.id, this.progress, payload);
+        } else if (progressUpdater != null) {
             progressUpdater.accept(this.progress, payload);
         }
     }
@@ -136,8 +149,12 @@ public class Job<T> {
      * Appends a log line to this job's log list in Redis.
      */
     public void log(String message) {
-        if (logAppender != null && message != null) {
-            logAppender.accept(message);
+        if (message != null) {
+            if (context != null) {
+                context.addLog(this.id, message);
+            } else if (logAppender != null) {
+                logAppender.accept(message);
+            }
         }
     }
 
@@ -275,8 +292,12 @@ public class Job<T> {
     }
 
     public Map<String, Object> getChildrenValues() {
-        if (childrenValues == null && childrenValuesSupplier != null) {
-            childrenValues = childrenValuesSupplier.get();
+        if (childrenValues == null) {
+            if (context != null) {
+                childrenValues = context.getChildrenValues(this.id);
+            } else if (childrenValuesSupplier != null) {
+                childrenValues = childrenValuesSupplier.get();
+            }
         }
         return childrenValues;
     }
@@ -307,8 +328,12 @@ public class Job<T> {
      * Mirrors BullMQ's job.getIgnoredChildrenFailures().
      */
     public Map<String, String> getIgnoredChildrenFailures() {
-        if (ignoredChildrenFailures == null && ignoredChildrenFailuresSupplier != null) {
-            ignoredChildrenFailures = ignoredChildrenFailuresSupplier.get();
+        if (ignoredChildrenFailures == null) {
+            if (context != null) {
+                ignoredChildrenFailures = context.getIgnoredChildrenFailures(this.id);
+            } else if (ignoredChildrenFailuresSupplier != null) {
+                ignoredChildrenFailures = ignoredChildrenFailuresSupplier.get();
+            }
         }
         return ignoredChildrenFailures != null ? ignoredChildrenFailures : Map.of();
     }
@@ -357,7 +382,13 @@ public class Job<T> {
     }
 
     public JobState getState() {
-        if (stateSupplier != null) {
+        if (context != null) {
+            JobState fetched = context.getState(this.id);
+            if (fetched != null) {
+                this.state = fetched;
+                return fetched;
+            }
+        } else if (stateSupplier != null) {
             JobState fetched = stateSupplier.get();
             if (fetched != null) {
                 this.state = fetched;
@@ -512,8 +543,12 @@ public class Job<T> {
      */
     public void checkpoint(String stepName, Object state) {
         this.checkpointStep = stepName;
-        if (checkpointSaver != null && state != null) {
-            checkpointSaver.accept(stepName, state);
+        if (state != null) {
+            if (context != null) {
+                context.saveCheckpoint(this.id, stepName, state);
+            } else if (checkpointSaver != null) {
+                checkpointSaver.accept(stepName, state);
+            }
         }
     }
 
@@ -569,6 +604,10 @@ public class Job<T> {
      * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
      */
     public void addChildren(java.util.List<FlowJob> children) {
+        if (context != null) {
+            context.spawnChildren(this.id, children);
+            return;
+        }
         if (childSpawner == null) {
             throw new IllegalStateException("Dynamic child spawning is only available during active job execution");
         }
@@ -600,7 +639,9 @@ public class Job<T> {
      */
     public void updateData(T data) {
         this.data = data;
-        if (dataUpdater != null) {
+        if (context != null) {
+            context.updateData(this.id, data);
+        } else if (dataUpdater != null) {
             dataUpdater.accept(data);
         }
     }
@@ -614,7 +655,9 @@ public class Job<T> {
      * Mirrors BullMQ's job.promote().
      */
     public void promote() {
-        if (promoter != null) {
+        if (context != null) {
+            context.promote(this.id);
+        } else if (promoter != null) {
             promoter.run();
         }
     }
@@ -628,8 +671,12 @@ public class Job<T> {
      * Mirrors BullMQ's job.changeDelay(delay).
      */
     public void changeDelay(Duration delay) {
-        if (delayChanger != null && delay != null) {
-            delayChanger.accept(delay);
+        if (delay != null) {
+            if (context != null) {
+                context.changeDelay(this.id, delay);
+            } else if (delayChanger != null) {
+                delayChanger.accept(delay);
+            }
         }
     }
 
@@ -642,7 +689,9 @@ public class Job<T> {
      * Mirrors BullMQ's job.changePriority(priority).
      */
     public void changePriority(int priority) {
-        if (priorityChanger != null) {
+        if (context != null) {
+            context.changePriority(this.id, priority);
+        } else if (priorityChanger != null) {
             priorityChanger.accept(priority);
         }
     }
@@ -656,7 +705,9 @@ public class Job<T> {
      * Mirrors BullMQ's job.retry().
      */
     public void retry() {
-        if (retrier != null) {
+        if (context != null) {
+            context.retry(this.id);
+        } else if (retrier != null) {
             retrier.run();
         }
     }
@@ -670,6 +721,9 @@ public class Job<T> {
      * Mirrors BullMQ's job.remove().
      */
     public boolean remove() {
+        if (context != null) {
+            return context.remove(this.id);
+        }
         if (remover != null) {
             return Boolean.TRUE.equals(remover.get());
         }
@@ -689,6 +743,10 @@ public class Job<T> {
      * Mirrors BullMQ's job.getDependencies().
      */
     public JobDependencies getDependencies() {
+        if (context != null) {
+            JobDependencies deps = context.getDependencies(this.id);
+            if (deps != null) return deps;
+        }
         if (dependenciesSupplier != null) {
             return dependenciesSupplier.get();
         }
@@ -711,6 +769,10 @@ public class Job<T> {
      * Retrieves the workflow tree starting from this job as root up to a max depth.
      */
     public JobNode getFlow(int maxDepth) {
+        if (context != null) {
+            JobNode node = context.getFlow(this.id, maxDepth);
+            if (node != null) return node;
+        }
         if (flowSupplier != null) {
             return flowSupplier.apply(maxDepth);
         }
@@ -726,6 +788,9 @@ public class Job<T> {
      * Mirrors BullMQ's job.clearLogs().
      */
     public boolean clearLogs() {
+        if (context != null) {
+            return context.clearLogs(this.id);
+        }
         if (logCleaner != null) {
             return Boolean.TRUE.equals(logCleaner.get());
         }

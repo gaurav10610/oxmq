@@ -44,10 +44,11 @@ public class ExtensionScripts {
             keys.toKey("groups:maxed"),
             keys.toKey("groups:limited"),
             keys.getKey("id"),
-            keys.getKey("events")
+            keys.getKey("events"),
+            keys.getKey("marker")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] customIdBytes = (customJobId != null ? customJobId : "").getBytes(StandardCharsets.UTF_8);
         byte[] nameBytes = (jobName != null ? jobName : "").getBytes(StandardCharsets.UTF_8);
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
@@ -76,6 +77,40 @@ public class ExtensionScripts {
         }
     }
 
+    public io.lettuce.core.RedisFuture<Object> addGroupJobAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                               QueueKeys keys, String customJobId, String jobName,
+                                                               String jsonData, String optsJson, String groupId,
+                                                               long maxSize, int priority, String deduplicationId,
+                                                               long timestamp) {
+        String[] redisKeys = new String[] {
+            keys.toKey("groups:waiting"),
+            keys.toKey("groups:" + groupId),
+            keys.toKey("groups:" + groupId + ":prioritized"),
+            keys.toKey("groups:paused"),
+            keys.toKey("groups:maxed"),
+            keys.toKey("groups:limited"),
+            keys.getKey("id"),
+            keys.getKey("events"),
+            keys.getKey("marker")
+        };
+
+        byte[] prefixBytes = keys.getPrefixBytes();
+        byte[] customIdBytes = (customJobId != null ? customJobId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] nameBytes = (jobName != null ? jobName : "").getBytes(StandardCharsets.UTF_8);
+        byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
+        byte[] dataBytes = (jsonData != null ? jsonData : "{}").getBytes(StandardCharsets.UTF_8);
+        byte[] optsBytes = (optsJson != null ? optsJson : "{}").getBytes(StandardCharsets.UTF_8);
+        byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
+        byte[] maxSizeBytes = String.valueOf(maxSize).getBytes(StandardCharsets.UTF_8);
+        byte[] prioBytes = String.valueOf(priority).getBytes(StandardCharsets.UTF_8);
+        byte[] dedupBytes = (deduplicationId != null ? deduplicationId : "").getBytes(StandardCharsets.UTF_8);
+
+        return scriptManager.evalBinaryAsync(connection, ExtensionLuaScript.ADD_GROUP_JOB,
+                ScriptOutputType.VALUE, redisKeys,
+                prefixBytes, customIdBytes, nameBytes, tsBytes, dataBytes, optsBytes,
+                groupBytes, maxSizeBytes, prioBytes, dedupBytes);
+    }
+
     /**
      * Pops the next available job across virtual groups using fair round-robin scheduling.
      */
@@ -93,7 +128,7 @@ public class ExtensionScripts {
             keys.getKey("events")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] workerBytes = workerId.getBytes(StandardCharsets.UTF_8);
         byte[] lockDurBytes = String.valueOf(lockDurationMs).getBytes(StandardCharsets.UTF_8);
         byte[] groupConcBytes = String.valueOf(maxGroupConcurrency).getBytes(StandardCharsets.UTF_8);
@@ -121,7 +156,7 @@ public class ExtensionScripts {
             keys.getKey("events")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] workerBytes = workerId.getBytes(StandardCharsets.UTF_8);
         byte[] lockDurBytes = String.valueOf(lockDurationMs).getBytes(StandardCharsets.UTF_8);
         byte[] batchSizeBytes = String.valueOf(maxBatchSize).getBytes(StandardCharsets.UTF_8);
@@ -131,6 +166,32 @@ public class ExtensionScripts {
         return scriptManager.evalBinary(connection, ExtensionLuaScript.MOVE_TO_ACTIVE_BATCH_GROUP,
                 ScriptOutputType.MULTI, redisKeys,
                 prefixBytes, workerBytes, lockDurBytes, batchSizeBytes, groupConcBytes, nowBytes);
+    }
+
+    /**
+     * Atomically pops a batch of standard jobs (prioritized first, then FIFO wait list).
+     */
+    public List<Object> moveToActiveBatch(StatefulRedisConnection<String, byte[]> connection,
+                                          QueueKeys keys, String workerId, long lockDurationMs,
+                                          int maxBatchSize, long nowTimestamp) {
+        String[] redisKeys = new String[] {
+            keys.getKey("wait"),
+            keys.getKey("active"),
+            keys.getKey("prioritized"),
+            keys.getKey("events"),
+            keys.getKey("marker"),
+            keys.getKey("paused")
+        };
+
+        byte[] prefixBytes = keys.getPrefixBytes();
+        byte[] workerBytes = workerId.getBytes(StandardCharsets.UTF_8);
+        byte[] lockDurBytes = String.valueOf(lockDurationMs).getBytes(StandardCharsets.UTF_8);
+        byte[] batchSizeBytes = String.valueOf(maxBatchSize).getBytes(StandardCharsets.UTF_8);
+        byte[] nowBytes = String.valueOf(nowTimestamp).getBytes(StandardCharsets.UTF_8);
+
+        return scriptManager.evalBinary(connection, ExtensionLuaScript.MOVE_TO_ACTIVE_BATCH,
+                ScriptOutputType.MULTI, redisKeys,
+                prefixBytes, workerBytes, lockDurBytes, batchSizeBytes, nowBytes);
     }
 
     /**
@@ -145,7 +206,7 @@ public class ExtensionScripts {
             keys.toKey("groups:paused")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
         byte[] concBytes = String.valueOf(maxGroupConcurrency).getBytes(StandardCharsets.UTF_8);
 
@@ -185,7 +246,7 @@ public class ExtensionScripts {
             keys.getKey("events")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
 
         Long result = scriptManager.evalBinary(connection, ExtensionLuaScript.RESUME_GROUP,
@@ -207,7 +268,7 @@ public class ExtensionScripts {
             keys.getKey("events")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
 
         Long result = scriptManager.evalBinary(connection, ExtensionLuaScript.DELETE_GROUP,
@@ -268,7 +329,7 @@ public class ExtensionScripts {
         }
 
         String[] redisKeys = new String[] { targetKey };
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] statusBytes = status.getBytes(StandardCharsets.UTF_8);
         byte[] startBytes = String.valueOf(start).getBytes(StandardCharsets.UTF_8);
         byte[] stopBytes = String.valueOf(stop).getBytes(StandardCharsets.UTF_8);
@@ -305,7 +366,7 @@ public class ExtensionScripts {
             keys.toKey("groups:" + groupId + ":prioritized")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] startBytes = String.valueOf(start).getBytes(StandardCharsets.UTF_8);
         byte[] stopBytes = String.valueOf(stop).getBytes(StandardCharsets.UTF_8);
 
@@ -348,7 +409,7 @@ public class ExtensionScripts {
             keys.getKey("active")
         };
 
-        byte[] prefixBytes = keys.toKey("").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
         byte[] concurrencyBytes = String.valueOf(defaultGroupConcurrency).getBytes(StandardCharsets.UTF_8);
 

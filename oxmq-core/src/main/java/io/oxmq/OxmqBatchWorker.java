@@ -76,6 +76,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
     private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
+    private final io.oxmq.model.JobContext batchWorkerJobContext;
 
     private record ActiveBatchExecution<T>(List<Job<T>> jobs, Thread thread) {}
     private final java.util.concurrent.ConcurrentMap<String, ActiveBatchExecution<T>> activeJobExecutions = new java.util.concurrent.ConcurrentHashMap<>();
@@ -140,6 +141,67 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         this.groupConcurrency = Math.max(0, builder.groupConcurrency);
         this.serializer = builder.serializer != null ? builder.serializer : new JacksonJobSerializer();
         this.metrics = builder.metrics != null ? builder.metrics : new OxmqMetrics();
+
+        this.batchWorkerJobContext = new io.oxmq.model.JobContext() {
+            @Override
+            public void updateProgress(String jobId, int percentage, Object payload) {
+                try {
+                    bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+                } catch (Exception e) {
+                    log.warn("Failed to update progress for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public void addLog(String jobId, String msg) {
+                try {
+                    bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
+                } catch (Exception e) {
+                    log.warn("Failed to append log for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public void saveCheckpoint(String jobId, String step, Object state) {
+                try {
+                    String json = serializer.serialize(state);
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    if (step != null && !step.isBlank()) {
+                        sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
+                    } else {
+                        sync.hset(jobKey, "checkpoint", json);
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to persist checkpoint for job {} in batch worker {}: {}", jobId, queueName, e.getMessage());
+                }
+            }
+
+            @Override
+            public Map<String, Object> getChildrenValues(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+                    if (childValsRaw == null || childValsRaw.isEmpty()) {
+                        childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+                    }
+                    if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                        Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
+                        for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                            try {
+                                childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                            } catch (Exception ex) {
+                                childVals.put(entry.getKey(), entry.getValue());
+                            }
+                        }
+                        return childVals;
+                    }
+                } catch (Exception e) {
+                    log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
+                }
+                return null;
+            }
+        };
     }
 
     public static <T> Builder<T> builder() {
@@ -217,21 +279,61 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 long currentBatchBytes = 0;
                 long pollStartTime = System.currentTimeMillis();
 
-                if (groupAffinity) {
-                    long now = System.currentTimeMillis();
-                    List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
-                            lockDurationMs, batchSize, groupConcurrency, now);
-                    if (groupBatch != null && !groupBatch.isEmpty()) {
-                        for (Object item : groupBatch) {
-                            if (item instanceof List<?> tuple && tuple.size() >= 2) {
-                                Object idObj = tuple.get(1);
-                                String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-                                if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
-                                    List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                    Map<String, String> fields = parseHashFields(hashFlat);
-                                    Job<T> job = buildJobFromFields(jobId, fields);
-                                    jobs.add(job);
-                                    lockExtender.registerJob(jobId);
+                if (maxBatchBytes <= 0) {
+                    if (groupAffinity) {
+                        long now = System.currentTimeMillis();
+                        List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
+                                lockDurationMs, batchSize, groupConcurrency, now);
+                        if (groupBatch != null && !groupBatch.isEmpty()) {
+                            for (Object item : groupBatch) {
+                                if (item instanceof List<?> tuple && tuple.size() >= 2) {
+                                    Object idObj = tuple.get(1);
+                                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                                    if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
+                                        List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
+                                        Map<String, String> fields = parseHashFields(hashFlat);
+                                        Job<T> job = buildJobFromFields(jobId, fields);
+                                        jobs.add(job);
+                                        lockExtender.registerJob(jobId);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        long now = System.currentTimeMillis();
+                        List<Object> batchResult = extensionScripts.moveToActiveBatch(pollerConn, queueKeys, workerId,
+                                lockDurationMs, batchSize - jobs.size(), now);
+                        if (batchResult != null && !batchResult.isEmpty()) {
+                            for (Object item : batchResult) {
+                                if (item instanceof List<?> tuple && tuple.size() >= 2) {
+                                    Object idObj = tuple.get(1);
+                                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                                    if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
+                                        List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
+                                        Map<String, String> fields = parseHashFields(hashFlat);
+                                        Job<T> job = buildJobFromFields(jobId, fields);
+                                        jobs.add(job);
+                                        lockExtender.registerJob(jobId);
+                                    }
+                                }
+                            }
+                        }
+                        if (jobs.isEmpty()) {
+                            List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
+                                    lockDurationMs, batchSize, groupConcurrency, now);
+                            if (groupBatch != null && !groupBatch.isEmpty()) {
+                                for (Object item : groupBatch) {
+                                    if (item instanceof List<?> tuple && tuple.size() >= 2) {
+                                        Object idObj = tuple.get(1);
+                                        String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                                        if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
+                                            List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
+                                            Map<String, String> fields = parseHashFields(hashFlat);
+                                            Job<T> job = buildJobFromFields(jobId, fields);
+                                            jobs.add(job);
+                                            lockExtender.registerJob(jobId);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -590,64 +692,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
         if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
 
-        // Memory optimization: lazily load children values only when requested by processor
-        job.setChildrenValuesSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
-                if (childValsRaw == null || childValsRaw.isEmpty()) {
-                    childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
-                }
-                if (childValsRaw != null && !childValsRaw.isEmpty()) {
-                    Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
-                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
-                        try {
-                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
-                        } catch (Exception ex) {
-                            childVals.put(entry.getKey(), entry.getValue());
-                        }
-                    }
-                    return childVals;
-                }
-            } catch (Exception e) {
-                log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
-            }
-            return null;
-        });
-
-        job.setProgressUpdater((percentage, payload) -> {
-            try {
-                bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
-            } catch (Exception e) {
-                log.warn("Failed to update progress for job {}", jobId, e);
-            }
-        });
-
-        job.setLogAppender(msg -> {
-            try {
-                bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
-            } catch (Exception e) {
-                log.warn("Failed to append log for job {}", jobId, e);
-            }
-        });
-
-        job.setCheckpointSaver((step, state) -> {
-            try {
-                String json = serializer.serialize(state);
-                job.setCheckpointJson(json);
-                job.setCheckpointStep(step);
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                String jobKey = queueKeys.toJobKey(jobId);
-                if (step != null && !step.isBlank()) {
-                    sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
-                } else {
-                    sync.hset(jobKey, "checkpoint", json);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to persist checkpoint for job {} in batch worker {}: {}", jobId, queueName, e.getMessage());
-            }
-        });
-
+        job.setContext(batchWorkerJobContext);
         return job;
     }
 
@@ -658,9 +703,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         int expectedEntries = flatList.size() / 2;
         Map<String, String> map = new HashMap<>(Math.max(8, (int) (expectedEntries / 0.75f) + 1));
         for (int i = 0; i < flatList.size() - 1; i += 2) {
-            String key = toUtf8String(flatList.get(i));
-            if (key != null) {
-                String canonicalKey = CANONICAL_KEYS.getOrDefault(key, key);
+            String canonicalKey = OxmqWorker.matchCanonicalKey(flatList.get(i));
+            if (canonicalKey != null) {
                 String val = toUtf8String(flatList.get(i + 1));
                 map.put(canonicalKey, val);
             }

@@ -113,16 +113,16 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
             }
 
             int publishedCount = 0;
+            // Group records by queue name to enable pipelined addBulk per queue
+            java.util.Map<String, List<OxmqOutboxRecord>> groupedByQueue = new java.util.LinkedHashMap<>();
             for (OxmqOutboxRecord record : pending) {
-                try {
-                    publishSingleRecord(record);
-                    repository.markPublished(record.getId());
-                    publishedCount++;
-                } catch (Exception e) {
-                    log.warn("Failed to publish outbox record [{}] to queue '{}': {}",
-                            record.getId(), record.getQueueName(), e.getMessage());
-                    repository.markFailed(record.getId(), e.getMessage());
-                }
+                groupedByQueue.computeIfAbsent(record.getQueueName(), k -> new java.util.ArrayList<>()).add(record);
+            }
+
+            for (java.util.Map.Entry<String, List<OxmqOutboxRecord>> entry : groupedByQueue.entrySet()) {
+                String qName = entry.getKey();
+                List<OxmqOutboxRecord> records = entry.getValue();
+                publishedCount += publishBatchForQueue(qName, records);
             }
 
             checkPeriodicPurge();
@@ -133,8 +133,58 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void publishSingleRecord(OxmqOutboxRecord record) {
+    private int publishBatchForQueue(String queueName, List<OxmqOutboxRecord> records) {
+        if (records.size() == 1) {
+            OxmqOutboxRecord record = records.get(0);
+            try {
+                publishSingleRecord(record);
+                repository.markPublished(record.getId());
+                return 1;
+            } catch (Exception e) {
+                log.warn("Failed to publish outbox record [{}] to queue '{}': {}",
+                        record.getId(), record.getQueueName(), e.getMessage());
+                repository.markFailed(record.getId(), e.getMessage());
+                return 0;
+            }
+        }
+
+        // Multiple records for the same queue: use pipelined addBulk
+        try {
+            List<io.oxmq.model.JobRequest<String>> requests = new java.util.ArrayList<>(records.size());
+            List<String> ids = new java.util.ArrayList<>(records.size());
+            for (OxmqOutboxRecord record : records) {
+                JobOptions options = parseOptions(record);
+                requests.add(new io.oxmq.model.JobRequest<>(
+                        record.getJobName() != null ? record.getJobName() : "default",
+                        record.getPayloadJson() != null ? record.getPayloadJson() : "{}",
+                        options));
+                ids.add(record.getId());
+            }
+
+            OxmqQueue<String> queue = template.getQueue(queueName, String.class);
+            queue.addBulk(requests);
+            repository.markAllPublished(ids);
+            return records.size();
+        } catch (Exception batchEx) {
+            log.warn("Batch publishing via addBulk failed for queue '{}', falling back to individual delivery: {}",
+                    queueName, batchEx.getMessage());
+            int success = 0;
+            for (OxmqOutboxRecord record : records) {
+                try {
+                    publishSingleRecord(record);
+                    repository.markPublished(record.getId());
+                    success++;
+                } catch (Exception e) {
+                    log.warn("Failed to publish outbox record [{}] to queue '{}': {}",
+                            record.getId(), record.getQueueName(), e.getMessage());
+                    repository.markFailed(record.getId(), e.getMessage());
+                }
+            }
+            return success;
+        }
+    }
+
+    private JobOptions parseOptions(OxmqOutboxRecord record) {
         JobOptions options = null;
         if (record.getOptionsJson() != null && !record.getOptionsJson().isBlank()) {
             try {
@@ -146,11 +196,14 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
         if (options == null) {
             options = JobOptions.defaults();
         }
-
         if (record.getGroupKey() != null && !record.getGroupKey().isBlank()) {
             options.group(record.getGroupKey());
         }
+        return options;
+    }
 
+    private void publishSingleRecord(OxmqOutboxRecord record) {
+        JobOptions options = parseOptions(record);
         OxmqQueue<String> queue = template.getQueue(record.getQueueName(), String.class);
         queue.add(record.getJobName() != null ? record.getJobName() : "default",
                 record.getPayloadJson() != null ? record.getPayloadJson() : "{}",

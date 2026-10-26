@@ -344,7 +344,7 @@ public class JobOptions {
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new HashMap<>(24);
         if (jobId != null) map.put("jobId", jobId);
         map.put("delay", delayMs);
         map.put("attempts", attempts);

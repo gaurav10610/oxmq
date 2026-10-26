@@ -16,6 +16,7 @@ import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.rate.RateLimiter;
+import io.oxmq.serializer.BullMsgPack;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import io.oxmq.watchdog.LockExtender;
@@ -93,6 +94,8 @@ public class OxmqWorker<T> implements Worker<T> {
     private java.util.concurrent.ScheduledExecutorService timeoutWatchdog;
     private final Map<String, Long> jobTimeoutsMs;
     private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
+    private final byte[] defaultWorkerOptsBytes;
+    private final io.oxmq.model.JobContext workerJobContext;
 
     @FunctionalInterface
     public interface CustomBackoffStrategy<T> {
@@ -166,6 +169,167 @@ public class OxmqWorker<T> implements Worker<T> {
         }
 
         this.concurrencySemaphore = new Semaphore(concurrency);
+
+        Map<String, Object> wOpts = new HashMap<>(4);
+        wOpts.put("token", workerId);
+        wOpts.put("lockDuration", (int) lockDurationMs);
+        wOpts.put("name", workerId);
+        this.defaultWorkerOptsBytes = BullMsgPack.pack(wOpts);
+
+        this.workerJobContext = new io.oxmq.model.JobContext() {
+            @Override
+            public void updateData(String jobId, Object newData) {
+                try {
+                    String serialized = serializer.serialize(newData);
+                    bullScripts.updateData(connectionManager.getBinaryConnection(), queueKeys, jobId, serialized);
+                } catch (Exception e) {
+                    log.warn("Failed to update data for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                }
+            }
+
+            @Override
+            public void updateProgress(String jobId, int percentage, Object payload) {
+                try {
+                    bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+                    ActiveExecution<T> active = activeExecutions.get(jobId);
+                    if (active != null) {
+                        emitProgress(active.job, payload != null ? payload : percentage);
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to sync progress for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public void addLog(String jobId, String msg) {
+                try {
+                    bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
+                } catch (Exception e) {
+                    log.warn("Failed to append log for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public boolean clearLogs(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Long del = sync.del(queueKeys.toJobLogsKey(jobId));
+                    return del != null && del > 0;
+                } catch (Exception e) {
+                    log.warn("Failed to clear logs for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                    return false;
+                }
+            }
+
+            @Override
+            public void saveCheckpoint(String jobId, String step, Object state) {
+                try {
+                    String json = serializer.serialize(state);
+                    ActiveExecution<T> active = activeExecutions.get(jobId);
+                    if (active != null) {
+                        active.job.setCheckpointJson(json);
+                        active.job.setCheckpointStep(step);
+                    }
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    if (step != null && !step.isBlank()) {
+                        sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
+                    } else {
+                        sync.hset(jobKey, "checkpoint", json);
+                    }
+                    log.debug("Saved checkpoint for job {} [step: {}] in queue {}", jobId, step, queueName);
+                } catch (Exception e) {
+                    log.warn("Failed to persist checkpoint for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                }
+            }
+
+            @Override
+            public void spawnChildren(String jobId, java.util.List<io.oxmq.model.FlowJob> children) {
+                if (children == null || children.isEmpty()) return;
+                try {
+                    StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+                    String parentKey = queueKeys.toJobKey(jobId);
+                    Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
+
+                    for (io.oxmq.model.FlowJob child : children) {
+                        JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
+                        Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
+                        childOptsMap.put("parentKey", parentKey);
+                        childOptsMap.put("parent", parentObj);
+
+                        String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
+                        io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
+                                ? queueKeys
+                                : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
+                        String childData = serializer.serialize(child.getData());
+                        long nowTs = System.currentTimeMillis();
+
+                        bullScripts.addStandardJob(binConn, childKeys, "", child.getName(), childData, childOptsMap, nowTs);
+                    }
+
+                    int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
+                    log.debug("Moved parent job {} to waiting-children: result code {}", jobId, moveRes);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
+                }
+                throw new io.oxmq.exception.WaitingChildrenException();
+            }
+
+            @Override
+            public io.oxmq.model.JobDependencies getDependencies(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    Set<String> unprocessed = sync.smembers(jobKey + ":dependencies");
+                    Map<String, String> processed = sync.hgetall(jobKey + ":processed");
+                    Map<String, String> failed = sync.hgetall(jobKey + ":failed");
+                    return new io.oxmq.model.JobDependencies(
+                            jobId,
+                            unprocessed != null ? new ArrayList<>(unprocessed) : Collections.emptyList(),
+                            processed != null ? processed : Collections.emptyMap(),
+                            failed != null ? failed : Collections.emptyMap()
+                    );
+                } catch (Exception e) {
+                    return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+                }
+            }
+
+            @Override
+            public Map<String, Object> getChildrenValues(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+                    if (childValsRaw == null || childValsRaw.isEmpty()) {
+                        childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+                    }
+                    if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                        Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
+                        for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                            try {
+                                childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                            } catch (Exception ex) {
+                                childVals.put(entry.getKey(), entry.getValue());
+                            }
+                        }
+                        return childVals;
+                    }
+                } catch (Exception e) {
+                    log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
+                }
+                return null;
+            }
+
+            @Override
+            public Map<String, String> getIgnoredChildrenFailures(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
+                    return failures != null ? failures : Map.of();
+                } catch (Exception e) {
+                    return Map.of();
+                }
+            }
+        };
     }
 
     public static <T> Builder<T> builder() {
@@ -254,17 +418,24 @@ public class OxmqWorker<T> implements Worker<T> {
                 }
 
                 long now = System.currentTimeMillis();
-                List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
-                        (int) lockDurationMs, null, workerId, now);
-
-                if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                        || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                    // Standard queue is empty; check virtual queue groups via round-robin!
-                    List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                List<Object> rawResult;
+                if (groupConcurrency > 0) {
+                    rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
                             lockDurationMs, groupConcurrency, now);
-                    if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
-                            && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
-                        rawResult = groupResult;
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                    }
+                } else {
+                    rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                        List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                                lockDurationMs, groupConcurrency, now);
+                        if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                                && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                            rawResult = groupResult;
+                        }
                     }
                 }
 
@@ -728,145 +899,7 @@ public class OxmqWorker<T> implements Worker<T> {
             job.setRepeatJobKey(rjkStr);
         }
 
-        // Memory optimization: lazily load children values only when requested by processor
-        job.setChildrenValuesSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
-                if (childValsRaw == null || childValsRaw.isEmpty()) {
-                    childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
-                }
-                if (childValsRaw != null && !childValsRaw.isEmpty()) {
-                    Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
-                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
-                        try {
-                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
-                        } catch (Exception ex) {
-                            childVals.put(entry.getKey(), entry.getValue());
-                        }
-                    }
-                    return childVals;
-                }
-            } catch (Exception e) {
-                log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
-            }
-            return null;
-        });
-
-        job.setIgnoredChildrenFailuresSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
-                return failures != null ? failures : Map.of();
-            } catch (Exception e) {
-                return Map.of();
-            }
-        });
-
-        job.setProgressUpdater((percentage, payload) -> {
-            try {
-                bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
-                emitProgress(job, payload != null ? payload : percentage);
-            } catch (Exception e) {
-                log.warn("Failed to sync progress for job {}", jobId, e);
-            }
-        });
-
-        job.setLogAppender(msg -> {
-            try {
-                bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
-            } catch (Exception e) {
-                log.warn("Failed to append log for job {}", jobId, e);
-            }
-        });
-
-        job.setCheckpointSaver((step, state) -> {
-            try {
-                String json = serializer.serialize(state);
-                job.setCheckpointJson(json);
-                job.setCheckpointStep(step);
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                String jobKey = queueKeys.toJobKey(jobId);
-                if (step != null && !step.isBlank()) {
-                    sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
-                } else {
-                    sync.hset(jobKey, "checkpoint", json);
-                }
-                log.debug("Saved checkpoint for job {} [step: {}] in queue {}", jobId, step, queueName);
-            } catch (Exception e) {
-                log.warn("Failed to persist checkpoint for job {} in queue {}: {}", jobId, queueName, e.getMessage());
-            }
-        });
-
-        job.setChildSpawner(children -> {
-            if (children == null || children.isEmpty()) return;
-            try {
-                StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
-                String parentKey = queueKeys.toJobKey(jobId);
-                Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
-
-                for (io.oxmq.model.FlowJob child : children) {
-                    JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
-                    Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
-                    childOptsMap.put("parentKey", parentKey);
-                    childOptsMap.put("parent", parentObj);
-
-                    String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
-                    io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
-                            ? queueKeys
-                            : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
-                    String childData = serializer.serialize(child.getData());
-                    long nowTs = System.currentTimeMillis();
-
-                    bullScripts.addStandardJob(binConn, childKeys, "", child.getName(), childData, childOptsMap, nowTs);
-                }
-
-                int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
-                log.debug("Moved parent job {} to waiting-children: result code {}", jobId, moveRes);
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
-            }
-            throw new io.oxmq.exception.WaitingChildrenException();
-        });
-
-        job.setDataUpdater(newData -> {
-            try {
-                String serialized = serializer.serialize(newData);
-                bullScripts.updateData(connectionManager.getBinaryConnection(), queueKeys, jobId, serialized);
-            } catch (Exception e) {
-                log.warn("Failed to update data for job {} in queue {}: {}", jobId, queueName, e.getMessage());
-            }
-        });
-
-        job.setDependenciesSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                String jobKey = queueKeys.toJobKey(jobId);
-                Set<String> unprocessed = sync.smembers(jobKey + ":dependencies");
-                Map<String, String> processed = sync.hgetall(jobKey + ":processed");
-                Map<String, String> failed = sync.hgetall(jobKey + ":failed");
-                return new io.oxmq.model.JobDependencies(
-                        jobId,
-                        unprocessed != null ? new ArrayList<>(unprocessed) : Collections.emptyList(),
-                        processed != null ? processed : Collections.emptyMap(),
-                        failed != null ? failed : Collections.emptyMap()
-                );
-            } catch (Exception e) {
-                return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
-            }
-        });
-
-        job.setLogCleaner(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Long del = sync.del(queueKeys.toJobLogsKey(jobId));
-                return del != null && del > 0;
-            } catch (Exception e) {
-                log.warn("Failed to clear logs for job {} in queue {}: {}", jobId, queueName, e.getMessage());
-                return false;
-            }
-        });
-
+        job.setContext(workerJobContext);
         return job;
     }
 
@@ -877,14 +910,74 @@ public class OxmqWorker<T> implements Worker<T> {
         int expectedEntries = flatList.size() / 2;
         Map<String, String> map = new HashMap<>(Math.max(8, (int) (expectedEntries / 0.75f) + 1));
         for (int i = 0; i < flatList.size() - 1; i += 2) {
-            String key = toUtf8String(flatList.get(i));
-            if (key != null) {
-                String canonicalKey = CANONICAL_KEYS.getOrDefault(key, key);
+            String canonicalKey = matchCanonicalKey(flatList.get(i));
+            if (canonicalKey != null) {
                 String val = toUtf8String(flatList.get(i + 1));
                 map.put(canonicalKey, val);
             }
         }
         return map;
+    }
+
+    static String matchCanonicalKey(Object obj) {
+        if (obj instanceof byte[] b) {
+            return matchCanonicalBytes(b);
+        }
+        return obj != null ? CANONICAL_KEYS.getOrDefault(obj.toString(), obj.toString()) : null;
+    }
+
+    static String matchCanonicalBytes(byte[] b) {
+        int len = b.length;
+        switch (len) {
+            case 2:
+                if (b[0] == 'p' && b[1] == 'b') return "pb";
+                break;
+            case 3:
+                if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "rjk";
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "ats";
+                break;
+            case 4:
+                if (b[0] == 'n' && b[1] == 'a' && b[2] == 'm' && b[3] == 'e') return "name";
+                if (b[0] == 'd' && b[1] == 'a' && b[2] == 't' && b[3] == 'a') return "data";
+                if (b[0] == 'o' && b[1] == 'p' && b[2] == 't' && b[3] == 's') return "opts";
+                if (b[0] == 'd' && b[1] == 'e' && b[2] == 'i' && b[3] == 'd') return "deid";
+                break;
+            case 5:
+                if (b[0] == 'd' && b[1] == 'e' && b[2] == 'l' && b[3] == 'a' && b[4] == 'y') return "delay";
+                break;
+            case 6:
+                if (b[0] == 'p' && b[1] == 'a' && b[2] == 'r' && b[3] == 'e' && b[4] == 'n' && b[5] == 't') return "parent";
+                break;
+            case 8:
+                if (b[0] == 'p' && b[1] == 'r') {
+                    if (b[2] == 'i' && b[3] == 'o' && b[4] == 'r' && b[5] == 'i' && b[6] == 't' && b[7] == 'y') return "priority";
+                    if (b[2] == 'o' && b[3] == 'g' && b[4] == 'r' && b[5] == 'e' && b[6] == 's' && b[7] == 's') return "progress";
+                }
+                if (b[0] == 'g' && b[1] == 'r' && b[2] == 'o' && b[3] == 'u' && b[4] == 'p' && b[5] == 'K' && b[6] == 'e' && b[7] == 'y') return "groupKey";
+                break;
+            case 9:
+                if (b[0] == 't' && b[1] == 'i' && b[2] == 'm' && b[3] == 'e' && b[4] == 's' && b[5] == 't' && b[6] == 'a' && b[7] == 'm' && b[8] == 'p') return "timestamp";
+                if (b[0] == 'p' && b[1] == 'a' && b[2] == 'r' && b[3] == 'e' && b[4] == 'n' && b[5] == 't' && b[6] == 'K' && b[7] == 'e' && b[8] == 'y') return "parentKey";
+                break;
+            case 10:
+                if (b[0] == 'f' && b[1] == 'i' && b[2] == 'n' && b[3] == 'i' && b[4] == 's' && b[5] == 'h' && b[6] == 'e' && b[7] == 'd' && b[8] == 'O' && b[9] == 'n') return "finishedOn";
+                if (b[0] == 'c' && b[1] == 'h' && b[2] == 'e' && b[3] == 'c' && b[4] == 'k' && b[5] == 'p' && b[6] == 'o' && b[7] == 'i' && b[8] == 'n' && b[9] == 't') return "checkpoint";
+                break;
+            case 11:
+                if (b[0] == 'p' && b[1] == 'r' && b[2] == 'o' && b[3] == 'c' && b[4] == 'e' && b[5] == 's' && b[6] == 's' && b[7] == 'e' && b[8] == 'd' && b[9] == 'O' && b[10] == 'n') return "processedOn";
+                if (b[0] == 'r' && b[1] == 'e' && b[2] == 't' && b[3] == 'u' && b[4] == 'r' && b[5] == 'n' && b[6] == 'v' && b[7] == 'a' && b[8] == 'l' && b[9] == 'u' && b[10] == 'e') return "returnvalue";
+                break;
+            case 12:
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'M' && b[9] == 'a' && b[10] == 'd' && b[11] == 'e') return "attemptsMade";
+                if (b[0] == 'f' && b[1] == 'a' && b[2] == 'i' && b[3] == 'l' && b[4] == 'e' && b[5] == 'd' && b[6] == 'R' && b[7] == 'e' && b[8] == 'a' && b[9] == 's' && b[10] == 'o' && b[11] == 'n') return "failedReason";
+                break;
+            case 15:
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'S' && b[9] == 't' && b[10] == 'a' && b[11] == 'r' && b[12] == 't' && b[13] == 'e' && b[14] == 'd') return "attemptsStarted";
+                if (b[0] == 'c' && b[1] == 'h' && b[2] == 'e' && b[3] == 'c' && b[4] == 'k' && b[5] == 'p' && b[6] == 'o' && b[7] == 'i' && b[8] == 'n' && b[9] == 't' && b[10] == '_' && b[11] == 's' && b[12] == 't' && b[13] == 'e' && b[14] == 'p') return "checkpoint_step";
+                break;
+        }
+        String fallback = new String(b, StandardCharsets.UTF_8);
+        return CANONICAL_KEYS.getOrDefault(fallback, fallback);
     }
 
     private String toUtf8String(Object obj) {

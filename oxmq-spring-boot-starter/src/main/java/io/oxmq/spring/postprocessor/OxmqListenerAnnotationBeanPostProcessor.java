@@ -294,7 +294,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
             builder.rateLimit(listener.rateLimitMax(), Duration.ofMillis(listener.rateLimitDurationMs()));
         }
 
-        builder.processor(job -> invokeListenerMethod(bean, method, job));
+        JobMethodInvoker invoker = compileMethodInvoker(bean, method);
+        builder.processor(invoker::invoke);
 
         if (this.applicationContext != null) {
             Map<String, io.oxmq.interceptor.JobInterceptor> interceptors = this.applicationContext.getBeansOfType(io.oxmq.interceptor.JobInterceptor.class);
@@ -311,7 +312,17 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
         log.info("Registered @OxmqListener worker for queue '{}:{}' -> {}.{}()", prefix, queueName, bean.getClass().getSimpleName(), method.getName());
     }
 
-    private record HandlerMethod(Method method, Class<?> payloadType, String name, boolean isDefault) {}
+    @FunctionalInterface
+    private interface JobParameterResolver {
+        Object resolve(Job<?> job);
+    }
+
+    @FunctionalInterface
+    private interface JobMethodInvoker {
+        Object invoke(Job<?> job) throws Exception;
+    }
+
+    private record HandlerMethod(Method method, Class<?> payloadType, String name, boolean isDefault, JobMethodInvoker invoker) {}
 
     private void registerClassLevelListener(Object bean, Class<?> targetClass, OxmqListener listener) {
         resolveDependenciesIfNecessary();
@@ -333,7 +344,8 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
             if (handlerAnn != null) {
                 method.setAccessible(true);
                 Class<?> payloadType = determinePayloadClass(method);
-                HandlerMethod hm = new HandlerMethod(method, payloadType, handlerAnn.name().trim(), handlerAnn.isDefault());
+                JobMethodInvoker methodInvoker = compileMethodInvoker(bean, method);
+                HandlerMethod hm = new HandlerMethod(method, payloadType, handlerAnn.name().trim(), handlerAnn.isDefault(), methodInvoker);
                 if (handlerAnn.isDefault()) {
                     defaultHandler = hm;
                 } else {
@@ -380,25 +392,25 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
             log.info("ClassListener received job '{}' with data: {}", job.getName(), job.getData());
             try {
                 Object data = job.getData();
-                Method targetMethod = null;
+                HandlerMethod targetHandler = null;
 
                 // 1. Exact name match on @OxmqHandler(name = "...")
                 for (HandlerMethod hm : handlers) {
                     if (!hm.name().isEmpty() && hm.name().equalsIgnoreCase(job.getName())) {
-                        targetMethod = hm.method();
+                        targetHandler = hm;
                         break;
                     }
                 }
 
                 // 2. Name match against payload class simple name or method name
-                if (targetMethod == null && job.getName() != null) {
+                if (targetHandler == null && job.getName() != null) {
                     for (HandlerMethod hm : handlers) {
                         if (hm.payloadType() != null) {
                             String typeName = hm.payloadType().getSimpleName();
                             if (typeName.equalsIgnoreCase(job.getName())
                                     || typeName.toLowerCase().startsWith(job.getName().toLowerCase())
                                     || hm.method().getName().toLowerCase().contains(job.getName().toLowerCase())) {
-                                targetMethod = hm.method();
+                                targetHandler = hm;
                                 break;
                             }
                         }
@@ -406,26 +418,26 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 }
 
                 // 3. Type assignment or conversion match
-                if (targetMethod == null && data != null) {
+                if (targetHandler == null && data != null) {
                     for (HandlerMethod hm : handlers) {
                         if (hm.payloadType() != null && hm.payloadType().isInstance(data)) {
-                            targetMethod = hm.method();
+                            targetHandler = hm;
                             break;
                         }
                     }
                 }
 
                 // 4. Default handler fallback
-                if (targetMethod == null && finalDefaultHandler != null) {
-                    targetMethod = finalDefaultHandler.method();
+                if (targetHandler == null && finalDefaultHandler != null) {
+                    targetHandler = finalDefaultHandler;
                 }
 
-                if (targetMethod == null) {
+                if (targetHandler == null) {
                     throw new IllegalStateException("No matching @OxmqHandler found on " + bean.getClass().getSimpleName()
                             + " for job '" + job.getName() + "' and payload type: " + (data != null ? data.getClass().getName() : "null"));
                 }
-                log.info("Invoking handler method {}.{}() for job '{}'", bean.getClass().getSimpleName(), targetMethod.getName(), job.getName());
-                return invokeListenerMethod(bean, targetMethod, job);
+                log.info("Invoking handler method {}.{}() for job '{}'", bean.getClass().getSimpleName(), targetHandler.method().getName(), job.getName());
+                return targetHandler.invoker().invoke(job);
             } catch (Throwable t) {
                 log.error("Exception in class-level listener processor for job '{}'", job.getName(), t);
                 throw t;
@@ -613,61 +625,80 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 prefix, queueName, batchSize, bean.getClass().getSimpleName(), method.getName());
     }
 
-    private Object invokeListenerMethod(Object bean, Method method, Job<?> job) throws Exception {
-        try {
-            Parameter[] parameters = method.getParameters();
-            if (parameters.length == 0) {
-                return method.invoke(bean);
-            }
-
-            Object[] args = new Object[parameters.length];
-            for (int i = 0; i < parameters.length; i++) {
-                args[i] = resolveParameterArgument(parameters[i], job);
-            }
-
-            return method.invoke(bean, args);
-        } catch (java.lang.reflect.InvocationTargetException ite) {
-            Throwable target = ite.getTargetException();
-            if (target instanceof Exception ex) throw ex;
-            if (target instanceof Error err) throw err;
-            throw ite;
+    private JobMethodInvoker compileMethodInvoker(Object bean, Method method) {
+        Parameter[] parameters = method.getParameters();
+        if (parameters.length == 0) {
+            return job -> {
+                try {
+                    return method.invoke(bean);
+                } catch (java.lang.reflect.InvocationTargetException ite) {
+                    Throwable target = ite.getTargetException();
+                    if (target instanceof Exception ex) throw ex;
+                    if (target instanceof Error err) throw err;
+                    throw ite;
+                }
+            };
         }
+
+        JobParameterResolver[] resolvers = new JobParameterResolver[parameters.length];
+        for (int i = 0; i < parameters.length; i++) {
+            resolvers[i] = compileParameterResolver(parameters[i]);
+        }
+
+        return job -> {
+            Object[] args = new Object[resolvers.length];
+            for (int i = 0; i < resolvers.length; i++) {
+                args[i] = resolvers[i].resolve(job);
+            }
+            try {
+                return method.invoke(bean, args);
+            } catch (java.lang.reflect.InvocationTargetException ite) {
+                Throwable target = ite.getTargetException();
+                if (target instanceof Exception ex) throw ex;
+                if (target instanceof Error err) throw err;
+                throw ite;
+            }
+        };
     }
 
-    private Object resolveParameterArgument(Parameter parameter, Job<?> job) {
+    private JobParameterResolver compileParameterResolver(Parameter parameter) {
         Header header = parameter.getAnnotation(Header.class);
         if (header != null) {
             String name = header.value();
             if (name.equalsIgnoreCase("id") || name.equalsIgnoreCase("jobId")) {
-                return job.getId();
+                return Job::getId;
             } else if (name.equalsIgnoreCase("name") || name.equalsIgnoreCase("jobName")) {
-                return job.getName();
+                return Job::getName;
             } else if (name.equalsIgnoreCase("timestamp")) {
-                return job.getTimestamp();
+                return Job::getTimestamp;
             } else if (name.equalsIgnoreCase("attemptsMade") || name.equalsIgnoreCase("attempts")) {
-                return job.getAttemptsMade();
+                return Job::getAttemptsMade;
             } else if (name.equalsIgnoreCase("queue") || name.equalsIgnoreCase("queueName")) {
-                return job.getQueueName();
+                return Job::getQueueName;
             } else if (name.equalsIgnoreCase("parentKey")) {
-                return job.getParentKey();
+                return Job::getParentKey;
             }
         }
 
         Class<?> type = parameter.getType();
         if (Job.class.isAssignableFrom(type)) {
-            return job;
+            return job -> job;
         }
 
-        Object data = job.getData();
-        if (data == null) {
-            return null;
-        }
+        return job -> {
+            Object data = job.getData();
+            if (data == null) {
+                return null;
+            }
+            if (type.isInstance(data)) {
+                return data;
+            }
+            return convertPayload(data, type);
+        };
+    }
 
-        if (type.isInstance(data)) {
-            return data;
-        }
-
-        return convertPayload(data, type);
+    private Object invokeListenerMethod(Object bean, Method method, Job<?> job) throws Exception {
+        return compileMethodInvoker(bean, method).invoke(job);
     }
 
     private Object convertPayload(Object data, Class<?> targetClass) {

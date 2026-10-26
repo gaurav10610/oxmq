@@ -41,6 +41,19 @@ public class InMemoryOxmqOutboxRepository implements OxmqOutboxRepository {
     }
 
     @Override
+    public void markAllPublished(List<String> ids) {
+        if (ids == null || ids.isEmpty()) return;
+        Instant now = Instant.now();
+        for (String id : ids) {
+            OxmqOutboxRecord record = storage.get(id);
+            if (record != null) {
+                record.setStatus(OxmqOutboxRecord.Status.PUBLISHED);
+                record.setPublishedAt(now);
+            }
+        }
+    }
+
+    @Override
     public void markFailed(String id, String error) {
         OxmqOutboxRecord record = storage.get(id);
         if (record != null) {

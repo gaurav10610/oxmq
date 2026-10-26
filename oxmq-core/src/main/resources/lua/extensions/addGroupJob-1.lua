@@ -11,6 +11,7 @@
     6: groupsLimitedKey     (bull:<queue>:groups:limited)
     7: idKey                (bull:<queue>:id)
     8: eventsKey            (bull:<queue>:events)
+    9: markerKey            (bull:<queue>:marker, optional)
 
   ARGV:
     1: prefixKey            (e.g. "bull:<queue>:")
@@ -35,6 +36,7 @@ local groupsMaxedKey      = KEYS[5]
 local groupsLimitedKey    = KEYS[6]
 local idKey               = KEYS[7]
 local eventsKey           = KEYS[8]
+local markerKey           = KEYS[9]
 
 local prefixKey           = ARGV[1]
 local customJobId         = ARGV[2]
@@ -115,6 +117,9 @@ if isPaused == 0 and isMaxed == 0 and not isLimited then
     end
     if not inList then
         rcall("LPUSH", groupsWaitingKey, groupId)
+    end
+    if markerKey and markerKey ~= "" then
+        rcall("ZADD", markerKey, 0, "0")
     end
 end
 

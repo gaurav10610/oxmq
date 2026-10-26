@@ -17,8 +17,10 @@ public record InterceptorDecision(Action action, long delayMs, boolean skipAttem
         REJECT
     }
 
+    public static final InterceptorDecision PROCEED = new InterceptorDecision(Action.PROCEED, 0, false, null);
+
     public static InterceptorDecision proceed() {
-        return new InterceptorDecision(Action.PROCEED, 0, false, null);
+        return PROCEED;
     }
 
     public static InterceptorDecision delay(long delayMs) {

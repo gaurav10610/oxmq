@@ -54,6 +54,69 @@ public class OxmqQueue<T> implements Queue<T> {
     private final io.oxmq.backend.QueueBackend backend;
     private final JobOptions defaultJobOptions;
 
+    @SuppressWarnings("unchecked")
+    private final io.oxmq.model.JobContext queueJobContext = new io.oxmq.model.JobContext() {
+        @Override
+        public void updateData(String jobId, Object newData) {
+            OxmqQueue.this.updateData(jobId, (T) newData);
+        }
+
+        @Override
+        public void promote(String jobId) {
+            OxmqQueue.this.promote(jobId);
+        }
+
+        @Override
+        public void changeDelay(String jobId, java.time.Duration delay) {
+            OxmqQueue.this.changeDelay(jobId, delay);
+        }
+
+        @Override
+        public void changePriority(String jobId, int priority) {
+            OxmqQueue.this.changePriority(jobId, priority);
+        }
+
+        @Override
+        public void retry(String jobId) {
+            OxmqQueue.this.retry(jobId);
+        }
+
+        @Override
+        public boolean remove(String jobId) {
+            return OxmqQueue.this.remove(jobId);
+        }
+
+        @Override
+        public JobState getState(String jobId) {
+            return JobState.fromBullMqState(OxmqQueue.this.getState(jobId));
+        }
+
+        @Override
+        public io.oxmq.model.JobDependencies getDependencies(String jobId) {
+            return OxmqQueue.this.getDependencies(jobId);
+        }
+
+        @Override
+        public io.oxmq.model.JobNode getFlow(String jobId, int maxDepth) {
+            return OxmqQueue.this.getFlow(jobId, maxDepth);
+        }
+
+        @Override
+        public boolean clearLogs(String jobId) {
+            return OxmqQueue.this.clearJobLogs(jobId);
+        }
+
+        @Override
+        public void addLog(String jobId, String log) {
+            OxmqQueue.this.addJobLog(jobId, log);
+        }
+
+        @Override
+        public void updateProgress(String jobId, int progress, Object payload) {
+            OxmqQueue.this.updateJobProgress(jobId, progress);
+        }
+    };
+
     public OxmqQueue(String prefix, String name, RedisConnectionManager connectionManager, LuaScriptManager scriptManager,
                      JobSerializer serializer, OxmqMetrics metrics, Class<T> payloadClass, io.oxmq.backend.QueueBackend backend,
                      JobOptions defaultJobOptions, int maxLenEvents) {
@@ -354,18 +417,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
     private void wireJobLifecycle(Job<T> job) {
         if (job == null) return;
-        job.setDataUpdater(newData -> updateData(job.getId(), newData));
-        job.setPromoter(() -> promote(job.getId()));
-        job.setDelayChanger(delay -> changeDelay(job.getId(), delay));
-        job.setPriorityChanger(priority -> changePriority(job.getId(), priority));
-        job.setRetrier(() -> retry(job.getId()));
-        job.setRemover(() -> remove(job.getId()));
-        job.setStateSupplier(() -> JobState.fromBullMqState(getState(job.getId())));
-        job.setDependenciesSupplier(() -> getDependencies(job.getId()));
-        job.setFlowSupplier(maxDepth -> getFlow(job.getId(), maxDepth));
-        job.setLogCleaner(() -> clearJobLogs(job.getId()));
-        job.setLogAppender(msg -> addJobLog(job.getId(), msg));
-        job.setProgressUpdater((p, payload) -> updateJobProgress(job.getId(), p));
+        job.setContext(queueJobContext);
     }
 
     @Override
@@ -428,12 +480,85 @@ public class OxmqQueue<T> implements Queue<T> {
         if (jobs == null || jobs.isEmpty()) {
             return List.of();
         }
-        List<Job<T>> createdJobs = new java.util.ArrayList<>(jobs.size());
-        for (io.oxmq.model.JobRequest<T> req : jobs) {
-            createdJobs.add(add(req.name(), req.data(), req.options()));
+        if (jobs.size() == 1) {
+            io.oxmq.model.JobRequest<T> req = jobs.get(0);
+            return List.of(add(req.name(), req.data(), req.options()));
         }
+
+        StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+        long now = System.currentTimeMillis();
+        List<io.lettuce.core.RedisFuture<Object>> futures = new java.util.ArrayList<>(jobs.size());
+        List<PreparedJob<T>> prepared = new java.util.ArrayList<>(jobs.size());
+
+        for (io.oxmq.model.JobRequest<T> req : jobs) {
+            String jobName = req.name() != null ? req.name() : "default";
+            T data = req.data();
+            JobOptions options = resolveJobOptions(req.options());
+            String serializedData = serializer.serialize(data);
+            long delayMs = options.getDelayMs();
+            String customJobId = options.getJobId() != null ? options.getJobId() : "";
+            Map<String, Object> optsMap = options.toMap();
+
+            String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+            io.lettuce.core.RedisFuture<Object> future;
+
+            if (groupId != null && !groupId.isBlank()) {
+                long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
+                int priority = options.getGroup() != null && options.getGroup().getPriority() > 0
+                        ? options.getGroup().getPriority()
+                        : options.getPriority();
+                String dedupId = options.getDeduplicationId();
+                future = extensionScripts.addGroupJobAsync(binConn, queueKeys, customJobId, jobName,
+                        serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
+            } else if (delayMs > 0) {
+                future = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+            } else if (options.getPriority() > 0) {
+                future = bullScripts.addPrioritizedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
+            } else {
+                future = bullScripts.addStandardJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now);
+            }
+
+            futures.add(future);
+            prepared.add(new PreparedJob<>(jobName, data, options));
+        }
+
+        try {
+            io.lettuce.core.LettuceFutures.awaitAll(java.time.Duration.ofSeconds(30), futures.toArray(new io.lettuce.core.RedisFuture[0]));
+        } catch (Exception e) {
+            log.warn("Error awaiting pipelined addBulk futures on queue {}", name, e);
+        }
+
+        List<Job<T>> createdJobs = new java.util.ArrayList<>(jobs.size());
+        for (int i = 0; i < jobs.size(); i++) {
+            PreparedJob<T> prep = prepared.get(i);
+            io.lettuce.core.RedisFuture<Object> fut = futures.get(i);
+            String jobId;
+            try {
+                Object rawRes = fut.get();
+                if (rawRes instanceof byte[] b) {
+                    jobId = new String(b, java.nio.charset.StandardCharsets.UTF_8);
+                } else if (rawRes != null) {
+                    jobId = rawRes.toString();
+                } else {
+                    jobId = "unknown";
+                }
+            } catch (Exception ex) {
+                log.warn("Failed to retrieve jobId for bulk job #{} on queue {}: {}", i, name, ex.getMessage());
+                jobId = "unknown";
+            }
+
+            Job<T> job = new Job<>(jobId, prep.name(), prep.data(), prep.options());
+            job.setQueueName(name);
+            job.setTimestamp(now);
+            wireJobLifecycle(job);
+            createdJobs.add(job);
+            metrics.recordJobEnqueued(name);
+        }
+
         return createdJobs;
     }
+
+    private record PreparedJob<T>(String name, T data, JobOptions options) {}
 
     @Override
     public void promote(String jobId) {
