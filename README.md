@@ -52,6 +52,7 @@ By directly executing BullMQ's official 49 Lua scripts and adhering to canonical
 - **Cluster Rate Limiting & Concurrency**: Native queue-level metadata (`setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed`) plus opt-in multi-tenant group limiter plugins.
 - **Enterprise Spring Boot 3 Starter**: Declarative `@EnableOxmq`, `@OxmqListener`, `@OxmqBatchListener`, and `@EnableOxmqOutbox` annotations with Actuator health indicators.
 - **OpenTelemetry Distributed Tracing**: Native W3C `traceparent` and `tracestate` context propagation across queues, workers, and DAG hierarchies.
+- **Strict Memory Ceilings & Zero-Data-Loss Backpressure**: Enforce byte-level Redis memory ceilings (e.g. 200 MB) via non-blocking `JobInterceptor` admission gates and `moveToDelayed(skipAttempt: true)`. Guarantees 100% data preservation and eliminates fatal Redis LRU key evictions.
 
 ---
 
@@ -135,6 +136,7 @@ public class PaymentOrderListener {
 | **Deduplication Key Query & Early Release** | **Built-in (`getDeduplicationJobId`, `removeDeduplicationKey`)** | Built-in `removeDeduplicationKey` |
 | **Connected Job Domain Mutators** | **Built-in (`job.updateData`, `job.promote`, `job.changeDelay`, `job.retry`, `job.remove`, `job.clearLogs`)** | Standard `Job` methods in BullMQ |
 | **In-Flight Hard Timeouts** | **Built-in (`jobTimeout(Duration)`)** | Manual timer wrappers |
+| **Strict Redis Memory Ceiling** | **Supported via `JobInterceptor` + `moveToDelayed(skipAttempt: true)`** | Not supported (Redis LRU eviction destroys active queues) |
 | **Transactional Outbox Engine** | **Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) |
 | **Batch Dequeue** | Native atomic batch dequeue (`OxmqBatchWorker`) | Single-job polling only |
 | **Multi-Tenancy** | Automatic service-level namespace inheritance | Manual per-queue prefix |

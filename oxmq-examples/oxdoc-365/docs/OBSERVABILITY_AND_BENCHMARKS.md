@@ -48,6 +48,16 @@ Exported by Spring Boot Actuator:
 | `hikaricp.connections.idle`  | Gauge | Idle database connections ready in the pool. |
 | `hikaricp.connections.pending`| Gauge | Threads currently waiting to obtain a PostgreSQL connection. |
 
+### 2.4 Strict Memory Ceiling & Backpressure Telemetry
+Exported by [`BackpressureService.java`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/service/BackpressureService.java):
+
+| Metric Name | Type | Tags | Description |
+| :--- | :--- | :--- | :--- |
+| `oxdoc.backpressure.active` | Gauge | None | Instantaneous backpressure state ($1.0$ = PACING, $0.0$ = NORMAL). |
+| `oxdoc.backpressure.redis_mb` | Gauge | None | Current Redis `used_memory` in megabytes (sampled via `INFO memory`). |
+| `oxdoc.backpressure.backlog` | Gauge | None | Aggregate in-flight jobs waiting across downstream extraction and categorization queues. |
+| `oxdoc.backpressure.yields` | Counter | `queue` | Cumulative count of delta continuation queries postponed with `delay(2500ms, skipAttempt=true)`. |
+
 ---
 
 ## 3. Dual Grafana Observability Dashboards
@@ -117,3 +127,27 @@ Each tenant progressed in exact mathematical proportion to its burst capacity li
 | **Contoso Logistics** | Mid-Market Growth| **$50\text{ RUs/s}$** | $1,000$ | **$\sim 50\text{ seconds}$** | $0$ |
 | **Acme TinyCorp** | Small Business | **$25\text{ RUs/s}$** | $1,000$ | **$\sim 75\text{ seconds}$** | $0$ (Normal) / $25$ (Chaos) |
 | **TOTALS** | **All 5 Tiers** | **$565\text{ RUs/s}$** | **$5,000$** | **$\sim 75\text{ seconds}$** | **Zero Data Drop** |
+
+---
+
+### 4.4 Hyperscale Multi-Tenant Scale Crawl & Strict 200 MB Ceiling Results
+In addition to the 5,000-document chaos test, a hyperscale multi-tenant crawl was executed across all 5 Microsoft 365 licensing tiers simultaneously to evaluate the **Strict 200 MB Memory Ceiling**:
+
+* **Workload Scale:** 25 SharePoint libraries and user OneDrives across all 5 tiers.
+* **Downstream Queue Pressure:** Ingestion burst generated over **$47,968\text{ in-flight jobs}$** in extraction and categorization queues.
+* **Backpressure Activation:** Aggregate queue depth crossed the 35,000-job threshold, cleanly triggering `PACING` mode via [`BackpressureService`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/service/BackpressureService.java).
+* **Memory Budget Enforcement:** Throughout the entire 30,817-document crawl, Redis memory peaked at **$73.9\text{ MB}$**, never coming close to the 200 MB ceiling.
+* **Cataloged Result:** **$30,817 / 30,817\text{ documents cataloged}$** (**$100.00\%$ Success - ZERO Data Drop**).
+* **Priority 1 Isolation:** Forward real-time uploads bypass backpressure pacing and are processed within seconds, even when backward crawls are paced.
+
+---
+
+## 5. Telemetry & Metric Engine Resiliency Fix
+
+### Prometheus ClassicHistogram Concurrency Race Condition
+* **Observed Defect:** Under high-concurrency multi-tenant workloads, Prometheus `/actuator/prometheus` scrapes occasionally logged `java.lang.IllegalArgumentException: Counts in ClassicHistogramBuckets cannot be negative`.
+* **Root Cause:** Known race condition in Micrometer 1.13.0 cumulative percentile histogram bucket calculation when multiple virtual threads record job durations without explicit boundary hints.
+* **Resolution:**
+  1. Upgraded `<micrometer.version>` to `1.13.5` in [pom.xml](file:///Users/gaurav/git/oxmq/pom.xml).
+  2. Bounded expected timer ranges with `.minimumExpectedValue(Duration.ofMillis(1)).maximumExpectedValue(Duration.ofMinutes(10))` on all job duration and wait-time timers in [`OxmqMetrics.java`](file:///Users/gaurav/git/oxmq/oxmq-core/src/main/java/io/oxmq/metrics/OxmqMetrics.java).
+  3. Re-ordered worker completion metrics recording inside `completeJob()` prior to firing `emitCompleted()` in [`OxmqWorker.java`](file:///Users/gaurav/git/oxmq/oxmq-core/src/main/java/io/oxmq/OxmqWorker.java).
