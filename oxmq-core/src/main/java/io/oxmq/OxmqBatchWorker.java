@@ -595,7 +595,9 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         Map.entry("delay", "delay"),
         Map.entry("priority", "priority"),
         Map.entry("attemptsMade", "attemptsMade"),
+        Map.entry("atm", "attemptsMade"),
         Map.entry("attemptsStarted", "attemptsStarted"),
+        Map.entry("ats", "attemptsStarted"),
         Map.entry("processedOn", "processedOn"),
         Map.entry("finishedOn", "finishedOn"),
         Map.entry("returnvalue", "returnvalue"),
@@ -603,10 +605,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         Map.entry("parentKey", "parentKey"),
         Map.entry("parent", "parent"),
         Map.entry("progress", "progress"),
-        Map.entry("rjk", "rjk"),
+        Map.entry("rjk", "repeatJobKey"),
+        Map.entry("repeatJobKey", "repeatJobKey"),
         Map.entry("deid", "deid"),
-        Map.entry("pb", "pb"),
-        Map.entry("ats", "ats")
+        Map.entry("pb", "parentKey")
     );
 
     private void failSingleJob(Job<T> job, Throwable error, Duration duration) {
@@ -743,6 +745,13 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         String dataStr = fields.get("data");
         String optsStr = fields.get("opts");
         String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
+        String attemptsStartedStr = fields.get("attemptsStarted");
+        if (attemptsStartedStr == null) {
+            attemptsStartedStr = fields.get("ats");
+        }
         String timestampStr = fields.get("timestamp");
         String parentKeyStr = fields.get("parentKey");
 

@@ -437,7 +437,9 @@ public class DashboardController {
             if (!fileName.endsWith(".bin")) fileName += ".bin";
         } else {
             fileBytes = ("OxDoc 365 Enterprise Content Intelligence Document: " + fileName + "\nGenerated at: " + System.currentTimeMillis()).getBytes(StandardCharsets.UTF_8);
-            if (!fileName.endsWith(".docx") && !fileName.endsWith(".pdf") && !fileName.endsWith(".txt")) fileName += ".docx";
+            if (!fileName.endsWith(".docx") && !fileName.endsWith(".pdf") && !fileName.endsWith(".txt") && !fileName.endsWith(".xlsx") && !fileName.endsWith(".csv") && !fileName.endsWith(".bin")) {
+                fileName += ".docx";
+            }
         }
 
         AccessScope accessScope;
@@ -449,6 +451,9 @@ public class DashboardController {
 
         if (mockGraphClient != null) {
             mockGraphClient.addMockForwardFile(driveId, fileName, accessScope, fileBytes);
+        }
+        if (repository != null && repository.getDrive(driveId).isEmpty()) {
+            repository.saveDrive(new MonitoredDrive(driveId, tenantId, DriveType.SHAREPOINT_LIBRARY, "Real-Time Forward Drive (" + tenantId + ")", "admin@" + tenantId + ".com", "delta-v1-0", null));
         }
         String scopeStr = "organization";
         if (accessScope == AccessScope.PUBLIC_ANONYMOUS) scopeStr = "anonymous";
@@ -462,7 +467,7 @@ public class DashboardController {
                 .attempts(3)
                 .removeOnComplete(true)
                 .deduplication(DeduplicationOptions.builder()
-                                .id("forward-upload-" + driveId)
+                                .id("forward-upload-" + driveId + "-" + fileName)
                                 .ttl(Duration.ofSeconds(15))
                                 .keepLastIfActive(true)
                                 .build());

@@ -312,6 +312,9 @@ public class FlowProducer implements Closeable {
         io.oxmq.model.Job<Object> job = new io.oxmq.model.Job<>(jobId, name, dataStr, opts);
         job.setQueueName(queueName);
         String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
         String progressStr = fields.get("progress");
         if (progressStr != null) {

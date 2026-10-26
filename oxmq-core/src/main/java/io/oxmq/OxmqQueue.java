@@ -395,6 +395,13 @@ public class OxmqQueue<T> implements Queue<T> {
         String optsStr = fields.get("opts");
         String progressStr = fields.get("progress");
         String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
+        String attemptsStartedStr = fields.get("attemptsStarted");
+        if (attemptsStartedStr == null) {
+            attemptsStartedStr = fields.get("ats");
+        }
         String timestampStr = fields.get("timestamp");
         String processedStr = fields.get("processedOn");
         String finishedStr = fields.get("finishedOn");

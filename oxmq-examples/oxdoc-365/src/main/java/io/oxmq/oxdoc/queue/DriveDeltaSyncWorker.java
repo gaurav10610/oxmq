@@ -10,6 +10,7 @@ import io.oxmq.oxdoc.model.DocumentCatalogPayload;
 import io.oxmq.oxdoc.model.DocumentProcessingPayload;
 import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
 import io.oxmq.oxdoc.model.DriveItem;
+import io.oxmq.oxdoc.model.DriveType;
 import io.oxmq.oxdoc.model.MonitoredDrive;
 import io.oxmq.oxdoc.model.ScanOrigin;
 import io.oxmq.oxdoc.service.DocumentCatalogRepository;
@@ -101,6 +102,18 @@ public class DriveDeltaSyncWorker {
                         .map(MonitoredDrive::deltaToken)
                         .orElse(null);
             }
+        }
+
+        if (catalogRepository != null && catalogRepository.getDrive(payload.driveId()).isEmpty()) {
+            catalogRepository.saveDrive(new MonitoredDrive(
+                    payload.driveId(),
+                    payload.tenantId(),
+                    DriveType.SHAREPOINT_LIBRARY,
+                    "Monitored Drive " + payload.driveId(),
+                    "admin@" + payload.tenantId() + ".com",
+                    "delta-v1-0",
+                    null
+            ));
         }
 
         // Fetch delta changes from Microsoft Graph

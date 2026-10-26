@@ -39,6 +39,11 @@ public class MockGraphClient implements GraphClient {
     private final boolean simulate429Burst;
     private final AtomicInteger requestCounter = new AtomicInteger(0);
 
+    private final int totalSites;
+    private final int totalUsers;
+    private final int filesPerDrive;
+    private final java.util.Set<String> populatedTenants = ConcurrentHashMap.newKeySet();
+
     // In-memory data store for simulated drives and items
     private final Map<String, MonitoredDrive> drives = new ConcurrentHashMap<>();
     private final Map<String, List<DriveItem>> driveItems = new ConcurrentHashMap<>();
@@ -51,21 +56,51 @@ public class MockGraphClient implements GraphClient {
             @Value("${oxdoc.mock.files-per-drive:30}") int filesPerDrive,
             @Value("${oxdoc.mock.simulate-429-burst:false}") boolean simulate429Burst
     ) {
+        this.totalSites = totalSites;
+        this.totalUsers = totalUsers;
+        this.filesPerDrive = filesPerDrive;
         this.simulate429Burst = simulate429Burst;
         initializeMockTenant(totalSites, totalUsers, filesPerDrive);
     }
 
     private void initializeMockTenant(int totalSites, int totalUsers, int filesPerDrive) {
-        log.info("Initializing Mock Graph Client with {} SharePoint sites, {} user OneDrives, and {} files per drive...",
-                totalSites, totalUsers, filesPerDrive);
+        ensureTenantDrivesPopulated("contoso-enterprise-tenant");
+        ensureTenantDrivesPopulated("tenant-smb-250");
+        ensureTenantDrivesPopulated("tenant-mid-2500");
+        ensureTenantDrivesPopulated("tenant-ent-10k");
+        ensureTenantDrivesPopulated("tenant-large-35k");
+        ensureTenantDrivesPopulated("tenant-global-100k");
 
-        String tenantId = "contoso-enterprise-tenant";
+        // Backwards compatibility legacy drive for direct tests
+        MonitoredDrive legacyLogistics = new MonitoredDrive(
+                "drive-mid-sp-logistics",
+                "tenant-mid-2500",
+                DriveType.SHAREPOINT_LIBRARY,
+                "Contoso Logistics Operations Library",
+                "site-admin@contoso.com",
+                "delta-v1-0",
+                null
+        );
+        drives.put("drive-mid-sp-logistics", legacyLogistics);
+        populateDriveFiles("drive-mid-sp-logistics", filesPerDrive);
+    }
+
+    private synchronized void ensureTenantDrivesPopulated(String tenantId) {
+        if (!populatedTenants.add(tenantId)) {
+            return;
+        }
+
+        log.info("Populating Mock Graph inventory for tenant [{}] (sites={}, users={}, filesPerDrive={})...",
+                tenantId, totalSites, totalUsers, filesPerDrive);
+
         String[] siteNames = {"Finance_Team_Docs", "Legal_Compliance_Vault", "Engineering_Core", "Executive_Briefings", "HR_Global_Assets"};
 
         for (int i = 0; i < totalSites; i++) {
             String name = (i < siteNames.length) ? siteNames[i] : "Site_Collection_" + (i + 1);
-            String driveId = "sp-drive-" + (i + 1);
-            MonitoredDrive drive = new MonitoredDrive(driveId, tenantId, DriveType.SHAREPOINT_LIBRARY, name, "site-admin@contoso.com", "delta-v1-0", null);
+            String driveId = "contoso-enterprise-tenant".equals(tenantId)
+                    ? "sp-drive-" + (i + 1)
+                    : "drive-" + tenantId + "-sp-" + (i + 1);
+            MonitoredDrive drive = new MonitoredDrive(driveId, tenantId, DriveType.SHAREPOINT_LIBRARY, name + " (" + tenantId + ")", "site-admin@" + tenantId + ".com", "delta-v1-0", null);
             drives.put(driveId, drive);
             populateDriveFiles(driveId, filesPerDrive);
         }
@@ -73,14 +108,17 @@ public class MockGraphClient implements GraphClient {
         String[] userNames = {"ceo", "cfo", "cto", "rnd-lead", "lead-architect", "platform-engineer", "hr-director", "finance-analyst", "legal-counsel", "product-mgr"};
         for (int i = 0; i < totalUsers; i++) {
             String alias = (i < userNames.length) ? userNames[i] : "user" + (i + 1);
-            String email = alias + "@contoso.com";
-            String driveId = "od-drive-" + alias;
-            MonitoredDrive drive = new MonitoredDrive(driveId, tenantId, DriveType.USER_ONEDRIVE, alias + "'s Personal OneDrive", email, "delta-v1-0", null);
+            String email = alias + "@" + tenantId + ".com";
+            String driveId = "contoso-enterprise-tenant".equals(tenantId)
+                    ? "od-drive-" + alias
+                    : "drive-" + tenantId + "-od-" + alias;
+            MonitoredDrive drive = new MonitoredDrive(driveId, tenantId, DriveType.USER_ONEDRIVE, alias + "'s Personal OneDrive (" + tenantId + ")", email, "delta-v1-0", null);
             drives.put(driveId, drive);
             populateDriveFiles(driveId, filesPerDrive);
         }
 
-        log.info("Mock Graph initialized: total {} drives, {} files cataloged.", drives.size(), itemByteContents.size());
+        log.info("Mock Graph initialized for tenant [{}]: total {} drives, {} files cataloged.",
+                tenantId, drives.size(), itemByteContents.size());
     }
 
     private void populateDriveFiles(String driveId, int count) {
@@ -160,6 +198,10 @@ public class MockGraphClient implements GraphClient {
             itemPermissions.put(itemId, new ContentVisibility(accessScope, hasUniquePermissions, permissions));
         }
 
+        List<DriveItem> existing = driveItems.get(driveId);
+        if (existing != null && !existing.isEmpty()) {
+            items.addAll(existing);
+        }
         driveItems.put(driveId, items);
     }
 
@@ -176,10 +218,14 @@ public class MockGraphClient implements GraphClient {
     @Override
     public List<MonitoredDrive> discoverSharePointDrives(String tenantId) {
         checkSimulated429();
+        String effectiveTenantId = (tenantId == null || tenantId.isBlank()) ? "contoso-enterprise-tenant" : tenantId;
+        ensureTenantDrivesPopulated(effectiveTenantId);
         List<MonitoredDrive> result = new ArrayList<>();
         for (MonitoredDrive drive : drives.values()) {
             if (drive.driveType() == DriveType.SHAREPOINT_LIBRARY) {
-                result.add(drive);
+                if ("contoso-enterprise-tenant".equals(effectiveTenantId) || effectiveTenantId.equals(drive.tenantId())) {
+                    result.add(drive);
+                }
             }
         }
         return result;
@@ -188,10 +234,14 @@ public class MockGraphClient implements GraphClient {
     @Override
     public List<MonitoredDrive> discoverUserOneDrives(String tenantId) {
         checkSimulated429();
+        String effectiveTenantId = (tenantId == null || tenantId.isBlank()) ? "contoso-enterprise-tenant" : tenantId;
+        ensureTenantDrivesPopulated(effectiveTenantId);
         List<MonitoredDrive> result = new ArrayList<>();
         for (MonitoredDrive drive : drives.values()) {
             if (drive.driveType() == DriveType.USER_ONEDRIVE) {
-                result.add(drive);
+                if ("contoso-enterprise-tenant".equals(effectiveTenantId) || effectiveTenantId.equals(drive.tenantId())) {
+                    result.add(drive);
+                }
             }
         }
         return result;
@@ -227,6 +277,17 @@ public class MockGraphClient implements GraphClient {
     }
 
     public DriveItem addMockForwardFile(String driveId, String fileName, AccessScope accessScope, byte[] content) {
+        if (!drives.containsKey(driveId)) {
+            String tenant = "tenant-mid-2500";
+            if (driveId.contains("tenant-")) {
+                String[] parts = driveId.split("-");
+                if (parts.length >= 4) {
+                    tenant = parts[1] + "-" + parts[2] + "-" + parts[3];
+                }
+            }
+            drives.put(driveId, new MonitoredDrive(driveId, tenant, DriveType.SHAREPOINT_LIBRARY, "Forward Drive " + driveId, "admin@" + tenant + ".com", "delta-v1-0", null));
+        }
+
         String itemId = "forward-" + System.currentTimeMillis() + "-" + UUID.randomUUID().toString().substring(0, 6);
         DriveItem item = new DriveItem(
                 itemId,
@@ -292,7 +353,7 @@ public class MockGraphClient implements GraphClient {
         String sku = "M365_BUSINESS_PREMIUM";
         String orgName = "Contoso Logistics";
 
-        if (tId.contains("smb") || tId.contains("250")) {
+        if (tId.contains("smb") || (tId.contains("250") && !tId.contains("2500"))) {
             seats = 250;
             sku = "O365_BUSINESS_PREMIUM";
             orgName = "Acme TinyCorp";
@@ -333,11 +394,20 @@ public class MockGraphClient implements GraphClient {
     @Override
     public int discoverActiveUserCount(String tenantId) {
         String tId = (tenantId == null || tenantId.isBlank()) ? "tenant-mid-2500" : tenantId;
-        if (tId.contains("smb") || tId.contains("250")) return 250;
+        if (tId.contains("smb") || (tId.contains("250") && !tId.contains("2500"))) return 250;
         if (tId.contains("mid") || tId.contains("2500")) return 2500;
         if (tId.contains("ent") || tId.contains("10k")) return 10000;
         if (tId.contains("large") || tId.contains("35k")) return 35000;
         if (tId.contains("global") || tId.contains("100k")) return 100000;
         return 2500;
+    }
+
+    public synchronized void reset() {
+        populatedTenants.clear();
+        drives.clear();
+        driveItems.clear();
+        itemPermissions.clear();
+        itemByteContents.clear();
+        initializeMockTenant(totalSites, totalUsers, filesPerDrive);
     }
 }

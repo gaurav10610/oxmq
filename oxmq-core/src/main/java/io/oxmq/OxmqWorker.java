@@ -759,7 +759,9 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("delay", "delay"),
         Map.entry("priority", "priority"),
         Map.entry("attemptsMade", "attemptsMade"),
+        Map.entry("atm", "attemptsMade"),
         Map.entry("attemptsStarted", "attemptsStarted"),
+        Map.entry("ats", "attemptsStarted"),
         Map.entry("processedOn", "processedOn"),
         Map.entry("finishedOn", "finishedOn"),
         Map.entry("returnvalue", "returnvalue"),
@@ -767,10 +769,10 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("parentKey", "parentKey"),
         Map.entry("parent", "parent"),
         Map.entry("progress", "progress"),
-        Map.entry("rjk", "rjk"),
+        Map.entry("rjk", "repeatJobKey"),
+        Map.entry("repeatJobKey", "repeatJobKey"),
         Map.entry("deid", "deid"),
-        Map.entry("pb", "pb"),
-        Map.entry("ats", "ats")
+        Map.entry("pb", "parentKey")
     );
 
     private void failJob(Job<T> job, Throwable error, Duration duration) {
@@ -923,7 +925,13 @@ public class OxmqWorker<T> implements Worker<T> {
         String dataStr = fields.get("data");
         String optsStr = fields.get("opts");
         String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
         String attemptsStartedStr = fields.get("attemptsStarted");
+        if (attemptsStartedStr == null) {
+            attemptsStartedStr = fields.get("ats");
+        }
         String timestampStr = fields.get("timestamp");
         String parentKeyStr = fields.get("parentKey");
 
@@ -987,11 +995,12 @@ public class OxmqWorker<T> implements Worker<T> {
         int len = b.length;
         switch (len) {
             case 2:
-                if (b[0] == 'p' && b[1] == 'b') return "pb";
+                if (b[0] == 'p' && b[1] == 'b') return "parentKey";
                 break;
             case 3:
-                if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "rjk";
-                if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "ats";
+                if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "repeatJobKey";
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "attemptsStarted";
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 'm') return "attemptsMade";
                 break;
             case 4:
                 if (b[0] == 'n' && b[1] == 'a' && b[2] == 'm' && b[3] == 'e') return "name";

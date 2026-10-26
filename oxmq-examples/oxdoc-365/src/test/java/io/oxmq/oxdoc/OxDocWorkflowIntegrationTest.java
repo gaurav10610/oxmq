@@ -38,8 +38,14 @@ class OxDocWorkflowIntegrationTest {
     @Autowired
     private TenantCooldownService cooldownService;
 
+    @Autowired(required = false)
+    private io.oxmq.oxdoc.connector.MockGraphClient mockGraphClient;
+
     @BeforeEach
     void setUp() {
+        if (mockGraphClient != null) {
+            mockGraphClient.reset();
+        }
         repository.clear();
     }
 

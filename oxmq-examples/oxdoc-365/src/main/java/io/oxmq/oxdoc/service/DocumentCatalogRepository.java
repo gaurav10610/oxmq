@@ -70,7 +70,32 @@ public class DocumentCatalogRepository {
 
     @Transactional
     public void saveDrive(MonitoredDrive drive) {
-        driveRepo.save(MonitoredDriveEntity.fromModel(drive));
+        if (drive == null || drive.driveId() == null) return;
+        try {
+            Optional<MonitoredDriveEntity> existing = driveRepo.findById(drive.driveId());
+            if (existing.isPresent()) {
+                MonitoredDriveEntity entity = existing.get();
+                entity.setName(drive.name());
+                entity.setOwnerPrincipal(drive.ownerPrincipal());
+                if (drive.deltaToken() != null) {
+                    entity.setDeltaToken(drive.deltaToken());
+                }
+                if (drive.webhookSubscriptionId() != null) {
+                    entity.setWebhookSubscriptionId(drive.webhookSubscriptionId());
+                }
+                driveRepo.save(entity);
+            } else {
+                driveRepo.save(MonitoredDriveEntity.fromModel(drive));
+            }
+        } catch (org.springframework.dao.DataIntegrityViolationException ex) {
+            // Concurrent insert race condition: update existing record safely
+            driveRepo.findById(drive.driveId()).ifPresent(entity -> {
+                if (drive.deltaToken() != null) {
+                    entity.setDeltaToken(drive.deltaToken());
+                }
+                driveRepo.save(entity);
+            });
+        }
     }
 
     public List<MonitoredDrive> getAllDrives() {
@@ -117,7 +142,9 @@ public class DocumentCatalogRepository {
                 entity.setIndexingVerdict(record.indexingVerdict());
                 entity.setAnalysisDetails(record.analysisDetails());
                 entity.setSha256(record.sha256());
-                entity.setScanOrigin(record.scanOrigin());
+                if (entity.getScanOrigin() != ScanOrigin.FORWARD || record.scanOrigin() == ScanOrigin.FORWARD) {
+                    entity.setScanOrigin(record.scanOrigin());
+                }
                 entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
                 docRepo.save(entity);
             } else {
@@ -128,6 +155,9 @@ public class DocumentCatalogRepository {
             docRepo.findByFileId(record.fileId()).ifPresent(entity -> {
                 entity.setIndexingVerdict(record.indexingVerdict());
                 entity.setAnalysisDetails(record.analysisDetails());
+                if (entity.getScanOrigin() != ScanOrigin.FORWARD || record.scanOrigin() == ScanOrigin.FORWARD) {
+                    entity.setScanOrigin(record.scanOrigin());
+                }
                 entity.setIndexedAtTimestamp(record.indexedAtTimestamp());
                 docRepo.save(entity);
             });
