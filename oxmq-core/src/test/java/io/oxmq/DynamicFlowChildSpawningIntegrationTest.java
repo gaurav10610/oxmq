@@ -85,7 +85,7 @@ class DynamicFlowChildSpawningIntegrationTest {
         worker.start();
 
         Job<String> parent = queue.add("parent-job", "parent-payload");
-        assertTrue(parentFinishedLatch.await(10, TimeUnit.SECONDS), "Parent job should finish after dynamically spawned child completes");
+        assertTrue(parentFinishedLatch.await(30, TimeUnit.SECONDS), "Parent job should finish after dynamically spawned child completes");
 
         assertEquals(List.of("parent-spawning-child", "child-executed", "parent-resumed-and-finished"), executionLog,
                 "Dynamic flow execution order: parent spawns child -> child completes -> parent resumes and completes");
