@@ -145,7 +145,9 @@ public class OxmqMetrics {
         return durationTimers.computeIfAbsent(key, k -> {
             var builder = Timer.builder("oxmq.job.duration")
                     .description("Execution duration of processed jobs")
-                    .tag("queue", queueName);
+                    .tag("queue", queueName)
+                    .minimumExpectedValue(Duration.ofMillis(1))
+                    .maximumExpectedValue(Duration.ofMinutes(10));
             if (groupId != null && groupMetricsEnabled) {
                 builder.tag("group", groupId);
             }
@@ -157,6 +159,8 @@ public class OxmqMetrics {
         return waitTimeTimers.computeIfAbsent(queueName, q -> Timer.builder("oxmq.job.wait_time")
                 .description("Time spent waiting in queue before execution")
                 .tag("queue", q)
+                .minimumExpectedValue(Duration.ofMillis(1))
+                .maximumExpectedValue(Duration.ofMinutes(10))
                 .publishPercentileHistogram()
                 .register(registry));
     }

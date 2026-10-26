@@ -553,7 +553,6 @@ public class OxmqWorker<T> implements Worker<T> {
             Duration duration = Duration.ofNanos(durationNanos);
 
             completeJob(job, result, duration);
-            metrics.recordJobCompleted(queueName, job.getGroupKey(), duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
             // 2. Interceptor post-processing
@@ -746,6 +745,7 @@ public class OxmqWorker<T> implements Worker<T> {
             extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
         }
 
+        metrics.recordJobCompleted(queueName, groupId, duration);
         emitCompleted(job, result);
     }
 

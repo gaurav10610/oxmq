@@ -103,11 +103,22 @@ class ReactiveProcessorIntegrationTest {
         assertTrue(observedProgress.contains(100), "Final progress 100 should be recorded");
 
         // Verify group-tagged telemetry
-        double completedCount = meterRegistry.get("oxmq.jobs.completed")
-                .tag("queue", queueName)
-                .tag("group", "tenant-fintech")
-                .counter()
-                .count();
+        double completedCount = 0;
+        long deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                completedCount = meterRegistry.get("oxmq.jobs.completed")
+                        .tag("queue", queueName)
+                        .tag("group", "tenant-fintech")
+                        .counter()
+                        .count();
+                if (completedCount >= 1.0) {
+                    break;
+                }
+            } catch (io.micrometer.core.instrument.search.MeterNotFoundException ignored) {
+                Thread.sleep(20);
+            }
+        }
         assertEquals(1.0, completedCount, "Metrics counter should be tagged with tenant-fintech group");
     }
 
