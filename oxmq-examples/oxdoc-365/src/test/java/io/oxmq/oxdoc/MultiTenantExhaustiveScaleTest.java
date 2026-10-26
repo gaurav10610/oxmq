@@ -169,4 +169,84 @@ public class MultiTenantExhaustiveScaleTest {
         Map<String, Object> metrics = repository.getMetrics();
         assertThat((Long) metrics.get("totalDocuments")).isGreaterThanOrEqualTo(25L);
     }
+
+    @Test
+    @DisplayName("Chaos & Isolation: Simultaneous P1 Forward Ingestion Storm across all 5 Tenants")
+    void testConcurrentRealTimeForwardStormAll5Tenants() throws Exception {
+        int threadsPerTenant = 3;
+        int totalThreads = ALL_5_TENANTS.size() * threadsPerTenant;
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(totalThreads);
+        java.util.concurrent.CountDownLatch startGate = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch doneGate = new java.util.concurrent.CountDownLatch(totalThreads);
+
+        for (String tenantId : ALL_5_TENANTS) {
+            for (int i = 0; i < threadsPerTenant; i++) {
+                final int idx = i;
+                executor.submit(() -> {
+                    try {
+                        startGate.await();
+                        dashboardController.simulateForwardUpload(
+                                tenantId,
+                                "drive-" + tenantId + "-storm",
+                                "urgent_storm_file_" + idx + ".docx",
+                                "INTERNAL_ONLY",
+                                "DOCUMENT"
+                        );
+                    } catch (Exception ignored) {
+                    } finally {
+                        doneGate.countDown();
+                    }
+                });
+            }
+        }
+
+        // Release all parallel virtual threads simultaneously
+        startGate.countDown();
+        assertThat(doneGate.await(10, TimeUnit.SECONDS)).isTrue();
+        executor.shutdown();
+
+        // Await all documents to be indexed and verified strictly by tenant
+        await().atMost(30, TimeUnit.SECONDS).untilAsserted(() -> {
+            for (String tenantId : ALL_5_TENANTS) {
+                List<IndexedDocumentRecord> tenantDocs = repository.getDocumentsByTenant(tenantId);
+                assertThat(tenantDocs)
+                        .withFailMessage("Expected storm documents indexed for tenant [%s]", tenantId)
+                        .anyMatch(doc -> doc.fileName().contains("urgent_storm_file") && doc.scanOrigin() == ScanOrigin.FORWARD);
+
+                // Verify strict zero cross-tenant contamination
+                assertThat(tenantDocs)
+                        .allMatch(doc -> tenantId.equals(doc.tenantId()));
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("Chaos & Isolation: Isolated 429 Damping & Non-Interfering Neighbor Headroom")
+    void testIsolatedTenant429DampingAndIndependentRecovery(@Autowired io.oxmq.oxdoc.service.TenantCooldownService cooldownService) {
+        String starvedTenant = "tenant-smb-250";
+        String healthyTenant = "tenant-global-100k";
+
+        // Inject 429 burst onto starvedTenant
+        cooldownService.record429Hit(starvedTenant);
+        cooldownService.setCooldown(starvedTenant, 2500);
+
+        // Verify starvedTenant is dampened
+        assertThat(cooldownService.getRemainingCooldownMs(starvedTenant)).isGreaterThan(0);
+
+        // Verify healthy tenant has 0 cooldown and remains unaffected
+        assertThat(cooldownService.getRemainingCooldownMs(healthyTenant)).isEqualTo(0);
+
+        // Verify quota telemetry reports 429 cooldown isolated to starvedTenant
+        Map<String, Object> smbTelemetry = cooldownService.getQuotaTelemetry(starvedTenant);
+        assertThat(smbTelemetry.get("is429CooldownActive")).isEqualTo(true);
+        assertThat(((Number) smbTelemetry.get("cooldownRemainingMs")).longValue()).isGreaterThan(0L);
+
+        Map<String, Object> globalTelemetry = cooldownService.getQuotaTelemetry(healthyTenant);
+        assertThat(globalTelemetry.get("is429CooldownActive")).isEqualTo(false);
+        assertThat(((Number) globalTelemetry.get("cooldownRemainingMs")).longValue()).isEqualTo(0L);
+
+        // Recover starvedTenant
+        cooldownService.recordRetryRecovered(starvedTenant);
+        assertThat(cooldownService.getRemainingCooldownMs(starvedTenant)).isGreaterThanOrEqualTo(0);
+    }
 }

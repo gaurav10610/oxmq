@@ -1,13 +1,16 @@
 package io.oxmq.chaos;
 
 import io.oxmq.FlowProducer;
+import io.oxmq.OxmqBatchWorker;
 import io.oxmq.OxmqQueue;
 import io.oxmq.OxmqWorker;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.model.BackoffStrategy;
+import io.oxmq.model.CancellationToken;
 import io.oxmq.model.DeduplicationOptions;
 import io.oxmq.model.FlowJob;
 import io.oxmq.model.Job;
+import io.oxmq.model.JobNode;
 import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
 import java.time.Duration;
@@ -38,13 +41,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * - FlowProducer DAG partial child failure with self-healing recovery
  * - Multi-tenant noisy neighbor starvation resistance
  * - High-concurrency rate limiter storm under high thread contention
+ * - High-frequency queue pause and resume cycling under concurrent ingestion
+ * - Delayed job jitter storm with staggered delay values
+ * - Batch worker partial failure isolation under mixed poison pills
+ * - Multi-level DAG cascading dependency failure isolation
+ * - Cluster-wide cancellation race interrupting active virtual worker
  */
 public class OxmqChaosEngineeringIntegrationTest {
 
     private static final String REDIS_URI = "redis://localhost:6379";
     private RedisConnectionManager connectionManager;
     private List<OxmqQueue<?>> queuesToClean;
-    private List<OxmqWorker<?>> workersToStop;
+    private List<AutoCloseable> workersToStop;
 
     @BeforeEach
     void setUp() {
@@ -55,7 +63,7 @@ public class OxmqChaosEngineeringIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        for (OxmqWorker<?> worker : workersToStop) {
+        for (AutoCloseable worker : workersToStop) {
             try {
                 worker.close();
             } catch (Exception ignored) {}
@@ -423,5 +431,235 @@ public class OxmqChaosEngineeringIntegrationTest {
         worker.start();
 
         assertThat(allProcessed.await(10, TimeUnit.SECONDS)).isTrue();
+    }
+
+    @Test
+    @DisplayName("Chaos 7: High-frequency queue pause and resume cycling under concurrent ingestion")
+    void testHighFrequencyPauseResumeCyclingUnderBurst() throws Exception {
+        String queueName = "chaos-pause-cycle-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        int totalJobs = 20;
+        CountDownLatch allCompleted = new CountDownLatch(totalJobs);
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(5)
+                .processor(job -> {
+                    allCompleted.countDown();
+                    return "PROCESSED";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        // Enqueue jobs while cycling pause and resume
+        for (int i = 0; i < totalJobs; i++) {
+            queue.add("pause-job-" + i, "data-" + i);
+            if (i % 5 == 0) {
+                queue.pause();
+                assertThat(queue.isPaused()).isTrue();
+                Thread.sleep(30);
+                queue.resume();
+                assertThat(queue.isPaused()).isFalse();
+            }
+        }
+
+        assertThat(allCompleted.await(10, TimeUnit.SECONDS)).isTrue();
+        awaitCondition(() -> queue.count(JobState.COMPLETED) == (long) totalJobs, Duration.ofSeconds(5));
+        assertThat(queue.count(JobState.COMPLETED)).isEqualTo((long) totalJobs);
+    }
+
+    @Test
+    @DisplayName("Chaos 8: Delayed job jitter storm with staggered delay values")
+    void testDelayedJobJitterStorm() throws Exception {
+        String queueName = "chaos-delayed-storm-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        int totalJobs = 15;
+        CountDownLatch allCompleted = new CountDownLatch(totalJobs);
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(10)
+                .processor(job -> {
+                    allCompleted.countDown();
+                    return "DELAYED_OK";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        for (int i = 0; i < totalJobs; i++) {
+            long delayMs = 50 + ((i % 4) * 40); // 50ms, 90ms, 130ms, 170ms
+            JobOptions opts = JobOptions.builder().delay(Duration.ofMillis(delayMs)).build();
+            queue.add("delayed-job-" + i, "payload-" + i, opts);
+        }
+
+        assertThat(allCompleted.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(queue.count(JobState.DELAYED)).isEqualTo(0L);
+        assertThat(queue.count(JobState.COMPLETED)).isEqualTo((long) totalJobs);
+    }
+
+    @Test
+    @DisplayName("Chaos 9: Batch worker partial failure isolation under mixed poison pills")
+    void testBatchWorkerPartialFailureIsolation() throws Exception {
+        String queueName = "chaos-batch-poison-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        int totalJobs = 8;
+        CountDownLatch batchProcessed = new CountDownLatch(1);
+        AtomicInteger successfulCount = new AtomicInteger(0);
+        AtomicInteger failedCount = new AtomicInteger(0);
+
+        OxmqBatchWorker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(4)
+                .batchTimeout(Duration.ofMillis(300))
+                .processor(jobs -> {
+                    for (Job<String> job : jobs) {
+                        if (job.getData() != null && job.getData().contains("POISON")) {
+                            job.setAsFailed(new RuntimeException("Simulated poison batch element: " + job.getName()));
+                            failedCount.incrementAndGet();
+                        } else {
+                            successfulCount.incrementAndGet();
+                        }
+                    }
+                    if (successfulCount.get() + failedCount.get() >= totalJobs) {
+                        batchProcessed.countDown();
+                    }
+                    return "BATCH_DONE";
+                })
+                .build();
+        workersToStop.add(batchWorker);
+        batchWorker.start();
+
+        for (int i = 0; i < totalJobs; i++) {
+            String payload = (i % 4 == 0) ? "POISON_PAYLOAD_" + i : "VALID_PAYLOAD_" + i;
+            JobOptions opts = JobOptions.builder().attempts(1).build();
+            queue.add("batch-job-" + i, payload, opts);
+        }
+
+        assertThat(batchProcessed.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(successfulCount.get()).isEqualTo(6);
+        assertThat(failedCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("Chaos 10: Multi-level DAG cascading dependency failure isolation")
+    void testCascadingParentChildFlowFailure() throws Exception {
+        String parentQueue = "chaos-dag-parent-" + UUID.randomUUID();
+        String childQueue = "chaos-dag-child-" + UUID.randomUUID();
+
+        OxmqQueue<String> pQueue = OxmqQueue.<String>builder().name(parentQueue).connectionManager(connectionManager).build();
+        OxmqQueue<String> cQueue = OxmqQueue.<String>builder().name(childQueue).connectionManager(connectionManager).build();
+        queuesToClean.add(pQueue);
+        queuesToClean.add(cQueue);
+
+        FlowProducer flowProducer = new FlowProducer(connectionManager);
+
+        FlowJob<String> parent = FlowJob.of(parentQueue, "parent-step", "parent-data");
+        FlowJob<String> healthyChild = FlowJob.of(childQueue, "healthy-child", "healthy-data");
+        FlowJob<String> fatalChild = FlowJob.of(childQueue, "fatal-child", "fatal-poison",
+                JobOptions.builder().attempts(1).failParentOnFailure(true).build());
+
+        parent.addChild(healthyChild);
+        parent.addChild(fatalChild);
+
+        String parentJobId = flowProducer.add(parent);
+
+        CountDownLatch fatalChildFailed = new CountDownLatch(1);
+        CountDownLatch healthyChildDone = new CountDownLatch(1);
+
+        OxmqWorker<String> childWorker = OxmqWorker.<String>builder()
+                .queueName(childQueue)
+                .connectionManager(connectionManager)
+                .processor(job -> {
+                    if ("fatal-poison".equals(job.getData())) {
+                        fatalChildFailed.countDown();
+                        throw new RuntimeException("Fatal unrecoverable child crash");
+                    }
+                    healthyChildDone.countDown();
+                    return "HEALTHY_DONE";
+                })
+                .build();
+        workersToStop.add(childWorker);
+        childWorker.start();
+
+        assertThat(healthyChildDone.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(fatalChildFailed.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Verify parent does not complete successfully when a child has failed
+        awaitCondition(() -> {
+            Job<String> pJob = pQueue.getJob(parentJobId);
+            return pJob != null && (pJob.getState() == JobState.WAITING || pJob.getState() == JobState.FAILED || pJob.getState() == JobState.WAITING_CHILDREN);
+        }, Duration.ofSeconds(5));
+
+        assertThat(pQueue.count(JobState.COMPLETED)).isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("Chaos 11: Cluster-wide cancellation race interrupting active virtual worker")
+    void testClusterWideCancellationRace() throws Exception {
+        String queueName = "chaos-cancel-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        CountDownLatch jobStartedLatch = new CountDownLatch(1);
+        CountDownLatch jobAbortedLatch = new CountDownLatch(1);
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(1)
+                .processor(job -> {
+                    jobStartedLatch.countDown();
+                    CancellationToken token = job.getCancellationToken();
+                    try {
+                        for (int i = 0; i < 50; i++) {
+                            token.throwIfCancelled();
+                            Thread.sleep(100);
+                        }
+                    } catch (Exception e) {
+                        jobAbortedLatch.countDown();
+                        throw new RuntimeException("Job aborted by cancellation signal", e);
+                    }
+                    return "UNEXPECTED";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        Job<String> job = queue.add("cancel-target", "target-payload");
+        assertThat(jobStartedLatch.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Broadcast cluster-wide cancellation
+        boolean cancelled = queue.cancelJob(job.getId(), "Chaos admin abort");
+        assertThat(cancelled).isTrue();
+
+        assertThat(jobAbortedLatch.await(5, TimeUnit.SECONDS)).isTrue();
+
+        awaitCondition(() -> {
+            Job<String> j = queue.getJob(job.getId());
+            return j != null && j.getState() == JobState.FAILED;
+        }, Duration.ofSeconds(5));
     }
 }
