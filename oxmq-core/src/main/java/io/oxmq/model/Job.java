@@ -23,7 +23,7 @@ public class Job<T> {
     private String id;
     private String name;
     private T data;
-    private JobOptions opts = new JobOptions();
+    private JobOptions opts;
     private JobState state;
     private int progress = 0;
     private int attemptsMade = 0;
@@ -41,24 +41,6 @@ public class Job<T> {
     private String checkpointJson;
     private String checkpointStep;
 
-    @JsonIgnore
-    private transient BiConsumer<Integer, Object> progressUpdater;
-
-    @JsonIgnore
-    private transient BiConsumer<String, Object> checkpointSaver;
-
-    @JsonIgnore
-    private transient Consumer<java.util.List<FlowJob>> childSpawner;
-
-    @JsonIgnore
-    private transient Consumer<String> logAppender;
-
-    @JsonIgnore
-    private transient Supplier<Map<String, Object>> childrenValuesSupplier;
-
-    @JsonIgnore
-    private transient Supplier<Map<String, String>> ignoredChildrenFailuresSupplier;
-
     private Map<String, String> ignoredChildrenFailures;
 
     @JsonIgnore
@@ -71,43 +53,42 @@ public class Job<T> {
     private transient volatile String cancelReason;
 
     @JsonIgnore
-    private transient CancellationToken cancellationToken = new CancellationToken();
+    private transient CancellationToken cancellationToken;
 
     @JsonIgnore
     private transient volatile Throwable batchFailureReason;
 
     @JsonIgnore
-    private transient Consumer<T> dataUpdater;
-
-    @JsonIgnore
-    private transient Runnable promoter;
-
-    @JsonIgnore
-    private transient Consumer<Duration> delayChanger;
-
-    @JsonIgnore
-    private transient Consumer<Integer> priorityChanger;
-
-    @JsonIgnore
-    private transient Runnable retrier;
-
-    @JsonIgnore
-    private transient Supplier<Boolean> remover;
-
-    @JsonIgnore
-    private transient Supplier<JobState> stateSupplier;
-
-    @JsonIgnore
-    private transient Supplier<JobDependencies> dependenciesSupplier;
-
-    @JsonIgnore
-    private transient Function<Integer, JobNode> flowSupplier;
-
-    @JsonIgnore
-    private transient Supplier<Boolean> logCleaner;
-
-    @JsonIgnore
     private transient JobContext context;
+
+    @JsonIgnore
+    private transient JobCallbacks<T> callbacks;
+
+    private static class JobCallbacks<T> {
+        BiConsumer<Integer, Object> progressUpdater;
+        BiConsumer<String, Object> checkpointSaver;
+        Consumer<java.util.List<FlowJob>> childSpawner;
+        Consumer<String> logAppender;
+        Supplier<Map<String, Object>> childrenValuesSupplier;
+        Supplier<Map<String, String>> ignoredChildrenFailuresSupplier;
+        Consumer<T> dataUpdater;
+        Runnable promoter;
+        Consumer<Duration> delayChanger;
+        Consumer<Integer> priorityChanger;
+        Runnable retrier;
+        Supplier<Boolean> remover;
+        Supplier<JobState> stateSupplier;
+        Supplier<JobDependencies> dependenciesSupplier;
+        Function<Integer, JobNode> flowSupplier;
+        Supplier<Boolean> logCleaner;
+    }
+
+    private JobCallbacks<T> callbacks() {
+        if (callbacks == null) {
+            callbacks = new JobCallbacks<>();
+        }
+        return callbacks;
+    }
 
     public Job() {}
 
@@ -140,8 +121,8 @@ public class Job<T> {
         this.progress = Math.min(100, Math.max(0, percentage));
         if (context != null) {
             context.updateProgress(this.id, this.progress, payload);
-        } else if (progressUpdater != null) {
-            progressUpdater.accept(this.progress, payload);
+        } else if (callbacks != null && callbacks.progressUpdater != null) {
+            callbacks.progressUpdater.accept(this.progress, payload);
         }
     }
 
@@ -152,8 +133,8 @@ public class Job<T> {
         if (message != null) {
             if (context != null) {
                 context.addLog(this.id, message);
-            } else if (logAppender != null) {
-                logAppender.accept(message);
+            } else if (callbacks != null && callbacks.logAppender != null) {
+                callbacks.logAppender.accept(message);
             }
         }
     }
@@ -185,11 +166,14 @@ public class Job<T> {
     }
 
     public JobOptions getOpts() {
+        if (opts == null) {
+            opts = JobOptions.defaults();
+        }
         return opts;
     }
 
     public void setOpts(JobOptions opts) {
-        this.opts = opts;
+        this.opts = opts != null ? opts : JobOptions.defaults();
     }
 
     public int getProgress() {
@@ -295,8 +279,8 @@ public class Job<T> {
         if (childrenValues == null) {
             if (context != null) {
                 childrenValues = context.getChildrenValues(this.id);
-            } else if (childrenValuesSupplier != null) {
-                childrenValues = childrenValuesSupplier.get();
+            } else if (callbacks != null && callbacks.childrenValuesSupplier != null) {
+                childrenValues = callbacks.childrenValuesSupplier.get();
             }
         }
         return childrenValues;
@@ -307,7 +291,7 @@ public class Job<T> {
     }
 
     public void setChildrenValuesSupplier(Supplier<Map<String, Object>> childrenValuesSupplier) {
-        this.childrenValuesSupplier = childrenValuesSupplier;
+        callbacks().childrenValuesSupplier = childrenValuesSupplier;
     }
 
     /**
@@ -331,8 +315,8 @@ public class Job<T> {
         if (ignoredChildrenFailures == null) {
             if (context != null) {
                 ignoredChildrenFailures = context.getIgnoredChildrenFailures(this.id);
-            } else if (ignoredChildrenFailuresSupplier != null) {
-                ignoredChildrenFailures = ignoredChildrenFailuresSupplier.get();
+            } else if (callbacks != null && callbacks.ignoredChildrenFailuresSupplier != null) {
+                ignoredChildrenFailures = callbacks.ignoredChildrenFailuresSupplier.get();
             }
         }
         return ignoredChildrenFailures != null ? ignoredChildrenFailures : Map.of();
@@ -343,7 +327,7 @@ public class Job<T> {
     }
 
     public void setIgnoredChildrenFailuresSupplier(Supplier<Map<String, String>> ignoredChildrenFailuresSupplier) {
-        this.ignoredChildrenFailuresSupplier = ignoredChildrenFailuresSupplier;
+        callbacks().ignoredChildrenFailuresSupplier = ignoredChildrenFailuresSupplier;
     }
 
     public String getTraceparent() {
@@ -374,11 +358,11 @@ public class Job<T> {
     }
 
     public void setProgressUpdater(BiConsumer<Integer, Object> progressUpdater) {
-        this.progressUpdater = progressUpdater;
+        callbacks().progressUpdater = progressUpdater;
     }
 
     public void setLogAppender(Consumer<String> logAppender) {
-        this.logAppender = logAppender;
+        callbacks().logAppender = logAppender;
     }
 
     public JobState getState() {
@@ -388,8 +372,8 @@ public class Job<T> {
                 this.state = fetched;
                 return fetched;
             }
-        } else if (stateSupplier != null) {
-            JobState fetched = stateSupplier.get();
+        } else if (callbacks != null && callbacks.stateSupplier != null) {
+            JobState fetched = callbacks.stateSupplier.get();
             if (fetched != null) {
                 this.state = fetched;
                 return fetched;
@@ -546,8 +530,8 @@ public class Job<T> {
         if (state != null) {
             if (context != null) {
                 context.saveCheckpoint(this.id, stepName, state);
-            } else if (checkpointSaver != null) {
-                checkpointSaver.accept(stepName, state);
+            } else if (callbacks != null && callbacks.checkpointSaver != null) {
+                callbacks.checkpointSaver.accept(stepName, state);
             }
         }
     }
@@ -586,14 +570,14 @@ public class Job<T> {
     }
 
     public void setCheckpointSaver(BiConsumer<String, Object> checkpointSaver) {
-        this.checkpointSaver = checkpointSaver;
+        callbacks().checkpointSaver = checkpointSaver;
     }
 
     /**
      * Sets the spawner callback used for dynamic runtime child dependency ingestion.
      */
     public void setChildSpawner(Consumer<java.util.List<FlowJob>> childSpawner) {
-        this.childSpawner = childSpawner;
+        callbacks().childSpawner = childSpawner;
     }
 
     /**
@@ -608,10 +592,10 @@ public class Job<T> {
             context.spawnChildren(this.id, children);
             return;
         }
-        if (childSpawner == null) {
+        if (callbacks == null || callbacks.childSpawner == null) {
             throw new IllegalStateException("Dynamic child spawning is only available during active job execution");
         }
-        childSpawner.accept(children);
+        callbacks.childSpawner.accept(children);
     }
 
     /**
@@ -628,7 +612,7 @@ public class Job<T> {
     }
 
     public void setDataUpdater(Consumer<T> dataUpdater) {
-        this.dataUpdater = dataUpdater;
+        callbacks().dataUpdater = dataUpdater;
     }
 
     /**
@@ -641,13 +625,13 @@ public class Job<T> {
         this.data = data;
         if (context != null) {
             context.updateData(this.id, data);
-        } else if (dataUpdater != null) {
-            dataUpdater.accept(data);
+        } else if (callbacks != null && callbacks.dataUpdater != null) {
+            callbacks.dataUpdater.accept(data);
         }
     }
 
     public void setPromoter(Runnable promoter) {
-        this.promoter = promoter;
+        callbacks().promoter = promoter;
     }
 
     /**
@@ -657,13 +641,13 @@ public class Job<T> {
     public void promote() {
         if (context != null) {
             context.promote(this.id);
-        } else if (promoter != null) {
-            promoter.run();
+        } else if (callbacks != null && callbacks.promoter != null) {
+            callbacks.promoter.run();
         }
     }
 
     public void setDelayChanger(Consumer<Duration> delayChanger) {
-        this.delayChanger = delayChanger;
+        callbacks().delayChanger = delayChanger;
     }
 
     /**
@@ -674,14 +658,14 @@ public class Job<T> {
         if (delay != null) {
             if (context != null) {
                 context.changeDelay(this.id, delay);
-            } else if (delayChanger != null) {
-                delayChanger.accept(delay);
+            } else if (callbacks != null && callbacks.delayChanger != null) {
+                callbacks.delayChanger.accept(delay);
             }
         }
     }
 
     public void setPriorityChanger(Consumer<Integer> priorityChanger) {
-        this.priorityChanger = priorityChanger;
+        callbacks().priorityChanger = priorityChanger;
     }
 
     /**
@@ -691,13 +675,13 @@ public class Job<T> {
     public void changePriority(int priority) {
         if (context != null) {
             context.changePriority(this.id, priority);
-        } else if (priorityChanger != null) {
-            priorityChanger.accept(priority);
+        } else if (callbacks != null && callbacks.priorityChanger != null) {
+            callbacks.priorityChanger.accept(priority);
         }
     }
 
     public void setRetrier(Runnable retrier) {
-        this.retrier = retrier;
+        callbacks().retrier = retrier;
     }
 
     /**
@@ -707,13 +691,13 @@ public class Job<T> {
     public void retry() {
         if (context != null) {
             context.retry(this.id);
-        } else if (retrier != null) {
-            retrier.run();
+        } else if (callbacks != null && callbacks.retrier != null) {
+            callbacks.retrier.run();
         }
     }
 
     public void setRemover(Supplier<Boolean> remover) {
-        this.remover = remover;
+        callbacks().remover = remover;
     }
 
     /**
@@ -724,18 +708,18 @@ public class Job<T> {
         if (context != null) {
             return context.remove(this.id);
         }
-        if (remover != null) {
-            return Boolean.TRUE.equals(remover.get());
+        if (callbacks != null && callbacks.remover != null) {
+            return Boolean.TRUE.equals(callbacks.remover.get());
         }
         return false;
     }
 
     public void setStateSupplier(Supplier<JobState> stateSupplier) {
-        this.stateSupplier = stateSupplier;
+        callbacks().stateSupplier = stateSupplier;
     }
 
     public void setDependenciesSupplier(Supplier<JobDependencies> dependenciesSupplier) {
-        this.dependenciesSupplier = dependenciesSupplier;
+        callbacks().dependenciesSupplier = dependenciesSupplier;
     }
 
     /**
@@ -747,14 +731,14 @@ public class Job<T> {
             JobDependencies deps = context.getDependencies(this.id);
             if (deps != null) return deps;
         }
-        if (dependenciesSupplier != null) {
-            return dependenciesSupplier.get();
+        if (callbacks != null && callbacks.dependenciesSupplier != null) {
+            return callbacks.dependenciesSupplier.get();
         }
         return new JobDependencies(id, List.of(), Map.of(), Map.of());
     }
 
     public void setFlowSupplier(Function<Integer, JobNode> flowSupplier) {
-        this.flowSupplier = flowSupplier;
+        callbacks().flowSupplier = flowSupplier;
     }
 
     /**
@@ -773,14 +757,14 @@ public class Job<T> {
             JobNode node = context.getFlow(this.id, maxDepth);
             if (node != null) return node;
         }
-        if (flowSupplier != null) {
-            return flowSupplier.apply(maxDepth);
+        if (callbacks != null && callbacks.flowSupplier != null) {
+            return callbacks.flowSupplier.apply(maxDepth);
         }
         return null;
     }
 
     public void setLogCleaner(Supplier<Boolean> logCleaner) {
-        this.logCleaner = logCleaner;
+        callbacks().logCleaner = logCleaner;
     }
 
     /**
@@ -791,8 +775,8 @@ public class Job<T> {
         if (context != null) {
             return context.clearLogs(this.id);
         }
-        if (logCleaner != null) {
-            return Boolean.TRUE.equals(logCleaner.get());
+        if (callbacks != null && callbacks.logCleaner != null) {
+            return Boolean.TRUE.equals(callbacks.logCleaner.get());
         }
         return false;
     }

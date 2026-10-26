@@ -137,15 +137,7 @@ public class ExtensionScripts {
                                          QueueKeys keys, String workerId,
                                          long lockDurationMs, int maxGroupConcurrency,
                                          long nowTimestamp) {
-        String[] redisKeys = new String[] {
-            keys.toKey("groups:waiting"),
-            keys.toKey("groups:active:count"),
-            keys.toKey("groups:paused"),
-            keys.toKey("groups:limited"),
-            keys.toKey("groups:maxed"),
-            keys.getKey("active"),
-            keys.getKey("events")
-        };
+        String[] redisKeys = keys.getMoveToActiveGroupKeys();
 
         byte[] prefixBytes = keys.getPrefixBytes();
         byte[] workerBytes = workerId.getBytes(StandardCharsets.UTF_8);
@@ -218,12 +210,7 @@ public class ExtensionScripts {
      */
     public long decrementGroupActive(StatefulRedisConnection<String, byte[]> connection,
                                     QueueKeys keys, String groupId, int maxGroupConcurrency) {
-        String[] redisKeys = new String[] {
-            keys.toKey("groups:waiting"),
-            keys.toKey("groups:active:count"),
-            keys.toKey("groups:maxed"),
-            keys.toKey("groups:paused")
-        };
+        String[] redisKeys = keys.getDecrementGroupActiveKeys();
 
         byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);
@@ -240,12 +227,7 @@ public class ExtensionScripts {
      */
     public CompletableFuture<Long> decrementGroupActiveAsync(StatefulRedisConnection<String, byte[]> connection,
                                                              QueueKeys keys, String groupId, int maxGroupConcurrency) {
-        String[] redisKeys = new String[] {
-            keys.toKey("groups:waiting"),
-            keys.toKey("groups:active:count"),
-            keys.toKey("groups:maxed"),
-            keys.toKey("groups:paused")
-        };
+        String[] redisKeys = keys.getDecrementGroupActiveKeys();
 
         byte[] prefixBytes = keys.getPrefixBytes();
         byte[] groupBytes = (groupId != null ? groupId : "").getBytes(StandardCharsets.UTF_8);

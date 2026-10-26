@@ -4,6 +4,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
+import io.lettuce.core.pubsub.RedisPubSubListener;
 import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.serializer.JacksonJobSerializer;
@@ -36,9 +37,10 @@ public class OxmqRelay implements AutoCloseable {
     private final String retainedTopicsSetKey;
 
     private final StatefulRedisPubSubConnection<String, String> pubSubConn;
+    private final RedisPubSubListener<String, String> pubSubListener;
     private final List<RegisteredSubscription> subscriptions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean running = new AtomicBoolean(true);
-    private final ScheduledExecutorService heartbeatExecutor;
+    private final ScheduledFuture<?> heartbeatTask;
 
     private static class RegisteredSubscription implements RelaySubscription {
         private final String pattern;
@@ -115,26 +117,23 @@ public class OxmqRelay implements AutoCloseable {
         this.retainedKeyPrefix = prefix + ":retained:";
         this.retainedTopicsSetKey = prefix + ":retained_topics";
 
-        this.pubSubConn = connectionManager.getClient().connectPubSub();
-        this.pubSubConn.addListener(new RedisPubSubAdapter<>() {
+        this.pubSubConn = connectionManager.getPubSubConnection();
+        this.pubSubListener = new RedisPubSubAdapter<>() {
             @Override
             public void message(String channel, String message) {
                 if (eventsChannel.equals(channel) && message != null) {
                     dispatchIncomingMessage(message);
                 }
             }
-        });
+        };
+        this.pubSubConn.addListener(this.pubSubListener);
         this.pubSubConn.sync().subscribe(eventsChannel);
 
         // Synchronously register initial lease so node is immediately visible
         renewLease();
 
-        this.heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "oxmq-relay-heartbeat-" + nodeId);
-            t.setDaemon(true);
-            return t;
-        });
-        this.heartbeatExecutor.scheduleAtFixedRate(this::renewLease, 5, 5, TimeUnit.SECONDS);
+        this.heartbeatTask = io.oxmq.watchdog.WatchdogScheduler.sharedScheduler()
+                .scheduleWithFixedDelay(this::renewLease, 5, 5, TimeUnit.SECONDS);
 
         log.info("Started OxMQ Relay [nodeId: {}] on channel {}", nodeId, eventsChannel);
     }
@@ -334,7 +333,9 @@ public class OxmqRelay implements AutoCloseable {
     public void close() {
         if (running.compareAndSet(true, false)) {
             log.info("Shutting down OxMQ Relay [nodeId: {}]", nodeId);
-            heartbeatExecutor.shutdownNow();
+            if (heartbeatTask != null) {
+                heartbeatTask.cancel(true);
+            }
 
             for (RegisteredSubscription sub : subscriptions) {
                 sub.unsubscribe();
@@ -346,9 +347,14 @@ public class OxmqRelay implements AutoCloseable {
                 sync.del(nodesKeyPrefix + nodeId);
             } catch (Exception ignored) {}
 
-            try {
-                pubSubConn.close();
-            } catch (Exception ignored) {}
+            if (pubSubConn != null) {
+                try {
+                    pubSubConn.sync().unsubscribe(eventsChannel);
+                    if (pubSubListener != null) {
+                        pubSubConn.removeListener(pubSubListener);
+                    }
+                } catch (Exception ignored) {}
+            }
 
             if (ownsConnectionManager && connectionManager != null) {
                 connectionManager.close();

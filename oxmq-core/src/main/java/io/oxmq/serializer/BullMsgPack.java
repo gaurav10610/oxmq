@@ -17,6 +17,8 @@ public class BullMsgPack {
 
     private static final ObjectMapper msgPackMapper = new ObjectMapper(new MessagePackFactory());
 
+    public static final byte[] EMPTY_MAP_BYTES = new byte[]{(byte) 0x80};
+
     private static final Map<String, String> OPTS_ENCODE_MAP = Map.of(
         "failParentOnFailure", "fpof",
         "continueParentOnFailure", "cpof",
@@ -27,6 +29,12 @@ public class BullMsgPack {
     );
 
     public static byte[] pack(Object object) {
+        if (object == null) {
+            return new byte[]{(byte) 0xc0};
+        }
+        if (object instanceof Map<?, ?> m && m.isEmpty()) {
+            return EMPTY_MAP_BYTES;
+        }
         try {
             return msgPackMapper.writeValueAsBytes(object);
         } catch (IOException e) {

@@ -1,5 +1,6 @@
 package io.oxmq.model;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
@@ -11,7 +12,7 @@ public class CancellationToken {
 
     private volatile boolean cancelled = false;
     private volatile String reason;
-    private final CopyOnWriteArrayList<Consumer<String>> callbacks = new CopyOnWriteArrayList<>();
+    private volatile CopyOnWriteArrayList<Consumer<String>> callbacks;
 
     /**
      * Checks if cancellation has been requested for this token or current thread is interrupted.
@@ -47,10 +48,13 @@ public class CancellationToken {
     public void cancel(String reason) {
         this.reason = reason;
         this.cancelled = true;
-        for (Consumer<String> callback : callbacks) {
-            try {
-                callback.accept(reason);
-            } catch (Exception ignored) {}
+        List<Consumer<String>> list = this.callbacks;
+        if (list != null) {
+            for (Consumer<String> callback : list) {
+                try {
+                    callback.accept(reason);
+                } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -62,6 +66,13 @@ public class CancellationToken {
      */
     public void onCancel(Consumer<String> callback) {
         Objects.requireNonNull(callback, "callback must not be null");
+        if (callbacks == null) {
+            synchronized (this) {
+                if (callbacks == null) {
+                    callbacks = new CopyOnWriteArrayList<>();
+                }
+            }
+        }
         callbacks.add(callback);
         if (cancelled) {
             try {

@@ -15,7 +15,11 @@ import java.util.Objects;
 /**
  * Redis and Lua-script implementation of {@link QueueBackend}.
  * Reuses official BullMQ Lua scripts directly on Redis via Lettuce.
+ *
+ * @deprecated Since 1.8.0 for removal in 2.0.0. OxMQ natively uses high-throughput direct Lua script pipelines
+ *             and Netty binary buffers via {@link io.oxmq.lua.BullScripts} and {@link io.oxmq.lua.ExtensionScripts}.
  */
+@Deprecated(since = "1.8.0", forRemoval = true)
 public class RedisQueueBackend implements QueueBackend {
 
     private final QueueKeys queueKeys;

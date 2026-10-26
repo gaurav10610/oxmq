@@ -2,6 +2,7 @@ package io.oxmq.spring.outbox;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Represents a persistent outbox record stored in an RDBMS transaction alongside business data.
@@ -27,7 +28,8 @@ public class OxmqOutboxRecord {
     private String lastError;
 
     public OxmqOutboxRecord() {
-        this.id = UUID.randomUUID().toString();
+        ThreadLocalRandom rng = ThreadLocalRandom.current();
+        this.id = new UUID(rng.nextLong(), rng.nextLong()).toString();
     }
 
     public OxmqOutboxRecord(String queueName, String jobName, String payloadJson, String optionsJson, String groupKey) {

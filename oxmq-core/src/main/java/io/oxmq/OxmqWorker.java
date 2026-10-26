@@ -462,9 +462,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
                 @SuppressWarnings("unchecked")
                 List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                Map<String, String> fields = parseHashFields(hashFlat);
-
-                Job<T> job = buildJobFromFields(jobId, fields);
+                Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                 lockExtender.registerJob(jobId);
 
                 if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
@@ -854,6 +852,72 @@ public class OxmqWorker<T> implements Worker<T> {
         emitFailed(job, error);
     }
 
+    @SuppressWarnings("unchecked")
+    private Job<T> buildJobFromFlatList(String jobId, List<?> flatList) {
+        String jobName = "unnamed";
+        String dataStr = null;
+        String optsStr = null;
+        String attemptsStr = null;
+        String attemptsStartedStr = null;
+        String timestampStr = null;
+        String parentKeyStr = null;
+        String groupKeyStr = null;
+        String checkpointStr = null;
+        String checkpointStepStr = null;
+        String rjkStr = null;
+
+        if (flatList != null && !flatList.isEmpty()) {
+            for (int i = 0; i < flatList.size() - 1; i += 2) {
+                String canonicalKey = matchCanonicalKey(flatList.get(i));
+                if (canonicalKey != null) {
+                    String val = toUtf8String(flatList.get(i + 1));
+                    switch (canonicalKey) {
+                        case "name" -> { if (val != null) jobName = val; }
+                        case "data" -> dataStr = val;
+                        case "opts" -> optsStr = val;
+                        case "attemptsMade" -> attemptsStr = val;
+                        case "attemptsStarted" -> attemptsStartedStr = val;
+                        case "timestamp" -> timestampStr = val;
+                        case "parentKey" -> parentKeyStr = val;
+                        case "groupKey" -> groupKeyStr = val;
+                        case "checkpoint" -> checkpointStr = val;
+                        case "checkpoint_step" -> checkpointStepStr = val;
+                        case "rjk", "repeatJobKey" -> rjkStr = val;
+                        default -> {}
+                    }
+                }
+            }
+        }
+
+        T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
+
+        Job<T> job = new Job<>(jobId, jobName, data, opts);
+        job.setQueueName(queueName);
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        }
+        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (timestampStr != null) {
+            long ts = Long.parseLong(timestampStr);
+            job.setTimestamp(ts);
+            long waitTimeMs = System.currentTimeMillis() - ts;
+            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+        }
+        if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
+        if (rjkStr != null && !rjkStr.isBlank()) {
+            job.setRepeatJobKey(rjkStr);
+        }
+
+        job.setContext(workerJobContext);
+        return job;
+    }
+
     private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
         String jobName = fields.getOrDefault("name", "unnamed");
         String dataStr = fields.get("data");
@@ -963,6 +1027,7 @@ public class OxmqWorker<T> implements Worker<T> {
             case 12:
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'M' && b[9] == 'a' && b[10] == 'd' && b[11] == 'e') return "attemptsMade";
                 if (b[0] == 'f' && b[1] == 'a' && b[2] == 'i' && b[3] == 'l' && b[4] == 'e' && b[5] == 'd' && b[6] == 'R' && b[7] == 'e' && b[8] == 'a' && b[9] == 's' && b[10] == 'o' && b[11] == 'n') return "failedReason";
+                if (b[0] == 'r' && b[1] == 'e' && b[2] == 'p' && b[3] == 'e' && b[4] == 'a' && b[5] == 't' && b[6] == 'J' && b[7] == 'o' && b[8] == 'b' && b[9] == 'K' && b[10] == 'e' && b[11] == 'y') return "repeatJobKey";
                 break;
             case 15:
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'S' && b[9] == 't' && b[10] == 'a' && b[11] == 'r' && b[12] == 't' && b[13] == 'e' && b[14] == 'd') return "attemptsStarted";
@@ -981,7 +1046,7 @@ public class OxmqWorker<T> implements Worker<T> {
     }
 
     private void waitForMarkerOrSleep(StatefulRedisConnection<String, byte[]> pollerConn) {
-        double blockTimeout = Math.max(0.05, pollIntervalMs / 1000.0);
+        double blockTimeout = Math.max(2.0, Math.min(5.0, pollIntervalMs / 1000.0 * 40));
         try {
             pollerConn.sync().bzpopmin(blockTimeout, queueKeys.getKey("marker"));
         } catch (Exception e) {
@@ -994,81 +1059,79 @@ public class OxmqWorker<T> implements Worker<T> {
     }
 
     private void rescheduleJobScheduler(String schedulerId, Job<T> job) {
-        dispatcherExecutor.submit(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                String schedulerKey = queueKeys.toKey("repeat:" + schedulerId);
-                Map<String, String> schedData = sync.hgetall(schedulerKey);
-                if (schedData == null || schedData.isEmpty()) {
-                    return;
-                }
-
-                long now = System.currentTimeMillis();
-                String endDateStr = schedData.get("endDate");
-                if (endDateStr != null && !endDateStr.isBlank()) {
-                    try {
-                        long endDate = Long.parseLong(endDateStr);
-                        if (now > endDate) {
-                            log.debug("JobScheduler {} reached endDate {}, skipping reschedule", schedulerId, endDate);
-                            return;
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-
-                String limitStr = schedData.get("limit");
-                String icStr = schedData.get("ic");
-                if (limitStr != null && !limitStr.isBlank() && icStr != null && !icStr.isBlank()) {
-                    try {
-                        int limit = Integer.parseInt(limitStr);
-                        int ic = Integer.parseInt(icStr);
-                        if (ic >= limit) {
-                            log.debug("JobScheduler {} reached iteration limit ({}/{}), skipping reschedule", schedulerId, ic, limit);
-                            return;
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-
-                String everyStr = schedData.get("every");
-                String pattern = schedData.get("pattern");
-                String tz = schedData.get("tz");
-                String name = schedData.getOrDefault("name", job.getName());
-                String dataJson = schedData.getOrDefault("data", "{}");
-                String optsJson = schedData.get("opts");
-                @SuppressWarnings("unchecked")
-                Map<String, Object> optsMap = (optsJson != null && !optsJson.isBlank())
-                        ? serializer.deserialize(optsJson, Map.class)
-                        : Map.of();
-
-                Long every = null;
-                long nextMillis;
-
-                if (everyStr != null && !everyStr.isBlank()) {
-                    every = Long.parseLong(everyStr);
-                    nextMillis = now + every;
-                } else if (pattern != null && !pattern.isBlank()) {
-                    nextMillis = io.oxmq.util.CronEvaluator.parse(pattern).nextExecution(now, tz);
-                } else {
-                    return;
-                }
-
-                bullScripts.addJobScheduler(
-                        connectionManager.getBinaryConnection(),
-                        queueKeys,
-                        schedulerId,
-                        nextMillis,
-                        name,
-                        dataJson,
-                        optsMap,
-                        every,
-                        pattern,
-                        tz
-                );
-                log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
-                        schedulerId, nextMillis, Math.max(0, nextMillis - now));
-            } catch (Exception e) {
-                log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            String schedulerKey = queueKeys.toKey("repeat:" + schedulerId);
+            Map<String, String> schedData = sync.hgetall(schedulerKey);
+            if (schedData == null || schedData.isEmpty()) {
+                return;
             }
-        });
+
+            long now = System.currentTimeMillis();
+            String endDateStr = schedData.get("endDate");
+            if (endDateStr != null && !endDateStr.isBlank()) {
+                try {
+                    long endDate = Long.parseLong(endDateStr);
+                    if (now > endDate) {
+                        log.debug("JobScheduler {} reached endDate {}, skipping reschedule", schedulerId, endDate);
+                        return;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String limitStr = schedData.get("limit");
+            String icStr = schedData.get("ic");
+            if (limitStr != null && !limitStr.isBlank() && icStr != null && !icStr.isBlank()) {
+                try {
+                    int limit = Integer.parseInt(limitStr);
+                    int ic = Integer.parseInt(icStr);
+                    if (ic >= limit) {
+                        log.debug("JobScheduler {} reached iteration limit ({}/{}), skipping reschedule", schedulerId, ic, limit);
+                        return;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String everyStr = schedData.get("every");
+            String pattern = schedData.get("pattern");
+            String tz = schedData.get("tz");
+            String name = schedData.getOrDefault("name", job.getName());
+            String dataJson = schedData.getOrDefault("data", "{}");
+            String optsJson = schedData.get("opts");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> optsMap = (optsJson != null && !optsJson.isBlank())
+                    ? serializer.deserialize(optsJson, Map.class)
+                    : Map.of();
+
+            Long every = null;
+            long nextMillis;
+
+            if (everyStr != null && !everyStr.isBlank()) {
+                every = Long.parseLong(everyStr);
+                nextMillis = now + every;
+            } else if (pattern != null && !pattern.isBlank()) {
+                nextMillis = io.oxmq.util.CronEvaluator.parse(pattern).nextExecution(now, tz);
+            } else {
+                return;
+            }
+
+            bullScripts.addJobScheduler(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    schedulerId,
+                    nextMillis,
+                    name,
+                    dataJson,
+                    optsMap,
+                    every,
+                    pattern,
+                    tz
+            );
+            log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
+                    schedulerId, nextMillis, Math.max(0, nextMillis - now));
+        } catch (Exception e) {
+            log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
+        }
     }
 
     @Override

@@ -14,6 +14,12 @@ public class QueueKeys {
     private final Map<String, String> keyMap = new HashMap<>();
     private byte[] prefixBytes;
     private String[] moveToActiveKeys;
+    private String[] addStandardJobKeys;
+    private String[] addDelayedJobKeys;
+    private String[] addPrioritizedJobKeys;
+    private String[] moveStalledKeys;
+    private String[] moveToActiveGroupKeys;
+    private String[] decrementGroupActiveKeys;
 
     public static String resolvePrefix(String explicitPrefix) {
         if (explicitPrefix != null && !explicitPrefix.isBlank()) {
@@ -95,7 +101,8 @@ public class QueueKeys {
         String[] types = {
             "", "active", "wait", "waiting-children", "paused", "completed",
             "failed", "delayed", "repeat", "stalled", "limiter", "prioritized",
-            "id", "stalled-check", "meta", "pc", "events", "marker", "de"
+            "id", "stalled-check", "meta", "pc", "events", "marker", "de",
+            "groups:waiting", "groups:active:count", "groups:paused", "groups:limited", "groups:maxed", "groups:active"
         };
         for (String type : types) {
             keyMap.put(type, toKey(type));
@@ -114,6 +121,62 @@ public class QueueKeys {
             getKey("pc"),
             getKey("marker")
         };
+        this.addStandardJobKeys = new String[] {
+            getKey("wait"),
+            getKey("paused"),
+            getKey("meta"),
+            getKey("id"),
+            getKey("completed"),
+            getKey("delayed"),
+            getKey("active"),
+            getKey("events"),
+            getKey("marker")
+        };
+        this.addDelayedJobKeys = new String[] {
+            getKey("marker"),
+            getKey("meta"),
+            getKey("id"),
+            getKey("delayed"),
+            getKey("completed"),
+            getKey("events")
+        };
+        this.addPrioritizedJobKeys = new String[] {
+            getKey("marker"),
+            getKey("meta"),
+            getKey("id"),
+            getKey("prioritized"),
+            getKey("delayed"),
+            getKey("completed"),
+            getKey("active"),
+            getKey("events"),
+            getKey("pc")
+        };
+        this.moveStalledKeys = new String[] {
+            getKey("stalled"),
+            getKey("wait"),
+            getKey("active"),
+            getKey("stalled-check"),
+            getKey("meta"),
+            getKey("paused"),
+            getKey("marker"),
+            getKey("events"),
+            getKey("repeat")
+        };
+        this.moveToActiveGroupKeys = new String[] {
+            getKey("groups:waiting"),
+            getKey("groups:active:count"),
+            getKey("groups:paused"),
+            getKey("groups:limited"),
+            getKey("groups:maxed"),
+            getKey("active"),
+            getKey("events")
+        };
+        this.decrementGroupActiveKeys = new String[] {
+            getKey("groups:waiting"),
+            getKey("groups:active:count"),
+            getKey("groups:maxed"),
+            getKey("groups:paused")
+        };
     }
 
     public byte[] getPrefixBytes() {
@@ -122,6 +185,30 @@ public class QueueKeys {
 
     public String[] getMoveToActiveKeys() {
         return moveToActiveKeys;
+    }
+
+    public String[] getAddStandardJobKeys() {
+        return addStandardJobKeys;
+    }
+
+    public String[] getAddDelayedJobKeys() {
+        return addDelayedJobKeys;
+    }
+
+    public String[] getAddPrioritizedJobKeys() {
+        return addPrioritizedJobKeys;
+    }
+
+    public String[] getMoveStalledKeys() {
+        return moveStalledKeys;
+    }
+
+    public String[] getMoveToActiveGroupKeys() {
+        return moveToActiveGroupKeys;
+    }
+
+    public String[] getDecrementGroupActiveKeys() {
+        return decrementGroupActiveKeys;
     }
 
     public String toKey(String type) {

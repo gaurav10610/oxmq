@@ -295,8 +295,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                                     String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
                                     if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
                                         List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                        Map<String, String> fields = parseHashFields(hashFlat);
-                                        Job<T> job = buildJobFromFields(jobId, fields);
+                                        Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                                         jobs.add(job);
                                         lockExtender.registerJob(jobId);
                                     }
@@ -314,8 +313,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                                     String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
                                     if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
                                         List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                        Map<String, String> fields = parseHashFields(hashFlat);
-                                        Job<T> job = buildJobFromFields(jobId, fields);
+                                        Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                                         jobs.add(job);
                                         lockExtender.registerJob(jobId);
                                     }
@@ -332,8 +330,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                                         String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
                                         if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
                                             List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                            Map<String, String> fields = parseHashFields(hashFlat);
-                                            Job<T> job = buildJobFromFields(jobId, fields);
+                                            Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                                             jobs.add(job);
                                             lockExtender.registerJob(jobId);
                                         }
@@ -393,16 +390,13 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
                     @SuppressWarnings("unchecked")
                     List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                    Map<String, String> fields = parseHashFields(hashFlat);
-                    Job<T> job = buildJobFromFields(jobId, fields);
+                    Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                     jobs.add(job);
                     lockExtender.registerJob(jobId);
 
                     if (maxBatchBytes > 0) {
-                        String dataStr = fields.get("data");
-                        if (dataStr != null) {
-                            currentBatchBytes += dataStr.getBytes(StandardCharsets.UTF_8).length;
-                        }
+                        int bytesLen = job.getData() != null ? job.getData().toString().getBytes(StandardCharsets.UTF_8).length : 0;
+                        currentBatchBytes += bytesLen;
                         if (currentBatchBytes >= maxBatchBytes && !jobs.isEmpty()) {
                             log.debug("Batch byte budget exceeded ({} >= {} bytes), dispatching {} jobs early",
                                     currentBatchBytes, maxBatchBytes, jobs.size());
@@ -413,7 +407,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
                 if (jobs.isEmpty()) {
                     concurrencySemaphore.release();
-                    TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
+                    waitForMarkerOrSleep(pollerConn);
                     continue;
                 }
 
@@ -668,6 +662,79 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     .get(15, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.warn("Error awaiting pipelined batch failure on queue {}: {}", queueName, e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Job<T> buildJobFromFlatList(String jobId, List<?> flatList) {
+        String jobName = "unnamed";
+        String dataStr = null;
+        String optsStr = null;
+        String attemptsStr = null;
+        String timestampStr = null;
+        String parentKeyStr = null;
+        String groupKeyStr = null;
+        String checkpointStr = null;
+        String checkpointStepStr = null;
+
+        if (flatList != null && !flatList.isEmpty()) {
+            for (int i = 0; i < flatList.size() - 1; i += 2) {
+                String canonicalKey = OxmqWorker.matchCanonicalKey(flatList.get(i));
+                if (canonicalKey != null) {
+                    String val = toUtf8String(flatList.get(i + 1));
+                    switch (canonicalKey) {
+                        case "name" -> { if (val != null) jobName = val; }
+                        case "data" -> dataStr = val;
+                        case "opts" -> optsStr = val;
+                        case "attemptsMade" -> attemptsStr = val;
+                        case "timestamp" -> timestampStr = val;
+                        case "parentKey" -> parentKeyStr = val;
+                        case "groupKey" -> groupKeyStr = val;
+                        case "checkpoint" -> checkpointStr = val;
+                        case "checkpoint_step" -> checkpointStepStr = val;
+                        default -> {}
+                    }
+                }
+            }
+        }
+
+        T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
+
+        Job<T> job = new Job<>(jobId, jobName, data, opts);
+        job.setQueueName(queueName);
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
+        }
+        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (timestampStr != null) {
+            long ts = Long.parseLong(timestampStr);
+            job.setTimestamp(ts);
+            long waitTimeMs = System.currentTimeMillis() - ts;
+            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+        }
+        if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
+
+        job.setContext(batchWorkerJobContext);
+        return job;
+    }
+
+    private void waitForMarkerOrSleep(StatefulRedisConnection<String, byte[]> pollerConn) {
+        double blockTimeout = Math.max(2.0, Math.min(5.0, pollIntervalMs / 1000.0 * 40));
+        try {
+            pollerConn.sync().bzpopmin(blockTimeout, queueKeys.getKey("marker"));
+        } catch (Exception e) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(Math.min(50, pollIntervalMs));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

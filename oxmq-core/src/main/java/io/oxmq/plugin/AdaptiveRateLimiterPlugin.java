@@ -60,9 +60,12 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
     private final ConcurrentMap<String, AtomicInteger> currentLimits = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Integer> staticOverrides = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Long> dampingExpiryTimestamps = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Long> lastNegativeCheckTimestamps = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, AtomicInteger> cleanCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, AtomicLong> upgradeCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, AtomicLong> downgradeCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> upgradeMetricCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> downgradeMetricCounters = new ConcurrentHashMap<>();
 
     public AdaptiveRateLimiterPlugin(
             RedisConnectionManager connectionManager,
@@ -143,15 +146,7 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
             long downs = downgradeCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
             syncLimitToRedis(groupKey, downgraded, dampingUntil);
 
-            if (meterRegistry != null) {
-                try {
-                    Counter.builder("oxmq.plugin.adaptive.downgrades")
-                            .description("Adaptive capacity downgrades triggered by throttle events")
-                            .tag("group", groupKey)
-                            .register(meterRegistry)
-                            .increment();
-                } catch (Exception ignored) {}
-            }
+            incrementDowngradeMetric(groupKey);
 
             log.warn("AdaptiveRateLimiter: Group [{}] throttled! Multiplicative Decrease: {} -> {} ops/s. Upgrades locked for {}s.",
                     groupKey, current, downgraded, dampingDuration.toSeconds());
@@ -161,10 +156,36 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
         }
     }
 
+    private void incrementDowngradeMetric(String groupKey) {
+        if (meterRegistry != null) {
+            try {
+                downgradeMetricCounters.computeIfAbsent(groupKey, k ->
+                        Counter.builder("oxmq.plugin.adaptive.downgrades")
+                                .description("Adaptive capacity downgrades triggered by throttle events")
+                                .tag("group", k)
+                                .register(meterRegistry)
+                ).increment();
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void incrementUpgradeMetric(String groupKey) {
+        if (meterRegistry != null) {
+            try {
+                upgradeMetricCounters.computeIfAbsent(groupKey, k ->
+                        Counter.builder("oxmq.plugin.adaptive.upgrades")
+                                .description("Adaptive capacity upgrades triggered by sustained clean execution")
+                                .tag("group", k)
+                                .register(meterRegistry)
+                ).increment();
+            } catch (Exception ignored) {}
+        }
+    }
+
     /**
      * Records clean execution for a group, triggering Additive Increase when sustained clean threshold is reached.
      */
-    public synchronized void recordCleanExecution(String groupKey) {
+    public void recordCleanExecution(String groupKey) {
         if (groupKey == null || isStaticOverride(groupKey)) {
             return;
         }
@@ -185,24 +206,23 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
         int cleanCount = counter.incrementAndGet();
 
         if (cleanCount >= cleanThreshold) {
-            int upgraded = Math.min(maxLimit, current + increaseStep);
-            currentLimits.computeIfAbsent(groupKey, k -> new AtomicInteger(current)).set(upgraded);
-            counter.set(0);
-            long ups = upgradeCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
-            syncLimitToRedis(groupKey, upgraded, 0L);
+            synchronized (counter) {
+                if (counter.get() >= cleanThreshold) {
+                    counter.set(0);
+                    int curLimit = getLimit(groupKey);
+                    if (curLimit < maxLimit) {
+                        int upgraded = Math.min(maxLimit, curLimit + increaseStep);
+                        currentLimits.computeIfAbsent(groupKey, k -> new AtomicInteger(curLimit)).set(upgraded);
+                        upgradeCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
+                        syncLimitToRedis(groupKey, upgraded, 0L);
 
-            if (meterRegistry != null) {
-                try {
-                    Counter.builder("oxmq.plugin.adaptive.upgrades")
-                            .description("Adaptive capacity upgrades triggered by sustained clean execution")
-                            .tag("group", groupKey)
-                            .register(meterRegistry)
-                            .increment();
-                } catch (Exception ignored) {}
+                        incrementUpgradeMetric(groupKey);
+
+                        log.info("AdaptiveRateLimiter: Group [{}] sustained clean execution ({} successes). Additive Increase: {} -> {} ops/s!",
+                                groupKey, cleanThreshold, curLimit, upgraded);
+                    }
+                }
             }
-
-            log.info("AdaptiveRateLimiter: Group [{}] sustained clean execution ({} successes). Additive Increase: {} -> {} ops/s!",
-                    groupKey, cleanThreshold, current, upgraded);
         }
     }
 
@@ -293,6 +313,7 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
     public void resetDampingLock(String groupKey) {
         if (groupKey != null) {
             dampingExpiryTimestamps.remove(groupKey);
+            lastNegativeCheckTimestamps.remove(groupKey);
         }
     }
 
@@ -321,15 +342,29 @@ public class AdaptiveRateLimiterPlugin implements JobInterceptor {
 
     private long getDampingExpiry(String groupKey) {
         Long expiry = dampingExpiryTimestamps.get(groupKey);
-        if (expiry != null) return expiry;
+        long now = System.currentTimeMillis();
+        if (expiry != null) {
+            if (now < expiry) {
+                return expiry;
+            }
+            dampingExpiryTimestamps.remove(groupKey);
+        }
+
+        Long lastCheck = lastNegativeCheckTimestamps.get(groupKey);
+        if (lastCheck != null && (now - lastCheck) < 1000L) {
+            return 0L;
+        }
 
         if (connectionManager != null) {
             try {
                 String val = connectionManager.getCommandConnection().sync().get(keyPrefix + ":damping:" + groupKey);
+                lastNegativeCheckTimestamps.put(groupKey, now);
                 if (val != null) {
                     long redisExpiry = Long.parseLong(val);
-                    dampingExpiryTimestamps.put(groupKey, redisExpiry);
-                    return redisExpiry;
+                    if (now < redisExpiry) {
+                        dampingExpiryTimestamps.put(groupKey, redisExpiry);
+                        return redisExpiry;
+                    }
                 }
             } catch (Exception ignored) {}
         }

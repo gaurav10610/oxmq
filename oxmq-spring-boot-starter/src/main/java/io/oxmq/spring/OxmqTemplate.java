@@ -41,7 +41,9 @@ public class OxmqTemplate {
     private final JobOptions defaultJobOptions;
     private final int maxLenEvents;
 
-    private final ConcurrentMap<String, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
+    private record QueueCacheKey(String prefix, String queueName, Class<?> payloadClass) {}
+
+    private final ConcurrentMap<QueueCacheKey, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
 
     public OxmqTemplate(RedisClient redisClient,
                         RedisConnectionManager connectionManager,
@@ -98,8 +100,9 @@ public class OxmqTemplate {
     public <T> OxmqQueue<T> getQueue(String prefix, String queueName, Class<T> payloadClass) {
         Objects.requireNonNull(queueName, "queueName must not be null");
         String effectivePrefix = prefix != null && !prefix.isBlank() ? prefix.trim() : this.defaultPrefix;
-        String cacheKey = (effectivePrefix != null ? effectivePrefix : "bull") + ":" + queueName
-                + ":" + (payloadClass != null ? payloadClass.getName() : "java.lang.Object");
+        String normalizedPrefix = effectivePrefix != null ? effectivePrefix : "bull";
+        Class<?> effectivePayloadClass = payloadClass != null ? payloadClass : Object.class;
+        QueueCacheKey cacheKey = new QueueCacheKey(normalizedPrefix, queueName, effectivePayloadClass);
         return (OxmqQueue<T>) queueCache.computeIfAbsent(cacheKey, k ->
                 OxmqQueue.<T>builder()
                         .prefix(effectivePrefix)
@@ -108,7 +111,7 @@ public class OxmqTemplate {
                         .scriptManager(scriptManager)
                         .serializer(serializer)
                         .metrics(metrics)
-                        .payloadClass(payloadClass != null ? payloadClass : (Class<T>) Object.class)
+                        .payloadClass((Class<T>) effectivePayloadClass)
                         .defaultJobOptions(defaultJobOptions)
                         .maxLenEvents(maxLenEvents)
                         .build()
@@ -289,7 +292,7 @@ public class OxmqTemplate {
      */
     public void obliterate(String queueName) {
         getQueue(queueName).obliterate();
-        queueCache.remove(queueName);
+        queueCache.keySet().removeIf(k -> k.queueName().equals(queueName));
     }
 
     /**

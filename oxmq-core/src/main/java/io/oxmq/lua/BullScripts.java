@@ -31,17 +31,7 @@ public class BullScripts {
     public String addStandardJob(StatefulRedisConnection<String, byte[]> connection,
                                  QueueKeys keys, String customId, String name,
                                  String jsonData, Map<String, Object> opts, long timestamp) {
-        String[] redisKeys = new String[] {
-            keys.getKey("wait"),
-            keys.getKey("paused"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("completed"),
-            keys.getKey("delayed"),
-            keys.getKey("active"),
-            keys.getKey("events"),
-            keys.getKey("marker")
-        };
+        String[] redisKeys = keys.getAddStandardJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -66,17 +56,7 @@ public class BullScripts {
     public CompletableFuture<String> addStandardJobAsync(StatefulRedisConnection<String, byte[]> connection,
                                                            QueueKeys keys, String customId, String name,
                                                            String jsonData, Map<String, Object> opts, long timestamp) {
-        String[] redisKeys = new String[] {
-            keys.getKey("wait"),
-            keys.getKey("paused"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("completed"),
-            keys.getKey("delayed"),
-            keys.getKey("active"),
-            keys.getKey("events"),
-            keys.getKey("marker")
-        };
+        String[] redisKeys = keys.getAddStandardJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -101,14 +81,7 @@ public class BullScripts {
     public String addDelayedJob(StatefulRedisConnection<String, byte[]> connection,
                                QueueKeys keys, String customId, String name,
                                String jsonData, Map<String, Object> opts, long timestamp, long delay) {
-        String[] redisKeys = new String[] {
-            keys.getKey("marker"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("delayed"),
-            keys.getKey("completed"),
-            keys.getKey("events")
-        };
+        String[] redisKeys = keys.getAddDelayedJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -133,14 +106,7 @@ public class BullScripts {
     public CompletableFuture<String> addDelayedJobAsync(StatefulRedisConnection<String, byte[]> connection,
                                                          QueueKeys keys, String customId, String name,
                                                          String jsonData, Map<String, Object> opts, long timestamp, long delay) {
-        String[] redisKeys = new String[] {
-            keys.getKey("marker"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("delayed"),
-            keys.getKey("completed"),
-            keys.getKey("events")
-        };
+        String[] redisKeys = keys.getAddDelayedJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -165,17 +131,7 @@ public class BullScripts {
     public String addPrioritizedJob(StatefulRedisConnection<String, byte[]> connection,
                                     QueueKeys keys, String customId, String name,
                                     String jsonData, Map<String, Object> opts, long timestamp, int priority) {
-        String[] redisKeys = new String[] {
-            keys.getKey("marker"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("prioritized"),
-            keys.getKey("delayed"),
-            keys.getKey("completed"),
-            keys.getKey("active"),
-            keys.getKey("events"),
-            keys.getKey("pc")
-        };
+        String[] redisKeys = keys.getAddPrioritizedJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -200,17 +156,7 @@ public class BullScripts {
     public CompletableFuture<String> addPrioritizedJobAsync(StatefulRedisConnection<String, byte[]> connection,
                                                              QueueKeys keys, String customId, String name,
                                                              String jsonData, Map<String, Object> opts, long timestamp, int priority) {
-        String[] redisKeys = new String[] {
-            keys.getKey("marker"),
-            keys.getKey("meta"),
-            keys.getKey("id"),
-            keys.getKey("prioritized"),
-            keys.getKey("delayed"),
-            keys.getKey("completed"),
-            keys.getKey("active"),
-            keys.getKey("events"),
-            keys.getKey("pc")
-        };
+        String[] redisKeys = keys.getAddPrioritizedJobKeys();
 
         String parentKey = (String) opts.get("parentKey");
         @SuppressWarnings("unchecked")
@@ -445,17 +391,7 @@ public class BullScripts {
 
     public List<Object> moveStalledJobsToWait(StatefulRedisConnection<String, byte[]> connection,
                                              QueueKeys keys, int maxStalledCount, int stalledIntervalMs) {
-        String[] redisKeys = new String[] {
-            keys.getKey("stalled"),
-            keys.getKey("wait"),
-            keys.getKey("active"),
-            keys.getKey("stalled-check"),
-            keys.getKey("meta"),
-            keys.getKey("paused"),
-            keys.getKey("marker"),
-            keys.getKey("events"),
-            keys.getKey("repeat")
-        };
+        String[] redisKeys = keys.getMoveStalledKeys();
 
         long timestamp = System.currentTimeMillis();
         byte[] maxStalledBytes = String.valueOf(maxStalledCount).getBytes(StandardCharsets.UTF_8);
