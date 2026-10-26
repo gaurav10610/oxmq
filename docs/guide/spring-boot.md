@@ -13,14 +13,14 @@ The `oxmq-spring-boot-starter` module provides full auto-configuration, native c
     <dependency>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.8.0</version>
+        <version>1.9.0</version>
     </dependency>
 </dependencies>
 ```
 
 ```kotlin [Gradle (Maven Central)]
 dependencies {
-    implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.8.0")
+    implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.9.0")
 }
 ```
 
@@ -36,7 +36,7 @@ dependencies {
     <dependency>
         <groupId>com.github.gaurav10610.oxmq</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.8.0</version>
+        <version>1.9.0</version>
     </dependency>
 </dependencies>
 ```
@@ -48,7 +48,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.8.0")
+    implementation("com.github.gaurav10610.oxmq:oxmq-spring-boot-starter:1.9.0")
 }
 ```
 
@@ -65,7 +65,7 @@ dependencies {
     <dependency>
         <groupId>io.github.gaurav10610</groupId>
         <artifactId>oxmq-spring-boot-starter</artifactId>
-        <version>1.8.0</version>
+        <version>1.9.0</version>
     </dependency>
 </dependencies>
 
@@ -85,7 +85,7 @@ repositories {
 }
 
 dependencies {
-    implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.8.0")
+    implementation("io.github.gaurav10610:oxmq-spring-boot-starter:1.9.0")
 }
 ```
 
