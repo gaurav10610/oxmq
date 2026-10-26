@@ -38,7 +38,6 @@ public class DriveDeltaSyncWorker {
     private static final Logger log = LoggerFactory.getLogger(DriveDeltaSyncWorker.class);
 
     private final GraphClient graphClient;
-    private final TenantCooldownService cooldownService;
     private final FlowProducer flowProducer;
     private final DocumentCatalogRepository catalogRepository;
     private final CheckpointStatePlugin checkpointStatePlugin;
@@ -47,14 +46,12 @@ public class DriveDeltaSyncWorker {
     @Autowired
     public DriveDeltaSyncWorker(
             GraphClient graphClient,
-            TenantCooldownService cooldownService,
             FlowProducer flowProducer,
             DocumentCatalogRepository catalogRepository,
             @Autowired(required = false) CheckpointStatePlugin checkpointStatePlugin,
             @Autowired(required = false) OxmqTemplate oxmqTemplate
     ) {
         this.graphClient = graphClient;
-        this.cooldownService = cooldownService;
         this.flowProducer = flowProducer;
         this.catalogRepository = catalogRepository;
         this.checkpointStatePlugin = checkpointStatePlugin;
@@ -65,9 +62,20 @@ public class DriveDeltaSyncWorker {
             GraphClient graphClient,
             TenantCooldownService cooldownService,
             FlowProducer flowProducer,
+            DocumentCatalogRepository catalogRepository,
+            CheckpointStatePlugin checkpointStatePlugin,
+            OxmqTemplate oxmqTemplate
+    ) {
+        this(graphClient, flowProducer, catalogRepository, checkpointStatePlugin, oxmqTemplate);
+    }
+
+    public DriveDeltaSyncWorker(
+            GraphClient graphClient,
+            TenantCooldownService cooldownService,
+            FlowProducer flowProducer,
             DocumentCatalogRepository catalogRepository
     ) {
-        this(graphClient, cooldownService, flowProducer, catalogRepository, null, null);
+        this(graphClient, flowProducer, catalogRepository, null, null);
     }
 
     public DriveDeltaSyncWorker(
@@ -75,7 +83,7 @@ public class DriveDeltaSyncWorker {
             TenantCooldownService cooldownService,
             FlowProducer flowProducer
     ) {
-        this(graphClient, cooldownService, flowProducer, null, null, null);
+        this(graphClient, flowProducer, null, null, null);
     }
 
     @OxmqListener(queue = OxDocQueueConstants.QUEUE_DRIVE_DELTA, concurrency = 20)
@@ -86,16 +94,16 @@ public class DriveDeltaSyncWorker {
         log.info("Starting Drive Delta Sync for drive [{}] (tenant={}, origin={}, jobId={})",
                 payload.driveId(), payload.tenantId(), payload.scanOrigin(), jobId);
 
-        // Record API call in sliding-window metrics
-        cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
-
-        // Checkpoint Recovery: load continuation page token or existing delta token from CheckpointStatePlugin (or DB fallback)
+        // Checkpoint Recovery: load continuation page token or existing delta token from CheckpointStatePlugin (or DB fallback).
+        // Uses CheckpointStatePlugin.getCurrentCheckpoint() first to avoid a redundant synchronous Redis GET round-trip.
         String savedDeltaToken = null;
         if (payload.continuationToken() != null && !payload.continuationToken().isBlank()) {
             savedDeltaToken = payload.continuationToken();
         } else {
             if (checkpointStatePlugin != null) {
-                savedDeltaToken = checkpointStatePlugin.getCheckpoint(payload.driveId()).orElse(null);
+                savedDeltaToken = CheckpointStatePlugin.getCurrentCheckpoint()
+                        .or(() -> checkpointStatePlugin.getCheckpoint(payload.driveId()))
+                        .orElse(null);
             }
             if (savedDeltaToken == null && catalogRepository != null) {
                 savedDeltaToken = catalogRepository.getDrive(payload.driveId())

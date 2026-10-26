@@ -140,9 +140,13 @@ public class MultiTenantExhaustiveScaleTest {
                     d.fileName().contains("hyperscale_executive_briefing") &&
                     d.scanOrigin() == ScanOrigin.FORWARD
             );
+
+            // Step 5: Verify total document count metrics
+            Map<String, Object> metrics = repository.getMetrics();
+            assertThat((Long) metrics.get("totalDocuments")).isGreaterThanOrEqualTo(25L);
         });
 
-        // Step 5: Verify subscription tiers resolved accurately for all 5 tenants
+        // Step 6: Verify subscription tiers resolved accurately for all 5 tenants
         for (String tenantId : ALL_5_TENANTS) {
             TenantProfile profile = subscriptionService.getTenantProfile(tenantId);
             assertThat(profile).isNotNull();
@@ -164,10 +168,6 @@ public class MultiTenantExhaustiveScaleTest {
                 assertThat(profile.burstLimitRUsPerSec()).isEqualTo(250);
             }
         }
-
-        // Step 6: Verify total document count metrics
-        Map<String, Object> metrics = repository.getMetrics();
-        assertThat((Long) metrics.get("totalDocuments")).isGreaterThanOrEqualTo(25L);
     }
 
     @Test

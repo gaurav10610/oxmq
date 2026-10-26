@@ -6,4 +6,8 @@ package io.oxmq.oxdoc.model;
  */
 public interface TenantScopedPayload {
     String tenantId();
+
+    default ScanOrigin scanOrigin() {
+        return ScanOrigin.BACKWARD;
+    }
 }

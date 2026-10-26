@@ -21,16 +21,22 @@ public class ContentCategorizationWorker {
 
     private final GraphClient graphClient;
     private final ContentCategorizationEngine categorizationEngine;
-    private final TenantCooldownService cooldownService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ContentCategorizationWorker(
+            GraphClient graphClient,
+            ContentCategorizationEngine categorizationEngine
+    ) {
+        this.graphClient = graphClient;
+        this.categorizationEngine = categorizationEngine;
+    }
 
     public ContentCategorizationWorker(
             GraphClient graphClient,
             ContentCategorizationEngine categorizationEngine,
             TenantCooldownService cooldownService
     ) {
-        this.graphClient = graphClient;
-        this.categorizationEngine = categorizationEngine;
-        this.cooldownService = cooldownService;
+        this(graphClient, categorizationEngine);
     }
 
     @OxmqListener(queue = OxDocQueueConstants.QUEUE_CONTENT_CATEGORIZATION, concurrency = 30)
@@ -38,7 +44,6 @@ public class ContentCategorizationWorker {
             DocumentProcessingPayload payload,
             @Header("jobId") String jobId
     ) {
-        cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
         ContentVisibility exposure = graphClient.fetchPermissions(payload.tenantId(), payload.driveId(), payload.itemId());
         ContentVisibility evaluated = categorizationEngine.evaluate(exposure.permissions());
 

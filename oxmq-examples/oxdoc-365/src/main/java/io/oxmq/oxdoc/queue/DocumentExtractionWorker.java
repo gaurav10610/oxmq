@@ -24,16 +24,22 @@ public class DocumentExtractionWorker {
 
     private final GraphClient graphClient;
     private final DocumentExtractionEngine extractionEngine;
-    private final TenantCooldownService cooldownService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DocumentExtractionWorker(
+            GraphClient graphClient,
+            DocumentExtractionEngine extractionEngine
+    ) {
+        this.graphClient = graphClient;
+        this.extractionEngine = extractionEngine;
+    }
 
     public DocumentExtractionWorker(
             GraphClient graphClient,
             DocumentExtractionEngine extractionEngine,
             TenantCooldownService cooldownService
     ) {
-        this.graphClient = graphClient;
-        this.extractionEngine = extractionEngine;
-        this.cooldownService = cooldownService;
+        this(graphClient, extractionEngine);
     }
 
     @OxmqListener(queue = OxDocQueueConstants.QUEUE_DOCUMENT_EXTRACTION, concurrency = 25)
@@ -42,7 +48,6 @@ public class DocumentExtractionWorker {
             @Header("jobId") String jobId
     ) {
         try {
-            cooldownService.recordTenantApiCall(payload.tenantId(), payload.scanOrigin());
             try (InputStream stream = graphClient.streamFileContent(payload.tenantId(), payload.driveId(), payload.itemId(), payload.downloadUrl())) {
                 DocumentAnalysisResult result = extractionEngine.extract(payload.itemName(), stream);
                 log.debug("Document extraction completed for [{}]: verdict={}, sha256={}",

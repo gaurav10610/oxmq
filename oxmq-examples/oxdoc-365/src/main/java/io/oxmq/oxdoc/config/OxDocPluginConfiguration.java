@@ -3,9 +3,12 @@ package io.oxmq.oxdoc.config;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.exception.RateLimitCooldownException;
+import io.oxmq.interceptor.InterceptorDecision;
+import io.oxmq.interceptor.JobInterceptor;
 import io.oxmq.model.Job;
 import io.oxmq.oxdoc.model.DriveDeltaSyncPayload;
 import io.oxmq.oxdoc.model.TenantScopedPayload;
+import io.oxmq.oxdoc.service.TenantCooldownService;
 import io.oxmq.oxdoc.service.TenantSubscriptionService;
 import io.oxmq.plugin.AdaptiveRateLimiterPlugin;
 import io.oxmq.plugin.CheckpointStatePlugin;
@@ -32,6 +35,9 @@ public class OxDocPluginConfiguration {
 
     public static String extractTenantId(Job<?> job) {
         if (job == null) return "tenant-mid-2500";
+        if (job.getGroupKey() != null && !job.getGroupKey().isBlank()) {
+            return job.getGroupKey();
+        }
         Object data = job.getData();
         if (data instanceof TenantScopedPayload tsp) {
             return tsp.tenantId();
@@ -41,6 +47,20 @@ public class OxDocPluginConfiguration {
             if (tid != null) return tid.toString();
         }
         return "tenant-mid-2500";
+    }
+
+    @Bean
+    public JobInterceptor tenantApiCallRecordingInterceptor(TenantCooldownService cooldownService) {
+        log.info("Configuring native OxMQ JobInterceptor for automatic tenant API quota tracking...");
+        return new JobInterceptor() {
+            @Override
+            public InterceptorDecision beforeProcess(Job<?> job) {
+                if (job != null && job.getData() instanceof TenantScopedPayload tsp) {
+                    cooldownService.recordTenantApiCall(tsp.tenantId(), tsp.scanOrigin());
+                }
+                return InterceptorDecision.proceed();
+            }
+        };
     }
 
     @Bean
