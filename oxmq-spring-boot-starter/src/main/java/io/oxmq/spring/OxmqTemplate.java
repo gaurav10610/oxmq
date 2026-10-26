@@ -5,6 +5,7 @@ import io.oxmq.FlowProducer;
 import io.oxmq.OxmqQueue;
 import io.oxmq.QueueEvents;
 import io.oxmq.client.RedisConnectionManager;
+import io.oxmq.lua.ExtensionScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.FlowJob;
@@ -14,6 +15,7 @@ import io.oxmq.model.JobRequest;
 import io.oxmq.model.JobState;
 import io.oxmq.serializer.JobSerializer;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -39,7 +41,9 @@ public class OxmqTemplate {
     private final JobOptions defaultJobOptions;
     private final int maxLenEvents;
 
-    private final ConcurrentMap<String, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
+    private record QueueCacheKey(String prefix, String queueName, Class<?> payloadClass) {}
+
+    private final ConcurrentMap<QueueCacheKey, OxmqQueue<?>> queueCache = new ConcurrentHashMap<>();
 
     public OxmqTemplate(RedisClient redisClient,
                         RedisConnectionManager connectionManager,
@@ -96,7 +100,9 @@ public class OxmqTemplate {
     public <T> OxmqQueue<T> getQueue(String prefix, String queueName, Class<T> payloadClass) {
         Objects.requireNonNull(queueName, "queueName must not be null");
         String effectivePrefix = prefix != null && !prefix.isBlank() ? prefix.trim() : this.defaultPrefix;
-        String cacheKey = (effectivePrefix != null ? effectivePrefix : "bull") + ":" + queueName;
+        String normalizedPrefix = effectivePrefix != null ? effectivePrefix : "bull";
+        Class<?> effectivePayloadClass = payloadClass != null ? payloadClass : Object.class;
+        QueueCacheKey cacheKey = new QueueCacheKey(normalizedPrefix, queueName, effectivePayloadClass);
         return (OxmqQueue<T>) queueCache.computeIfAbsent(cacheKey, k ->
                 OxmqQueue.<T>builder()
                         .prefix(effectivePrefix)
@@ -105,7 +111,7 @@ public class OxmqTemplate {
                         .scriptManager(scriptManager)
                         .serializer(serializer)
                         .metrics(metrics)
-                        .payloadClass(payloadClass != null ? payloadClass : (Class<T>) Object.class)
+                        .payloadClass((Class<T>) effectivePayloadClass)
                         .defaultJobOptions(defaultJobOptions)
                         .maxLenEvents(maxLenEvents)
                         .build()
@@ -159,17 +165,75 @@ public class OxmqTemplate {
     }
 
     /**
-     * Asynchronously enqueues a job.
+     * Alias for {@link #send(String, Object)} for BullMQ API parity.
      */
-    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload) {
-        return CompletableFuture.supplyAsync(() -> send(queueName, payload));
+    public <T> Job<T> add(String queueName, T payload) {
+        return send(queueName, payload);
     }
 
     /**
-     * Asynchronously enqueues a job with a name and options.
+     * Alias for {@link #send(String, String, Object)} for BullMQ API parity.
      */
+    public <T> Job<T> add(String queueName, String jobName, T payload) {
+        return send(queueName, jobName, payload);
+    }
+
+    /**
+     * Alias for {@link #send(String, String, Object, JobOptions)} for BullMQ API parity.
+     */
+    public <T> Job<T> add(String queueName, String jobName, T payload, JobOptions options) {
+        return send(queueName, jobName, payload, options);
+    }
+
+    /**
+     * Asynchronously enqueues a job with default name and options.
+     */
+    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload) {
+        return sendAsync(queueName, "default", payload, JobOptions.defaults());
+    }
+
+    /**
+     * Asynchronously enqueues a job with a default job name and options.
+     */
+    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, T payload, JobOptions options) {
+        return sendAsync(queueName, "default", payload, options);
+    }
+
+    /**
+     * Asynchronously enqueues a job with a specific job name and default options.
+     */
+    public <T> CompletableFuture<Job<T>> sendAsync(String queueName, String jobName, T payload) {
+        return sendAsync(queueName, jobName, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Asynchronously enqueues a job with a name and options without blocking threads.
+     */
+    @SuppressWarnings("unchecked")
     public <T> CompletableFuture<Job<T>> sendAsync(String queueName, String jobName, T payload, JobOptions options) {
-        return CompletableFuture.supplyAsync(() -> send(queueName, jobName, payload, options));
+        Class<T> clazz = payload != null ? (Class<T>) payload.getClass() : (Class<T>) Object.class;
+        return getQueue(queueName, clazz).addAsync(jobName, payload, options);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, Object)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, T payload) {
+        return sendAsync(queueName, payload);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, String, Object)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T payload) {
+        return sendAsync(queueName, jobName, payload);
+    }
+
+    /**
+     * Alias for {@link #sendAsync(String, String, Object, JobOptions)}.
+     */
+    public <T> CompletableFuture<Job<T>> addAsync(String queueName, String jobName, T payload, JobOptions options) {
+        return sendAsync(queueName, jobName, payload, options);
     }
 
     /**
@@ -228,7 +292,7 @@ public class OxmqTemplate {
      */
     public void obliterate(String queueName) {
         getQueue(queueName).obliterate();
-        queueCache.remove(queueName);
+        queueCache.keySet().removeIf(k -> k.queueName().equals(queueName));
     }
 
     /**
@@ -236,6 +300,198 @@ public class OxmqTemplate {
      */
     public void drain(String queueName) {
         drain(queueName, false);
+    }
+
+    /**
+     * Enqueues a job into a specific virtual queue group (multi-tenant isolation).
+     */
+    public <T> Job<T> sendGroup(String queueName, String groupId, T payload) {
+        return sendGroup(queueName, "default", groupId, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Enqueues a job with a name into a specific virtual queue group.
+     */
+    public <T> Job<T> sendGroup(String queueName, String jobName, String groupId, T payload) {
+        return sendGroup(queueName, jobName, groupId, payload, JobOptions.defaults());
+    }
+
+    /**
+     * Enqueues a job with a name, group, and options into a specific virtual queue group.
+     */
+    @SuppressWarnings("unchecked")
+    public <T> Job<T> sendGroup(String queueName, String jobName, String groupId, T payload, JobOptions options) {
+        JobOptions effectiveOpts = options != null ? options : JobOptions.defaults();
+        if (groupId != null && !groupId.isBlank()) {
+            effectiveOpts.group(groupId);
+        }
+        Class<T> clazz = payload != null ? (Class<T>) payload.getClass() : (Class<T>) Object.class;
+        return getQueue(queueName, clazz).add(jobName, payload, effectiveOpts);
+    }
+
+    /**
+     * Pauses processing for a specific virtual queue group.
+     */
+    public boolean pauseGroup(String queueName, String groupId) {
+        return getQueue(queueName).pauseGroup(groupId);
+    }
+
+    /**
+     * Resumes processing for a paused virtual queue group.
+     */
+    public boolean resumeGroup(String queueName, String groupId) {
+        return getQueue(queueName).resumeGroup(groupId);
+    }
+
+    /**
+     * Deletes all pending jobs in a virtual queue group and cleans up indices.
+     */
+    public long deleteGroup(String queueName, String groupId) {
+        return getQueue(queueName).deleteGroup(groupId);
+    }
+
+    /**
+     * Dynamically sets a cluster-wide rate limit duration on a virtual queue group.
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, Duration duration) {
+        return getQueue(queueName).setGroupRateLimit(groupId, duration);
+    }
+
+    /**
+     * Dynamically sets a cluster-wide rate limit on a virtual queue group with max jobs quota.
+     * Mirrors BullMQ Pro's queue.setGroupRateLimit(groupId, max, duration).
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, int maxJobs, Duration duration) {
+        return getQueue(queueName).setGroupRateLimit(groupId, maxJobs, duration);
+    }
+
+    /**
+     * Dynamically sets a cluster-wide rate limit on a virtual queue group with max jobs quota in milliseconds.
+     */
+    public boolean setGroupRateLimit(String queueName, String groupId, int maxJobs, long durationMs) {
+        return getQueue(queueName).setGroupRateLimit(groupId, maxJobs, durationMs);
+    }
+
+    /**
+     * Returns remaining TTL (in milliseconds) for a rate-limited virtual group.
+     * Returns 0 if not currently rate-limited.
+     */
+    public long getGroupRateLimitTtl(String queueName, String groupId) {
+        return getQueue(queueName).getGroupRateLimitTtl(groupId);
+    }
+
+    /**
+     * Returns remaining TTL (in milliseconds) for a rate-limited virtual group given maxJobs quota.
+     * Mirrors BullMQ Pro's queue.getGroupRateLimitTtl(groupId, maxJobs).
+     */
+    public long getGroupRateLimitTtl(String queueName, String groupId, int maxJobs) {
+        return getQueue(queueName).getGroupRateLimitTtl(groupId, maxJobs);
+    }
+
+    /**
+     * Retrieves unique virtual group identifiers with pagination.
+     */
+    public List<String> getGroups(String queueName, long start, long stop) {
+        return getQueue(queueName).getGroups(start, stop);
+    }
+
+    /**
+     * Retrieves all unique virtual group identifiers in this queue.
+     */
+    public List<String> getGroups(String queueName) {
+        return getQueue(queueName).getGroups();
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across groups.
+     */
+    public java.util.Map<String, Long> getGroupsJobsCount(String queueName, int limit) {
+        return getQueue(queueName).getGroupsJobsCount(limit);
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across all groups.
+     */
+    public java.util.Map<String, Long> getGroupsJobsCount(String queueName) {
+        return getQueue(queueName).getGroupsJobsCount();
+    }
+
+    /**
+     * Self-heals and repairs a desynchronized virtual group stuck in maxed state.
+     */
+    public boolean repairGroup(String queueName, String groupId) {
+        return getQueue(queueName).repairGroup(groupId);
+    }
+
+    /**
+     * Audits and repairs all groups stuck in maxed state.
+     */
+    public int repairMaxedGroups(String queueName) {
+        return getQueue(queueName).repairMaxedGroups();
+    }
+
+    /**
+     * Gets paginated groups by status ('waiting', 'limited', 'maxed', 'paused').
+     */
+    public List<ExtensionScripts.GroupEntry> getGroupsByStatus(String queueName, String status, long start, long stop) {
+        return getQueue(queueName).getGroupsByStatus(status, start, stop);
+    }
+
+    /**
+     * Gets paginated jobs in a virtual group.
+     */
+    public <T> List<Job<T>> getGroupJobs(String queueName, String groupId, long start, long stop) {
+        OxmqQueue<T> q = (OxmqQueue<T>) getQueue(queueName);
+        return q.getGroupJobs(groupId, start, stop);
+    }
+
+    /**
+     * Gets total waiting jobs count for a virtual group.
+     */
+    public long getGroupJobsCount(String queueName, String groupId) {
+        return getQueue(queueName).getGroupJobsCount(groupId);
+    }
+
+    /**
+     * Returns job counts breakdown per priority for a specific virtual group.
+     */
+    public java.util.Map<Integer, Long> getCountsPerPriorityForGroup(String queueName, String groupId, List<Integer> priorities) {
+        return getQueue(queueName).getCountsPerPriorityForGroup(groupId, priorities);
+    }
+
+    /**
+     * Sets a dynamic concurrency limit override for a specific virtual group in Redis.
+     */
+    public void setGroupConcurrency(String queueName, String groupId, int concurrency) {
+        getQueue(queueName).setGroupConcurrency(groupId, concurrency);
+    }
+
+    /**
+     * Retrieves the specific concurrency limit override for a virtual group, or null if using default.
+     */
+    public Integer getGroupConcurrency(String queueName, String groupId) {
+        return getQueue(queueName).getGroupConcurrency(groupId);
+    }
+
+    /**
+     * Removes the specific concurrency limit override for a virtual group.
+     */
+    public boolean removeGroupConcurrency(String queueName, String groupId) {
+        return getQueue(queueName).removeGroupConcurrency(groupId);
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide.
+     */
+    public boolean cancelJob(String queueName, String jobId) {
+        return getQueue(queueName).cancelJob(jobId);
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide with a specific reason.
+     */
+    public boolean cancelJob(String queueName, String jobId, String reason) {
+        return getQueue(queueName).cancelJob(jobId, reason);
     }
 
     /**
@@ -267,10 +523,74 @@ public class OxmqTemplate {
     }
 
     /**
+     * Retrieves the Job ID that currently holds the active deduplication key lock.
+     */
+    public String getDeduplicationJobId(String queueName, String deduplicationId) {
+        return getQueue(queueName).getDeduplicationJobId(deduplicationId);
+    }
+
+    /**
+     * Clears a deduplication key lock in Redis.
+     */
+    public boolean removeDeduplicationKey(String queueName, String deduplicationId) {
+        return getQueue(queueName).removeDeduplicationKey(deduplicationId);
+    }
+
+    /**
+     * Clears all log entries for a job in Redis.
+     */
+    public boolean clearJobLogs(String queueName, String jobId) {
+        return getQueue(queueName).clearJobLogs(jobId);
+    }
+
+    /**
+     * Appends a log line to a job in Redis.
+     */
+    public long addJobLog(String queueName, String jobId, String logRow) {
+        return getQueue(queueName).addJobLog(jobId, logRow);
+    }
+
+    /**
+     * Appends a log line to a job in Redis with optional log retention limit.
+     */
+    public long addJobLog(String queueName, String jobId, String logRow, int keepLogs) {
+        return getQueue(queueName).addJobLog(jobId, logRow, keepLogs);
+    }
+
+    /**
+     * Updates the progress percentage of a job in Redis.
+     */
+    public void updateJobProgress(String queueName, String jobId, int progress) {
+        getQueue(queueName).updateJobProgress(jobId, progress);
+    }
+
+    /**
      * Retrieves child dependency counts for a parent job in a DAG workflow.
      */
     public io.oxmq.model.JobDependencyCounts getDependencyCounts(String queueName, String jobId) {
         return getQueue(queueName).getDependencyCounts(jobId);
+    }
+
+    /**
+     * Retrieves detailed child dependency breakdown (unprocessed keys, processed results, failed reasons)
+     * for a parent job in a workflow DAG.
+     */
+    public io.oxmq.model.JobDependencies getDependencies(String queueName, String jobId) {
+        return getQueue(queueName).getDependencies(jobId);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree starting from a parent job as root.
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId) {
+        return getQueue(queueName).getFlow(jobId);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree with a maximum recursion depth.
+     */
+    public io.oxmq.model.JobNode getFlow(String queueName, String jobId, int maxDepth) {
+        return getQueue(queueName).getFlow(jobId, maxDepth);
     }
 
     /**

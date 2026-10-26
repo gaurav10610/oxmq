@@ -55,8 +55,13 @@ JobOptions options = JobOptions.builder()
     .deduplicationId("checkout_user_42")     // Custom deduplication key
     .debounceDuration(Duration.ofSeconds(5)) // Resets execution timer on rapid submissions
     
-    // Multi-Tenant Partitioning
-    .groupKey("tenant_acme")                 // Partition rate limit by tenant
+    // Multi-Tenant Virtual Queue Groups
+    .group("tenant_acme")                    // Assign to virtual group for fair round-robin scheduling
+    // Or with bounded backlog:
+    .group(GroupOptions.builder().id("tenant_acme").maxSize(500).build())
+    
+    // In-Flight Hard Execution Timeout
+    .jobTimeout(Duration.ofSeconds(45))      // Watchdog interrupts thread after 45s of active execution
     
     // Housekeeping & Redis Memory Pruning (KeepJobs)
     .removeOnComplete(KeepJobs.of(1000, Duration.ofHours(2))) // Retain last 1,000 completed jobs or < 2 hours
@@ -104,6 +109,53 @@ if (state.isCompleted()) {
 } else if (state.isActive()) {
     log.info("Job is currently in-flight on a worker");
 }
+```
+
+---
+
+## Self-Contained Job Mutators & Lifecycle Operations
+
+Mirrored after BullMQ's rich `Job` class API, an OxMQ `Job<T>` returned by `queue.add()` or fetched via `queue.getJob()` is a fully connected, self-contained domain object with direct mutator methods:
+
+```java
+// 1. Dynamic Payload Updating (Mirrors BullMQ job.updateData)
+// Atomically updates payload in Redis while job is queued or active
+job.updateData(new OrderPayload("modified_order_v2"));
+
+// 2. Immediate Promotion of Delayed Jobs (Mirrors BullMQ job.promote)
+// Pulls a scheduled/delayed job out of delayed ZSET and enqueues into wait
+job.promote();
+
+// 3. Dynamic Delay Mutation (Mirrors BullMQ job.changeDelay)
+// Adjusts the remaining scheduled delay in milliseconds
+job.changeDelay(Duration.ofMinutes(15));
+
+// 4. Dynamic Priority Adjustment (Mirrors BullMQ job.changePriority)
+// Modifies execution priority (1 = highest priority)
+job.changePriority(1);
+
+// 5. Explicit Retry of Failed Jobs (Mirrors BullMQ job.retry)
+// Resets failed state and returns job to wait queue
+job.retry();
+
+// 6. Complete Removal from Redis (Mirrors BullMQ job.remove)
+// Atomically purges the job and locks from Redis
+boolean removed = job.remove();
+
+// 7. Clear Job Logs (Mirrors BullMQ job.clearLogs)
+// Flushes the job's append-only execution log list
+boolean logsCleared = job.clearLogs();
+
+// 8. Inspect Parent DAG Dependencies (Mirrors BullMQ job.getDependencies)
+// Returns child dependency status breakdown for workflow parents
+JobDependencies deps = job.getDependencies();
+System.out.println("Pending child jobs: " + deps.unprocessedChildKeys());
+System.out.println("Completed child results: " + deps.processedChildren());
+
+// 9. Inspect Workflow Execution Tree (Mirrors BullMQ job.getFlow)
+// Fetches the entire DAG tree hierarchy rooted at this parent job
+JobNode workflowTree = job.getFlow();
+System.out.println("Total child nodes: " + workflowTree.getChildren().size());
 ```
 
 ---
@@ -183,6 +235,64 @@ When an exception is thrown inside a worker processor:
 3. The job is placed into `bull:<queue>:delayed` with a calculated maturity timestamp score.
 4. When the timestamp arrives, Redis automatically promotes the job back to `bull:<queue>:wait`.
 5. If all attempts are exhausted, the job moves to `bull:<queue>:failed`.
+
+---
+
+## ⏱️ Hard Execution Timeouts & Cancellation Tokens
+
+Long-running or hanging tasks (e.g. unresponsive third-party HTTP endpoints, infinite loops, hanging database queries) can tie up worker virtual threads and lock resources indefinitely.
+
+OxMQ provides both **Preemptive Watchdog Timeouts** and **Cooperative Cancellation Tokens**:
+
+### 1. Setting Execution Timeouts
+
+Specify timeouts per-job or as a worker default:
+
+```java
+// Option A: Per-job timeout via JobOptions
+queue.add("transcode-video", payload, 
+        JobOptions.builder()
+                .jobTimeout(Duration.ofMinutes(5)) // Hard timeout after 5m
+                .build());
+
+// Option B: Worker-level default timeout
+OxmqWorker<String> worker = OxmqWorker.<String>builder()
+        .queueName("transcode-queue")
+        .defaultJobTimeout(Duration.ofMinutes(10))
+        .processor(this::processJob)
+        .build();
+```
+
+### 2. Watchdog Preemption & Interruption
+
+When a job's execution duration exceeds its configured timeout:
+1. A dedicated background daemon watchdog thread triggers.
+2. The executing virtual thread receives a `Thread.interrupt()` signal.
+3. If the processor blocks on I/O, `InterruptedException` is raised.
+4. If an uncaught interrupt or timeout occurs, OxMQ captures `JobTimeoutException`.
+5. The thread's interrupt flag is safely cleared, allowing OxMQ to update Redis without `RedisCommandInterruptedException`.
+6. The job is marked `FAILED` with `Job execution timed out after X ms`.
+
+### 3. Cooperative Cancellation Tokens
+
+For long-running CPU loops or step-by-step algorithms, check the job's `CancellationToken`:
+
+```java
+public String processJob(Job<BatchInput> job) throws InterruptedException {
+    for (Record item : job.getData().getRecords()) {
+        // Option A: Throw JobCancelledException if cancelled or timed out
+        job.getCancellationToken().throwIfCancelled();
+
+        // Option B: Polling check
+        if (job.isCancelled()) {
+            return "PARTIALLY_CANCELLED";
+        }
+
+        processSingleRecord(item);
+    }
+    return "SUCCESS";
+}
+```
 
 ---
 
@@ -284,6 +394,166 @@ OxmqWorker<ReportAggregator> worker = OxmqWorker.<ReportAggregator>builder()
 ```
 
 `getIgnoredChildrenFailures()` is evaluated **lazily on-demand**. Standard jobs or DAGs without failed children incur zero Redis network calls.
+
+---
+
+## Resumable State Machines & Job Progress Checkpointing
+
+For long-running multi-stage batch jobs, data extraction pipelines, or complex multi-step workflows, a transient network error or pod restart in Step 4 shouldn't force the job to re-execute Steps 1, 2, and 3 from scratch.
+
+OxMQ introduces native **Resumable State Machines and Job Checkpointing**:
+
+```java
+public record PipelineState(int recordsExtracted, String lastProcessedId, boolean stagingComplete) {}
+
+OxmqWorker<DataPipelinePayload> worker = OxmqWorker.<DataPipelinePayload>builder()
+    .queueName("etl-pipeline")
+    .processor(job -> {
+        // 1. Restore previous checkpoint if this attempt is a retry
+        PipelineState state = job.getCheckpoint(PipelineState.class);
+        String currentStep = job.getCheckpointStep();
+
+        if (state == null) {
+            state = new PipelineState(0, null, false);
+        }
+
+        // Step 1: Extract records
+        if (!"STAGE_EXTRACT_DONE".equals(currentStep)) {
+            state = runExtraction(state);
+            job.checkpoint("STAGE_EXTRACT_DONE", state); // Persisted atomically in Redis!
+        }
+
+        // Step 2: Transform & Enrich
+        if (!"STAGE_TRANSFORM_DONE".equals(currentStep)) {
+            state = runTransformation(state);
+            job.checkpoint("STAGE_TRANSFORM_DONE", state);
+        }
+
+        // Step 3: Load into target Data Warehouse
+        loadDataWarehouse(state);
+        return "PIPELINE_COMPLETE";
+    })
+    .build();
+```
+
+### Checkpointing Semantics:
+1. `job.checkpoint(step, state)` immediately persists both the logical stage identifier (`checkpoint_step`) and serialized state payload (`checkpoint`) to Redis hash `bull:<queue>:<jobId>`.
+2. When the job fails and is retried by backoff policies or reassigned to a different worker pod, `job.getCheckpoint(Class<T>)` and `job.getCheckpointStep()` immediately restore the exact point of execution.
+3. Steps completed prior to the checkpoint are skipped, preventing redundant computation, double-charging, or duplicate external API calls.
+
+---
+
+## Declarative Per-Job-Type Timeout Mappings
+
+In production microservices, a single worker pool often handles diverse job types with vastly different execution profiles (e.g., `send-sms` should fail after 5 seconds, whereas `export-large-csv` requires up to 10 minutes).
+
+OxMQ allows configuring **Declarative Per-Job-Type Timeouts** on workers:
+
+### Java Builder API:
+```java
+OxmqWorker<Void> worker = OxmqWorker.<Void>builder()
+    .queueName("tasks")
+    .defaultJobTimeout(Duration.ofSeconds(30))       // Fallback for unspecified jobs
+    .jobTimeout("fast-notification", Duration.ofSeconds(5))
+    .jobTimeout("generate-pdf", Duration.ofMinutes(2))
+    .jobTimeout("monthly-analytics", Duration.ofMinutes(15))
+    .processor(job -> {
+        // Fast notification will be aborted after 5s; monthly analytics gets 15m
+        return executeTask(job);
+    })
+    .build();
+```
+
+### Spring Boot `@OxmqListener`:
+```java
+@Component
+public class TaskListener {
+
+    @OxmqListener(
+        queue = "tasks",
+        concurrency = 20,
+        jobTimeoutMs = 30000, // 30s default
+        jobTimeouts = {
+            @JobTimeout(task = "fast-notification", timeout = 5000),
+            @JobTimeout(task = "generate-pdf", timeout = 120000),
+            @JobTimeout(task = "monthly-analytics", timeout = 900000)
+        }
+    )
+    public void handleTask(Job<Object> job) {
+        // Watchdog automatically monitors active virtual thread and enforces specific timeout
+    }
+}
+```
+
+If an active virtual thread exceeds its specific deadline:
+1. The watchdog marks `job.isCancelled()` as true with reason `"Job execution timed out after X ms"`.
+2. The virtual thread is interrupted (`Thread.interrupt()`).
+3. The job fails with `JobTimeoutException` and triggers normal retry backoff.
+
+---
+
+## Dynamic Runtime Child Spawning in DAGs
+
+Standard workflows require the entire DAG dependency graph to be known upfront before enqueuing. However, real-world workflows often require **dynamic branching**: a parent task inspects runtime data, decides how many sub-tasks to execute, schedules them, pauses itself, and automatically resumes once all children complete.
+
+OxMQ enables **Dynamic Runtime Child Spawning**:
+
+```java
+OxmqWorker<Object> worker = OxmqWorker.builder()
+    .queueName("orchestration-queue")
+    .processor(job -> {
+        if ("parent-orchestrator".equals(job.getName())) {
+            // Check if we are resuming after child tasks completed
+            Map<String, Object> childOutputs = job.getChildrenValues();
+            if (childOutputs != null && !childOutputs.isEmpty()) {
+                log.info("All dynamic children finished! Outputs: {}", childOutputs);
+                return "AGGREGATED_SUCCESS";
+            }
+
+            // Phase 1: Dynamically determine child tasks at runtime
+            List<OrderPart> parts = fetchOrderParts(job.getData());
+            List<FlowJob> children = new ArrayList<>();
+            for (OrderPart part : parts) {
+                children.add(FlowJob.of("parts-queue", "process-part", part));
+            }
+
+            // Spawn children and pause parent:
+            // This schedules child jobs in Redis, moves parent into WAITING_CHILDREN,
+            // and throws WaitingChildrenException to yield the worker Virtual Thread!
+            job.addChildren(children);
+            return null; // Unreachable - thread yields
+        }
+        return "OK";
+    })
+    .build();
+```
+
+### Dynamic Flow Execution Sequence:
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Queue as Redis Queue
+    participant Worker as OxMQ Worker (Virtual Thread)
+    
+    Client->>Queue: Enqueue Parent Job
+    Queue->>Worker: Worker picks up Parent Job
+    Note over Worker: Evaluates runtime data<br/>Determines 3 dynamic children
+    Worker->>Queue: job.addChildren(3 children)
+    Worker->>Queue: moveToWaitingChildren()
+    Note over Worker: Throws WaitingChildrenException<br/>Virtual Thread yielded cleanly!
+    
+    par Child Execution
+        Queue->>Worker: Worker executes Child 1 (completed)
+        Queue->>Worker: Worker executes Child 2 (completed)
+        Queue->>Worker: Worker executes Child 3 (completed)
+    end
+    
+    Note over Queue: Last child completes<br/>moveToFinished unblocks Parent
+    Queue->>Queue: Parent promoted from waiting-children to wait
+    Queue->>Worker: Worker resumes Parent Job
+    Note over Worker: job.getChildrenValues() provides outputs<br/>Parent completes successfully!
+```
 
 ---
 

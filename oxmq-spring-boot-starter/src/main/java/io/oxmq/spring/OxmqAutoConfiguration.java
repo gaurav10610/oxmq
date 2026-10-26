@@ -93,7 +93,9 @@ public class OxmqAutoConfiguration {
             return new OxmqMetrics(null);
         }
         MeterRegistry registry = meterRegistryProvider.getIfAvailable();
-        return new OxmqMetrics(registry);
+        OxmqMetrics metrics = new OxmqMetrics(registry);
+        metrics.setGroupMetricsEnabled(properties.isGroupMetricsEnabled());
+        return metrics;
     }
 
     @Bean
@@ -102,7 +104,8 @@ public class OxmqAutoConfiguration {
     public TracingJobInterceptor oxmqTracingJobInterceptor(OxmqProperties properties) {
         return new TracingJobInterceptor(
                 properties.getTracing().getTraceIdKey(),
-                properties.getTracing().getSpanIdKey()
+                properties.getTracing().getSpanIdKey(),
+                properties.getTracing().isRecordJobLog()
         );
     }
 
@@ -121,5 +124,27 @@ public class OxmqAutoConfiguration {
                                                    Environment environment) {
         String effectivePrefix = properties.resolvePrefix(environment);
         return new OxmqHealthIndicator(redisClient, postProcessor, effectivePrefix);
+    }
+
+    @Bean
+    @org.springframework.context.annotation.Lazy
+    @ConditionalOnMissingBean
+    public io.oxmq.relay.OxmqRelay oxmqRelay(RedisConnectionManager connectionManager,
+                                              JobSerializer serializer,
+                                              OxmqProperties properties,
+                                              Environment environment) {
+        String effectivePrefix = properties.resolvePrefix(environment) + ":relay";
+        return io.oxmq.relay.OxmqRelay.builder()
+                .connectionManager(connectionManager)
+                .serializer(serializer)
+                .prefix(effectivePrefix)
+                .build();
+    }
+
+    @Bean
+    @ConditionalOnClass(name = "org.springframework.boot.actuate.endpoint.annotation.Endpoint")
+    @ConditionalOnMissingBean
+    public io.oxmq.spring.actuator.OxmqGroupsEndpoint oxmqGroupsEndpoint(OxmqTemplate oxmqTemplate) {
+        return new io.oxmq.spring.actuator.OxmqGroupsEndpoint(oxmqTemplate);
     }
 }

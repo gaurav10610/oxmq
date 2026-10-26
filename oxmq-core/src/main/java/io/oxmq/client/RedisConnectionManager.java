@@ -127,6 +127,14 @@ public class RedisConnectionManager implements Closeable {
         return redisClient;
     }
 
+    public RedisClient getClient() {
+        return redisClient;
+    }
+
+    public StatefulRedisPubSubConnection<String, String> createDedicatedPubSubConnection() {
+        return redisClient.connectPubSub();
+    }
+
     @Override
     public void close() {
         connectionLock.lock();

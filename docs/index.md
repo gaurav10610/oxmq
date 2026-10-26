@@ -62,6 +62,9 @@ features:
   - icon: 🧠
     title: Memory & Socket Efficiency
     details: Zero-allocation poller hot-path, ReentrantLock non-pinning locks, lazy DAG child evaluation, Lettuce connection multiplexing, and bounded 8KB stack trace guardrails.
+  - icon: 🛡️
+    title: Strict Memory Ceilings & Zero-Data-Loss Backpressure
+    details: Enforce strict byte-level Redis memory budgets (e.g. 200 MB) via non-blocking JobInterceptor admission gates and moveToDelayed(skipAttempt=true). Protects queue integrity and avoids destructive Redis LRU key evictions.
   - icon: 📑
     title: Range Pagination & Queue Inspection
     details: High-performance atomic multi-state range pagination (getJobs), ergonomic state getters (getWaiting, getActive, etc.), filtered job counts, and rate limit window TTL inspection.
@@ -253,6 +256,7 @@ OxMQ was purpose-built to eliminate the real-world operational bottlenecks and h
 | **Redis Multi-Tenant Key Collisions**<br/>Microservices sharing a single Redis instance accidentally collide on common queue names (`orders`, `notifications`), cross-consuming jobs. | **Native Context Isolation**<br/>Automatically prefixes keys as `{service:queue}` using the "Define Once, Inherit Everywhere" pattern (`spring.application.name`). | **Zero data cross-talk** and seamless multi-tenancy on shared Redis clusters without hardcoded prefix sprawl. |
 | **Upstream 429 Bans & Multi-Tenant Quota Starvation**<br/>Aggressive background workers exhaust external API quotas (Microsoft Graph, OpenAI, Stripe), triggering cluster-wide IP bans and starving real-time users. | **Native Interceptors & Plugins SPI**<br/>Dynamic tenant token buckets (`GroupRateLimiterPlugin`), distributed 429 sentinels (`RateLimitSentinelPlugin`), and priority headroom yielding (`PriorityQuotaGovernorPlugin`) non-destructively delay jobs without burning retry attempts. | **100% reliable third-party API integration** with zero 429 unhandled failures, fair quota allocation, and zero upstream Lua modifications. |
 | **Redis Memory Creep & Unbounded Hash Growth**<br/>Completed and failed job records accumulate indefinitely until Redis hits `maxmemory` and begins rejecting writes. | **Automated `KeepJobs` Retention**<br/>Atomic trimming by count, age, and batch limit built directly into completion Lua scripts, plus 8KB stack trace guardrails. | **Deterministic, bounded Redis RAM footprint** with automatic queue-level inheritance and zero manual maintenance cron jobs. |
+| **Unchecked Crawler Memory Spikes & Redis OOM**<br/>Fast crawler producers flood Redis with tens of thousands of tasks, exceeding memory limits. Native Redis LRU eviction destroys active queue keys and permanently drops jobs. | **Zero-Data-Loss Backpressure Gate**<br/>Dual-sensing admission control (`BackpressureService` + `JobInterceptor`) paces ingestion continuation queries via `moveToDelayed(skipAttempt: true)`. | **Strict byte-level memory budget (e.g. 200 MB)** enforced with 100% data preservation, zero attempt penalties, and unthrottled real-time Priority 1 traffic. |
 | **Redis Cluster `CROSSSLOT` Errors in DAGs**<br/>Parent-child workflow keys scattered across different hash slots crash Redis Cluster multi-key Lua commands. | **Hash-Tag DAG Routing (`FlowProducer.forCluster`)**<br/>Wraps parent and all leaf child keys in a shared `{clusterTag}` CRC16 slot. | **100% reliable multi-queue DAG execution** on distributed Redis Cluster shards with zero cross-slot failures. |
 
 

@@ -11,8 +11,8 @@
 
 <p align="center">
   <a href="https://gaurav10610.github.io/oxmq/"><img src="https://img.shields.io/badge/Documentation-GitHub%20Pages-blue.svg" alt="Documentation"></a>
-  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.8.0-C71A36.svg" alt="Maven Central v1.8.0"></a>
-  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.8.0"><img src="https://img.shields.io/badge/Release-v1.8.0-blue.svg" alt="Release v1.8.0"></a>
+  <a href="https://central.sonatype.com/artifact/io.github.gaurav10610/oxmq-core"><img src="https://img.shields.io/badge/Maven%20Central-v1.9.0-C71A36.svg" alt="Maven Central v1.9.0"></a>
+  <a href="https://github.com/gaurav10610/oxmq/releases/tag/v1.9.0"><img src="https://img.shields.io/badge/Release-v1.9.0-blue.svg" alt="Release v1.9.0"></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://openjdk.org/projects/jdk/17/"><img src="https://img.shields.io/badge/Java-17%2B%20%7C%2021%2B%20LTS-orange.svg" alt="Java 17+ and 21+ LTS"></a>
   <a href="https://spring.io/projects/spring-boot"><img src="https://img.shields.io/badge/Spring%20Boot-3.x-6DB33F.svg" alt="Spring Boot 3"></a>
@@ -37,13 +37,22 @@ By directly executing BullMQ's official 49 Lua scripts and adhering to canonical
 ## Key Capabilities
 
 - **Project Loom Virtual Threads**: Execute **10,000+ concurrent I/O-bound workers** per JVM node with ~1 KB heap per task and zero OS carrier thread starvation (with automatic platform thread pool fallback on Java 17 LTS).
+- **Virtual Queue Groups & Intra-Group Priority**: Fine-grained multi-tenant isolation with $O(1)$ fair circular round-robin scheduling across virtual groups, intra-group priority ordering (`group.priority`), dynamic per-group concurrency overrides (`groups:concurrency`), bounded backlogs (`maxSize`), and cluster-wide dynamic throttling (all **100% Free & Open-Source, NO Pro Tier or paywall**).
+- **Cluster-Wide Distributed Job Cancellation**: Instantly halt running Virtual Threads across any Kubernetes worker pod via Redis Pub/Sub control channel (`queue.cancelJob(id, reason)`).
+- **Resumable State Machines & Job Checkpointing**: Save execution state with `job.checkpoint(step, state)` to skip completed steps when retrying after a crash or network interruption.
+- **Dynamic Runtime Child Spawning in DAGs**: Dynamically branch and spawn child tasks during execution (`job.addChild` / `job.addChildren`), pausing parent Virtual Threads in `WAITING_CHILDREN` and auto-resuming upon completion.
+- **Declarative Per-Job-Type Timeouts**: Enforce distinct watchdog execution timeouts per job type (`jobTimeout(taskName, Duration)` and Spring Boot `@JobTimeout`).
+- **Distributed Pub/Sub Control Plane & Relay**: High-throughput inter-node messaging (`OxmqRelay`) with hierarchical wildcard pattern matching (`*` and `>`), retained messages with TTL, and heartbeat node leases.
 - **100% BullMQ Wire & Script Parity**: Executes BullMQ's official 49 Lua scripts directly inside Redis. Seamless polyglot interoperability (Java &harr; Node.js) and instant compatibility with the [Bull-Board Web UI](https://github.com/felixmosh/bull-board).
-- **High-Throughput Batch Dequeue**: Bulk pop up to $N$ jobs atomically in a single Redis call (`OxmqBatchWorker`) with `maxBatchBytes` memory safety, boosting ingestion throughput to **~3,000+ jobs/s**.
+- **High-Throughput Batch Dequeue & Granular Partial Failures**: Bulk pop up to $N$ jobs atomically in a single Redis call (`OxmqBatchWorker`) with `minBatchSize` accumulation buffering, memory safety budgets (`maxBatchBytes`), homogeneous tenant batches (`groupAffinity`), and item-level partial failures via `job.setAsFailed(err)`.
+- **In-Flight Hard Execution Timeouts**: Dedicated watchdog timer interrupts hanging virtual threads on timeout (`jobTimeout(Duration)`) and safely marks jobs failed in Redis with `JobTimeoutException`.
+- **Transactional Outbox Pattern**: Zero message loss across relational databases (PostgreSQL, MySQL, Oracle, H2) and Redis in Spring Boot via `@EnableOxmqOutbox` and `OxmqOutboxService`.
 - **Context Isolation & Multi-Tenancy**: Automatic service-level namespacing with strict 7-tier precedence and automated Redis Cluster single-slot hash-tag routing (`{prefix:queue}`).
 - **Parent-Child DAG Workflows**: Orchestrate multi-tier dependency trees with automatic leaf deduplication and lazy result aggregation (`FlowProducer`).
 - **Cluster Rate Limiting & Concurrency**: Native queue-level metadata (`setGlobalConcurrency`, `setGlobalRateLimit`, `isMaxed`) plus opt-in multi-tenant group limiter plugins.
-- **Enterprise Spring Boot 3 Starter**: Declarative `@EnableOxmq`, `@OxmqListener`, and `@OxmqBatchListener` annotations with Actuator health indicators.
+- **Enterprise Spring Boot 3 Starter**: Declarative `@EnableOxmq`, `@OxmqListener`, `@OxmqBatchListener`, and `@EnableOxmqOutbox` annotations with Actuator health indicators.
 - **OpenTelemetry Distributed Tracing**: Native W3C `traceparent` and `tracestate` context propagation across queues, workers, and DAG hierarchies.
+- **Strict Memory Ceilings & Zero-Data-Loss Backpressure**: Enforce byte-level Redis memory ceilings (e.g. 200 MB) via non-blocking `JobInterceptor` admission gates and `moveToDelayed(skipAttempt: true)`. Guarantees 100% data preservation and eliminates fatal Redis LRU key evictions.
 
 ---
 
@@ -55,7 +64,7 @@ By directly executing BullMQ's official 49 Lua scripts and adhering to canonical
 <dependency>
     <groupId>io.github.gaurav10610</groupId>
     <artifactId>oxmq-core</artifactId>
-    <version>1.8.0</version>
+    <version>1.9.0</version>
 </dependency>
 ```
 
@@ -115,6 +124,20 @@ public class PaymentOrderListener {
 | :--- | :--- | :--- |
 | **Runtime Target** | Java 17+ LTS / Java 21+ Project Loom | Node.js 16+ / TypeScript |
 | **Concurrency Engine** | Project Loom Virtual Threads | Single-Threaded Event Loop |
+| **Virtual Queue Groups** | **Built-in ($O(1)$ fair circular round-robin)** | **Commercial Paywall (BullMQ Pro license)** |
+| **Group Concurrency & Rate Limiting** | **Built-in (`groupConcurrency`, `setGroupRateLimit(max, dur)`, `getGroupRateLimitTtl(max)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Global Across-Groups Breakdown & Repair** | **Built-in (`getGroups`, `getGroupsJobsCount`, `repairGroup`, `repairMaxedGroups`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Reactive Stream Processors & Multi-Stage Checkpoints** | **Built-in (`reactiveProcessor`, `Flux`, `Mono`, `Flow.Publisher`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Spring Boot Actuator Group REST Endpoints** | **Built-in (`/actuator/oxmq-groups` GET & POST management)** | None / Custom API development |
+| **Batch Worker with Group Affinity** | **Built-in (`OxmqBatchWorker`, `job.getBatch()`, homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro `WorkerPro`, `job.getBatch()`)** |
+| **Item-Level Batch Partial Failure** | **Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Hierarchical Flow Tree Inspection** | **Built-in (`getFlow`, `job.getFlow`)** | **Commercial Paywall (BullMQ Pro FlowProducer)** |
+| **Granular DAG Dependency Breakdown** | **Built-in (`getDependencies`, `job.getDependencies`)** | **Built-in `job.getDependencies`** |
+| **Deduplication Key Query & Early Release** | **Built-in (`getDeduplicationJobId`, `removeDeduplicationKey`)** | Built-in `removeDeduplicationKey` |
+| **Connected Job Domain Mutators** | **Built-in (`job.updateData`, `job.promote`, `job.changeDelay`, `job.retry`, `job.remove`, `job.clearLogs`)** | Standard `Job` methods in BullMQ |
+| **In-Flight Hard Timeouts** | **Built-in (`jobTimeout(Duration)`)** | Manual timer wrappers |
+| **Strict Redis Memory Ceiling** | **Supported via `JobInterceptor` + `moveToDelayed(skipAttempt: true)`** | Not supported (Redis LRU eviction destroys active queues) |
+| **Transactional Outbox Engine** | **Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) |
 | **Batch Dequeue** | Native atomic batch dequeue (`OxmqBatchWorker`) | Single-job polling only |
 | **Multi-Tenancy** | Automatic service-level namespace inheritance | Manual per-queue prefix |
 | **Redis Lua Scripts** | Direct execution of 49 official BullMQ scripts | Official BullMQ scripts |
@@ -123,6 +146,7 @@ public class PaymentOrderListener {
 | **Custom Backoff Registry** | Dynamic `BackoffStrategy.custom(...)` + worker registry | Custom backoff functions |
 | **Distributed Tracing** | Native W3C `TraceContext` (`traceparent`, `tracestate`) | OpenTelemetry tracer opts |
 | **Web Dashboard** | Native Bull-Board UI compatibility | Native Bull-Board UI compatibility |
+| **Pricing & Pro Tier** | **100% Free & Open Source (NO PRO TIER)** | **Commercial BullMQ Pro (annual subscription)** |
 | **License** | Apache 2.0 (100% Free & Open Source) | MIT (Community) / Commercial (Pro) |
 
 ---
@@ -140,13 +164,15 @@ For complete documentation, in-depth architectural specifications, and operation
 - **[Configuration Reference](https://gaurav10610.github.io/oxmq/guide/configuration)**: Full YAML and builder reference.
 
 ### Core Concepts & Patterns
+- **[Virtual Queue Groups & Multi-Tenancy](https://gaurav10610.github.io/oxmq/patterns/virtual-queue-groups)**: Fair round-robin scheduling, concurrency caps, and dynamic throttling.
+- **[Transactional Outbox Pattern](https://gaurav10610.github.io/oxmq/patterns/transactional-outbox)**: Zero message loss across RDBMS and Redis in Spring Boot.
 - **[Queues & Batching](https://gaurav10610.github.io/oxmq/concepts/queues)**: Queue management, range pagination, and global concurrency.
-- **[Jobs & Lifecycle](https://gaurav10610.github.io/oxmq/concepts/jobs)**: States, `job.discard()`, progress, and logs.
-- **[Workers & Concurrency](https://gaurav10610.github.io/oxmq/concepts/workers)**: Concurrency, event emitters, and cooperative cancellation.
+- **[Jobs & Lifecycle](https://gaurav10610.github.io/oxmq/concepts/jobs)**: States, `jobTimeout`, progress, and logs.
+- **[Workers & Concurrency](https://gaurav10610.github.io/oxmq/concepts/workers)**: Concurrency, event emitters, and cancellation tokens.
 - **[FlowProducer (DAG Workflows)](https://gaurav10610.github.io/oxmq/concepts/flows)**: Parent-child task trees and result aggregation.
 - **[Rate Limiting & Concurrency](https://gaurav10610.github.io/oxmq/patterns/rate-limiting)**: Global queue metadata and multi-tenant limiter plugins.
 - **[Retries & Backoff Policies](https://gaurav10610.github.io/oxmq/patterns/retries-backoff)**: Exponential, fixed, and custom backoff strategies.
-- **[High-Throughput Batch Dequeue](https://gaurav10610.github.io/oxmq/patterns/batch-dequeue)**: Bulk database ingestion architecture.
+- **[High-Throughput Batch Dequeue](https://gaurav10610.github.io/oxmq/patterns/batch-dequeue)**: Granular partial failures, accumulation buffering, and group affinity.
 
 ### Architecture & Operations
 - **[Architecture & Engine Internals](https://gaurav10610.github.io/oxmq/ARCHITECTURE)**: Hash field dictionary, sequence diagrams, and Redis Cluster slot safety.

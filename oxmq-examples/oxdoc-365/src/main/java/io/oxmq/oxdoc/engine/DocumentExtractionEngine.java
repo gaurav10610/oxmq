@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Pillar 2: Zero-Heap Streaming Document Extraction & Analysis Engine.
+ * Pillar 2: Zero-Heap Streaming Document Extraction &amp; Analysis Engine.
  * Analyzes document streams via low-overhead buffers without buffering full files into JVM heap memory.
  */
 @Component

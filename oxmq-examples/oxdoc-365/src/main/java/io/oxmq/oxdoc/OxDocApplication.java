@@ -9,7 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * OxDoc 365: Enterprise Content Intelligence & Document AI Indexing Showcase Application.
+ * OxDoc 365: Enterprise Content Intelligence &amp; Document AI Indexing Showcase Application.
  * Powered by Java 17 LTS and OxMQ.
  */
 @SpringBootApplication

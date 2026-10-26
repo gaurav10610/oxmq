@@ -1,1 +1,2 @@
 io.oxmq.spring.OxmqAutoConfiguration
+io.oxmq.spring.outbox.OxmqOutboxAutoConfiguration

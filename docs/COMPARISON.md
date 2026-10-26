@@ -17,8 +17,33 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Multi-Core CPU Scaling** | Natively concurrent across all JVM CPU cores | Requires spawning child OS processes ("sandboxed workers") |
 | **Redis Lua Scripts** | **Direct execution of 49 official BullMQ Lua scripts (zero custom scripts)** | **Official BullMQ Lua scripts** |
 | **Multi-Service Context Isolation** | **Native service-level namespace auto-inheritance (`oxmq.namespace`)** | Manual `prefix` configuration on every queue |
+| **Virtual Queue Groups** | **Native Built-in ($O(1)$ fair circular round-robin, no pro tier)** | **Commercial Paywall (BullMQ Pro license required)** |
+| **Intra-Group Priority Queuing** | **Native Built-in (`group.priority`, `getCountsPerPriorityForGroup`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Dynamic Per-Group Concurrency Overrides** | **Native Built-in (`setGroupConcurrency`, `getGroupConcurrency` via `groups:concurrency`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Concurrency Caps** | **Native Built-in (`groupConcurrency`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Rate Limiting** | **Native Built-in (`setGroupRateLimit(groupId, max, duration)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Group Rate Limit TTL Query** | **Native Built-in (`getGroupRateLimitTtl(groupId, maxJobs)`)** | **Commercial Paywall (BullMQ Pro `getRateLimitTtl`)** |
+| **Global Across-Groups Breakdown & Pagination** | **Native Built-in (`getGroups`, `getGroupsJobsCount`)** | **Commercial Paywall (BullMQ Pro `getGroupsJobsCount`)** |
+| **Self-Healing Group Desynchronization Repair** | **Native Built-in (`repairGroup`, `repairMaxedGroups`)** | Manual script repair or BullMQ Pro support |
+| **Reactive Stream Processors & Multi-Stage Checkpointing** | **Native Built-in (`reactiveProcessor`, `Flux`, `Mono`, `Flow.Publisher`)** | **Commercial Paywall (BullMQ Pro Observables)** |
+| **Spring Boot Actuator Group REST Endpoints** | **Native Built-in (`/actuator/oxmq-groups` GET & POST management)** | None / Custom API development |
+| **Opt-in Per-Group Prometheus Telemetry** | **Native Built-in (`oxmq.group-metrics-enabled=true`)** | None / Commercial add-on |
+| **Batch Worker with Group Affinity** | **Native Built-in (`OxmqBatchWorker`, `job.getBatch()`, homogeneous tenant batches)** | **Commercial Paywall (BullMQ Pro `WorkerPro`, `job.getBatch()`)** |
+| **Item-Level Granular Batch Failure** | **Native Built-in (`job.setAsFailed(err)`)** | **Commercial Paywall (BullMQ Pro)** |
+| **Cluster-Wide Job Cancellation** | **Native Built-in (`cancelJob(id, reason)` over Redis `<queue>:control` pub/sub)** | **Manual custom code or BullMQ Pro** |
+| **Resumable State Machines & Checkpointing** | **Native Built-in (`job.checkpoint(step, state)`, skips completed steps on retry)** | Requires manual database state persistence |
+| **Declarative Per-Job-Type Timeouts** | **Native Built-in (`worker.jobTimeout(name, dur)` & `@JobTimeout`)** | Manual application-level timer wrappers |
+| **Hierarchical Flow Tree Inspection** | **Native Built-in (`getFlow`, `job.getFlow`)** | **Commercial Paywall (BullMQ Pro FlowProducer)** |
+| **Granular DAG Dependency Breakdown** | **Native Built-in (`getDependencies`, `job.getDependencies`)** | **Built-in `job.getDependencies`** |
+| **Deduplication Key Query & Early Release** | **Native Built-in (`getDeduplicationJobId`, `removeDeduplicationKey`)** | Built-in `removeDeduplicationKey` |
+| **Self-Contained Connected Job Domain Object** | **Native Built-in (`job.updateData`, `job.promote`, `job.changeDelay`, `job.changePriority`, `job.retry`, `job.remove`, `job.clearLogs`)** | Standard `Job` methods in BullMQ |
+| **Dynamic Runtime Child Spawning in DAGs** | **Native Built-in (`job.addChild` / `job.addChildren`, yields virtual thread to `waiting-children`)** | **Commercial Paywall (BullMQ Pro Flows)** |
+| **Distributed Pub/Sub Control Plane / Relay** | **Native Built-in (`OxmqRelay`, hierarchical wildcards `*` / `>`, retained messages, node leases)** | Requires external NATS / broker / custom pubsub |
+| **Hard Watchdog Execution Timeouts** | **Native Built-in (`jobTimeout(Duration)`)** | Manual application-level timer wrappers |
+| **Transactional Outbox Engine** | **Native Built-in (`@EnableOxmqOutbox`, `OxmqOutboxService`)** | Requires external CDC (Debezium) or custom code |
 | **Request-Reply Pattern** | **Native `waitUntilFinished` & `waitUntilFinishedAsync` (Redis Streams)** | `Job.waitUntilFinished` (Redis Streams) |
 | **Memory Retention (`KeepJobs`)** | **Built-in `KeepJobs` (`count`, `ageSeconds`, `limit`) via `moveToFinished-14.lua`** | Built-in `keepJobs` via `moveToFinished-14.lua` |
+| **Strict Redis Memory Ceiling** | **Supported via `JobInterceptor` + `moveToDelayed(skipAttempt: true)`** | Not supported (Redis LRU eviction destroys active queues) |
 | **Redis Key Topology** | Standard `bull:<queue>:*` hierarchy (including `dn:` & `pc`) | Standard `bull:<queue>:*` hierarchy |
 | **Job Lifecycle States** | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED | WAITING, ACTIVE, DELAYED, WAITING_CHILDREN, COMPLETED, FAILED, PAUSED, STALLED |
 | **Parent-Child DAG Workflows** | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) | Built-in `FlowProducer` (leaf dedup, auto-reattachment, `addBulk`) |
@@ -37,7 +62,8 @@ Because OxMQ directly executes BullMQ's official 49 Lua scripts and uses the exa
 | **Live Progress & Step Logs** | Built-in (`job.updateProgress`, `job.log`) | Built-in (`job.updateProgress`, `job.log`) |
 | **Web Dashboard** | Native **Bull-Board UI** compatibility (Zero Node.js code) | Native **Bull-Board UI** compatibility |
 | **Framework Integration** | **Spring Boot 3+ Starter** (`@OxmqListener`, `@OxmqBatchListener`, Actuator) | Express, Fastify, NestJS BullMQ integration |
-| **License** | **Apache 2.0** | **MIT** |
+| **Pricing & Pro Tier** | **100% Free & Open Source (NO PRO TIER, NO PAYWALL)** | **Commercial BullMQ Pro (annual license subscription)** |
+| **License** | **Apache 2.0** | **MIT (Community) / Commercial Proprietary (Pro)** |
 
 ---
 
@@ -101,7 +127,7 @@ OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq
 ./mvnw clean test-compile -pl oxmq-benchmarks
 
 # Run benchmarks against your local or remote Redis instance
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.5.0.jar
+java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.9.0.jar
 ```
 
 ---

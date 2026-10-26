@@ -9,7 +9,11 @@ import java.util.Map;
 /**
  * Pluggable Queue Backend contract mirroring BullMQ v6's IQueueBackend.
  * Decouples Queue and Worker facades from specific datastore and driver implementations.
+ *
+ * @deprecated Since 1.8.0 for removal in 2.0.0. OxMQ natively uses high-throughput direct Lua script pipelines
+ *             and Netty binary buffers via {@link io.oxmq.lua.BullScripts} and {@link io.oxmq.lua.ExtensionScripts}.
  */
+@Deprecated(since = "1.8.0", forRemoval = true)
 public interface QueueBackend extends Closeable {
 
     String addStandardJob(String customId, String name, String jsonData, Map<String, Object> opts, long timestamp);

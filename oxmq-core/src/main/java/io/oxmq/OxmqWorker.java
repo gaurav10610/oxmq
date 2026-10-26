@@ -16,6 +16,7 @@ import io.oxmq.model.BackoffStrategy;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.rate.RateLimiter;
+import io.oxmq.serializer.BullMsgPack;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import io.oxmq.watchdog.LockExtender;
@@ -25,10 +26,12 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -66,11 +69,14 @@ public class OxmqWorker<T> implements Worker<T> {
     private final long pollIntervalMs;
     private final int maxStalledCount;
     private final int maxStartedAttempts;
+    private final long defaultJobTimeoutMs;
+    private final int groupConcurrency;
 
     private final RedisConnectionManager connectionManager;
     private final boolean ownsConnectionManager;
     private final LuaScriptManager scriptManager;
     private final BullScripts bullScripts;
+    private final io.oxmq.lua.ExtensionScripts extensionScripts;
     private final JobSerializer serializer;
     private final OxmqMetrics metrics;
     private final RateLimiter rateLimiter;
@@ -85,6 +91,12 @@ public class OxmqWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
     private StalledJobSentinel stalledJobSentinel;
+    private java.util.concurrent.ScheduledExecutorService timeoutWatchdog;
+    private final Map<String, Long> jobTimeoutsMs;
+    private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
+    private io.lettuce.core.pubsub.RedisPubSubListener<String, String> controlListener;
+    private final byte[] defaultWorkerOptsBytes;
+    private final io.oxmq.model.JobContext workerJobContext;
 
     @FunctionalInterface
     public interface CustomBackoffStrategy<T> {
@@ -109,7 +121,13 @@ public class OxmqWorker<T> implements Worker<T> {
         this.queueKeys = new QueueKeys(builder.prefix, queueName);
         this.prefix = this.queueKeys.getQualifiedName();
         this.workerId = "worker:" + UUID.randomUUID();
-        this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
+        if (builder.processor != null) {
+            this.processor = builder.processor;
+        } else if (builder.reactiveProcessor != null) {
+            this.processor = job -> awaitReactiveCompletion(job, builder.reactiveProcessor.process(job));
+        } else {
+            throw new NullPointerException("Either processor or reactiveProcessor must be provided");
+        }
         this.payloadClass = builder.payloadClass;
         this.concurrency = Math.max(1, builder.concurrency);
         this.useVirtualThreads = builder.useVirtualThreads;
@@ -119,11 +137,15 @@ public class OxmqWorker<T> implements Worker<T> {
         this.pollIntervalMs = builder.pollIntervalMs;
         this.maxStalledCount = builder.maxStalledCount;
         this.maxStartedAttempts = builder.maxStartedAttempts;
+        this.defaultJobTimeoutMs = builder.defaultJobTimeoutMs;
+        this.jobTimeoutsMs = Map.copyOf(builder.jobTimeoutsMs);
+        this.groupConcurrency = Math.max(0, builder.groupConcurrency);
         this.ownsConnectionManager = builder.ownsConnectionManager;
 
         this.connectionManager = Objects.requireNonNull(builder.connectionManager, "connectionManager must not be null");
         this.scriptManager = builder.scriptManager != null ? builder.scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
+        this.extensionScripts = new io.oxmq.lua.ExtensionScripts(this.scriptManager);
         this.serializer = builder.serializer != null ? builder.serializer : new JacksonJobSerializer();
         this.metrics = builder.metrics != null ? builder.metrics : new OxmqMetrics();
         this.interceptors = builder.interceptors != null && !builder.interceptors.isEmpty()
@@ -148,6 +170,167 @@ public class OxmqWorker<T> implements Worker<T> {
         }
 
         this.concurrencySemaphore = new Semaphore(concurrency);
+
+        Map<String, Object> wOpts = new HashMap<>(4);
+        wOpts.put("token", workerId);
+        wOpts.put("lockDuration", (int) lockDurationMs);
+        wOpts.put("name", workerId);
+        this.defaultWorkerOptsBytes = BullMsgPack.pack(wOpts);
+
+        this.workerJobContext = new io.oxmq.model.JobContext() {
+            @Override
+            public void updateData(String jobId, Object newData) {
+                try {
+                    String serialized = serializer.serialize(newData);
+                    bullScripts.updateData(connectionManager.getBinaryConnection(), queueKeys, jobId, serialized);
+                } catch (Exception e) {
+                    log.warn("Failed to update data for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                }
+            }
+
+            @Override
+            public void updateProgress(String jobId, int percentage, Object payload) {
+                try {
+                    bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+                    ActiveExecution<T> active = activeExecutions.get(jobId);
+                    if (active != null) {
+                        emitProgress(active.job, payload != null ? payload : percentage);
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to sync progress for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public void addLog(String jobId, String msg) {
+                try {
+                    bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
+                } catch (Exception e) {
+                    log.warn("Failed to append log for job {}", jobId, e);
+                }
+            }
+
+            @Override
+            public boolean clearLogs(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Long del = sync.del(queueKeys.toJobLogsKey(jobId));
+                    return del != null && del > 0;
+                } catch (Exception e) {
+                    log.warn("Failed to clear logs for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                    return false;
+                }
+            }
+
+            @Override
+            public void saveCheckpoint(String jobId, String step, Object state) {
+                try {
+                    String json = serializer.serialize(state);
+                    ActiveExecution<T> active = activeExecutions.get(jobId);
+                    if (active != null) {
+                        active.job.setCheckpointJson(json);
+                        active.job.setCheckpointStep(step);
+                    }
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    if (step != null && !step.isBlank()) {
+                        sync.hset(jobKey, Map.of("checkpoint", json, "checkpoint_step", step));
+                    } else {
+                        sync.hset(jobKey, "checkpoint", json);
+                    }
+                    log.debug("Saved checkpoint for job {} [step: {}] in queue {}", jobId, step, queueName);
+                } catch (Exception e) {
+                    log.warn("Failed to persist checkpoint for job {} in queue {}: {}", jobId, queueName, e.getMessage());
+                }
+            }
+
+            @Override
+            public void spawnChildren(String jobId, java.util.List<io.oxmq.model.FlowJob> children) {
+                if (children == null || children.isEmpty()) return;
+                try {
+                    StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+                    String parentKey = queueKeys.toJobKey(jobId);
+                    Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
+
+                    for (io.oxmq.model.FlowJob child : children) {
+                        JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
+                        Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
+                        childOptsMap.put("parentKey", parentKey);
+                        childOptsMap.put("parent", parentObj);
+
+                        String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
+                        io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
+                                ? queueKeys
+                                : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
+                        String childData = serializer.serialize(child.getData());
+                        long nowTs = System.currentTimeMillis();
+
+                        bullScripts.addStandardJob(binConn, childKeys, "", child.getName(), childData, childOptsMap, nowTs);
+                    }
+
+                    int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
+                    log.debug("Moved parent job {} to waiting-children: result code {}", jobId, moveRes);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
+                }
+                throw new io.oxmq.exception.WaitingChildrenException();
+            }
+
+            @Override
+            public io.oxmq.model.JobDependencies getDependencies(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    Set<String> unprocessed = sync.smembers(jobKey + ":dependencies");
+                    Map<String, String> processed = sync.hgetall(jobKey + ":processed");
+                    Map<String, String> failed = sync.hgetall(jobKey + ":failed");
+                    return new io.oxmq.model.JobDependencies(
+                            jobId,
+                            unprocessed != null ? new ArrayList<>(unprocessed) : Collections.emptyList(),
+                            processed != null ? processed : Collections.emptyMap(),
+                            failed != null ? failed : Collections.emptyMap()
+                    );
+                } catch (Exception e) {
+                    return new io.oxmq.model.JobDependencies(jobId, Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+                }
+            }
+
+            @Override
+            public Map<String, Object> getChildrenValues(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+                    if (childValsRaw == null || childValsRaw.isEmpty()) {
+                        childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+                    }
+                    if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                        Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
+                        for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                            try {
+                                childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                            } catch (Exception ex) {
+                                childVals.put(entry.getKey(), entry.getValue());
+                            }
+                        }
+                        return childVals;
+                    }
+                } catch (Exception e) {
+                    log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
+                }
+                return null;
+            }
+
+            @Override
+            public Map<String, String> getIgnoredChildrenFailures(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
+                    return failures != null ? failures : Map.of();
+                } catch (Exception e) {
+                    return Map.of();
+                }
+            }
+        };
     }
 
     public static <T> Builder<T> builder() {
@@ -171,12 +354,45 @@ public class OxmqWorker<T> implements Worker<T> {
             this.lockExtender = new LockExtender(connectionManager.getBinaryConnection(), bullScripts,
                     queueKeys, workerId, lockDurationMs);
 
+            this.timeoutWatchdog = io.oxmq.watchdog.WatchdogScheduler.sharedScheduler();
+
             this.stalledJobSentinel = new StalledJobSentinel(connectionManager.getBinaryConnection(),
                     bullScripts, queueKeys, metrics, lockDurationMs, maxStalledCount);
 
             this.pollerThread = new Thread(this::pollLoop, "oxmq-poller-" + queueName);
             this.pollerThread.setDaemon(true);
             this.pollerThread.start();
+
+            startControlListener();
+        }
+    }
+
+    private void startControlListener() {
+        try {
+            this.controlPubSubConn = connectionManager.getPubSubConnection();
+            this.controlListener = new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
+                @Override
+                public void message(String channel, String message) {
+                    if (channel != null && channel.equals(queueKeys.toKey("control"))
+                            && message != null && message.startsWith("CANCEL:")) {
+                        String[] parts = message.split(":", 3);
+                        if (parts.length >= 2) {
+                            String targetJobId = parts[1];
+                            String cancelReason = parts.length >= 3 ? parts[2] : "Cluster cancellation requested";
+                            if (isJobActive(targetJobId)) {
+                                log.info("Received cluster-wide CANCEL for active job [id: {}] on queue {}: {}",
+                                        targetJobId, queueName, cancelReason);
+                                cancelJob(targetJobId, cancelReason);
+                            }
+                        }
+                    }
+                }
+            };
+            this.controlPubSubConn.addListener(this.controlListener);
+            this.controlPubSubConn.sync().subscribe(queueKeys.toKey("control"));
+            log.debug("OxMQ Worker [{}] subscribed to control channel {}", workerId, queueKeys.toKey("control"));
+        } catch (Exception e) {
+            log.warn("Failed to subscribe to control channel for queue {}: {}", queueName, e.getMessage());
         }
     }
 
@@ -201,8 +417,26 @@ public class OxmqWorker<T> implements Worker<T> {
                 }
 
                 long now = System.currentTimeMillis();
-                List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
-                        (int) lockDurationMs, null, workerId, now);
+                List<Object> rawResult;
+                if (groupConcurrency > 0) {
+                    rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                            lockDurationMs, groupConcurrency, now);
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                    }
+                } else {
+                    rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                        List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                                lockDurationMs, groupConcurrency, now);
+                        if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                                && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                            rawResult = groupResult;
+                        }
+                    }
+                }
 
                 if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
                     concurrencySemaphore.release();
@@ -228,9 +462,7 @@ public class OxmqWorker<T> implements Worker<T> {
 
                 @SuppressWarnings("unchecked")
                 List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                Map<String, String> fields = parseHashFields(hashFlat);
-
-                Job<T> job = buildJobFromFields(jobId, fields);
+                Job<T> job = buildJobFromFlatList(jobId, hashFlat);
                 lockExtender.registerJob(jobId);
 
                 if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
@@ -268,6 +500,26 @@ public class OxmqWorker<T> implements Worker<T> {
         long startTime = System.nanoTime();
         activeExecutions.put(job.getId(), new ActiveExecution<>(job, Thread.currentThread()));
         emitActive(job);
+
+        long effectiveTimeoutMs = job.getOpts() != null && job.getOpts().getJobTimeoutMs() > 0
+                ? job.getOpts().getJobTimeoutMs()
+                : (jobTimeoutsMs.containsKey(job.getName()) ? jobTimeoutsMs.get(job.getName()) : defaultJobTimeoutMs);
+
+        java.util.concurrent.ScheduledFuture<?> timeoutFuture = null;
+        if (effectiveTimeoutMs > 0 && timeoutWatchdog != null && !timeoutWatchdog.isShutdown()) {
+            final Thread jobThread = Thread.currentThread();
+            timeoutFuture = timeoutWatchdog.schedule(() -> {
+                if (activeExecutions.containsKey(job.getId())) {
+                    String timeoutReason = "Job execution timed out after " + effectiveTimeoutMs + " ms";
+                    log.warn("Job {} [id: {}] timed out after {} ms on queue {}",
+                            job.getName(), job.getId(), effectiveTimeoutMs, queueName);
+                    job.setCancelled(true, timeoutReason);
+                    job.getCancellationToken().cancel(timeoutReason);
+                    jobThread.interrupt();
+                }
+            }, effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+        }
+
         try {
             // 1. Interceptor pre-processing
             if (!interceptors.isEmpty()) {
@@ -287,13 +539,20 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             log.debug("Executing job {} [id: {}] on queue {}", job.getName(), job.getId(), queueName);
-            Object result = processor.process(job);
+            Object rawResult = processor.process(job);
+            Object result = rawResult;
+            if (rawResult instanceof java.util.concurrent.Flow.Publisher<?> publisher) {
+                result = awaitReactiveCompletion(job, publisher);
+            } else if (rawResult instanceof org.reactivestreams.Publisher<?> rsPublisher) {
+                result = awaitReactiveCompletion(job, org.reactivestreams.FlowAdapters.toFlowPublisher(rsPublisher));
+            } else if (rawResult instanceof java.util.concurrent.Future<?> future) {
+                result = awaitFutureCompletion(job, future);
+            }
 
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
             completeJob(job, result, duration);
-            metrics.recordJobCompleted(queueName, duration);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
             // 2. Interceptor post-processing
@@ -308,12 +567,17 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
         } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
+            Thread.interrupted(); // Clear interrupted flag so Redis cleanup commands can complete
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
             String reason = job.getCancelReason() != null ? job.getCancelReason() : (ie.getMessage() != null ? ie.getMessage() : "Job cancelled");
             job.setCancelled(true, reason);
-            failJob(job, ie, duration);
-            metrics.recordJobFailed(queueName, duration, "JobCancelledException");
+            Throwable finalError = ie;
+            if (reason.toLowerCase().contains("timed out") || ie instanceof io.oxmq.exception.JobTimeoutException) {
+                finalError = new io.oxmq.exception.JobTimeoutException(reason, Duration.ofMillis(effectiveTimeoutMs));
+            }
+            failJob(job, finalError, duration);
+            metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
             log.info("Job {} [id: {}] was cancelled on queue {}: {}", job.getName(), job.getId(), queueName, reason);
         } catch (io.oxmq.exception.RateLimitException rle) {
             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
@@ -330,14 +594,20 @@ public class OxmqWorker<T> implements Worker<T> {
         } catch (io.oxmq.exception.WaitingChildrenException wce) {
             log.debug("Job {} [id: {}] moved to waiting-children state via WaitingChildrenException", job.getName(), job.getId());
         } catch (Throwable t) {
+            Thread.interrupted(); // Clear interrupted flag if set
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
+
+            Throwable finalError = t;
+            if (job.isCancelled() && job.getCancelReason() != null && job.getCancelReason().toLowerCase().contains("timed out")) {
+                finalError = new io.oxmq.exception.JobTimeoutException(job.getCancelReason(), Duration.ofMillis(effectiveTimeoutMs));
+            }
 
             boolean handledByInterceptor = false;
             if (!interceptors.isEmpty()) {
                 for (io.oxmq.interceptor.JobInterceptor interceptor : interceptors) {
                     try {
-                        io.oxmq.interceptor.ErrorDecision decision = interceptor.onError(job, t, duration);
+                        io.oxmq.interceptor.ErrorDecision decision = interceptor.onError(job, finalError, duration);
                         if (decision != null && (decision.isCooldown() || decision.isDelay())) {
                             bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
                                     job.getId(), workerId, decision.delayMs(), decision.skipAttempt());
@@ -353,14 +623,114 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             if (!handledByInterceptor) {
-                failJob(job, t, duration);
-                metrics.recordJobFailed(queueName, duration, t.getClass().getSimpleName());
-                log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, t.toString(), t);
+                failJob(job, finalError, duration);
+                metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
+                log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, finalError.toString(), finalError);
             }
         } finally {
+            if (timeoutFuture != null) {
+                timeoutFuture.cancel(false);
+            }
             activeExecutions.remove(job.getId());
             lockExtender.unregisterJob(job.getId());
             concurrencySemaphore.release();
+        }
+    }
+
+    private Object awaitFutureCompletion(Job<T> job, java.util.concurrent.Future<?> future) throws Exception {
+        if (future == null) {
+            return null;
+        }
+        job.getCancellationToken().onCancel(reason -> future.cancel(true));
+        try {
+            return future.get();
+        } catch (java.util.concurrent.ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof Exception ex) {
+                throw ex;
+            } else if (cause instanceof Error err) {
+                throw err;
+            } else {
+                throw new RuntimeException(cause);
+            }
+        }
+    }
+
+    private Object awaitReactiveCompletion(Job<T> job, java.util.concurrent.Flow.Publisher<?> publisher) throws Exception {
+        if (publisher == null) {
+            return null;
+        }
+
+        java.util.concurrent.CompletableFuture<Object> completionFuture = new java.util.concurrent.CompletableFuture<>();
+        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Flow.Subscription> subscriptionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Object> lastItemRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+        publisher.subscribe(new java.util.concurrent.Flow.Subscriber<Object>() {
+            @Override
+            public void onSubscribe(java.util.concurrent.Flow.Subscription subscription) {
+                subscriptionRef.set(subscription);
+                job.getCancellationToken().onCancel(reason -> {
+                    subscription.cancel();
+                    completionFuture.completeExceptionally(
+                            new io.oxmq.exception.JobCancelledException(reason != null ? reason : "Cancelled"));
+                });
+                subscription.request(Long.MAX_VALUE);
+            }
+
+            @Override
+            public void onNext(Object item) {
+                lastItemRef.set(item);
+                if (item instanceof Number num) {
+                    try {
+                        job.updateProgress(num.intValue());
+                    } catch (Exception e) {
+                        log.debug("Failed to update progress from reactive emission for job {}: {}", job.getId(), e.getMessage());
+                    }
+                } else if (item != null) {
+                    try {
+                        if (item instanceof CharSequence seq) {
+                            try {
+                                int p = Integer.parseInt(seq.toString().trim());
+                                job.updateProgress(p);
+                                return;
+                            } catch (NumberFormatException ignored) {}
+                        }
+                        job.updateProgress(job.getProgress(), item);
+                    } catch (Exception e) {
+                        log.debug("Failed to checkpoint reactive payload for job {}: {}", job.getId(), e.getMessage());
+                    }
+                }
+            }
+
+            @Override
+            public void onError(Throwable throwable) {
+                completionFuture.completeExceptionally(throwable);
+            }
+
+            @Override
+            public void onComplete() {
+                completionFuture.complete(lastItemRef.get());
+            }
+        });
+
+        try {
+            return completionFuture.get();
+        } catch (InterruptedException ie) {
+            java.util.concurrent.Flow.Subscription s = subscriptionRef.get();
+            if (s != null) {
+                s.cancel();
+            }
+            Thread.currentThread().interrupt();
+            throw ie;
+        } catch (java.util.concurrent.ExecutionException ee) {
+            Throwable cause = ee.getCause();
+            if (cause instanceof Exception ex) {
+                throw ex;
+            } else if (cause instanceof Error err) {
+                throw err;
+            } else {
+                throw new RuntimeException(cause);
+            }
         }
     }
 
@@ -369,6 +739,13 @@ public class OxmqWorker<T> implements Worker<T> {
         JobOptions opts = job.getOpts();
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 serializedResult, "returnvalue", "completed", workerId, false, opts != null ? opts.toMap() : Map.of());
+
+        String groupId = job.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+        }
+
+        metrics.recordJobCompleted(queueName, groupId, duration);
         emitCompleted(job, result);
     }
 
@@ -382,7 +759,9 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("delay", "delay"),
         Map.entry("priority", "priority"),
         Map.entry("attemptsMade", "attemptsMade"),
+        Map.entry("atm", "attemptsMade"),
         Map.entry("attemptsStarted", "attemptsStarted"),
+        Map.entry("ats", "attemptsStarted"),
         Map.entry("processedOn", "processedOn"),
         Map.entry("finishedOn", "finishedOn"),
         Map.entry("returnvalue", "returnvalue"),
@@ -390,10 +769,10 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("parentKey", "parentKey"),
         Map.entry("parent", "parent"),
         Map.entry("progress", "progress"),
-        Map.entry("rjk", "rjk"),
+        Map.entry("rjk", "repeatJobKey"),
+        Map.entry("repeatJobKey", "repeatJobKey"),
         Map.entry("deid", "deid"),
-        Map.entry("pb", "pb"),
-        Map.entry("ats", "ats")
+        Map.entry("pb", "parentKey")
     );
 
     private void failJob(Job<T> job, Throwable error, Duration duration) {
@@ -404,11 +783,14 @@ public class OxmqWorker<T> implements Worker<T> {
             stackTrace = stackTrace.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
         }
 
+        boolean isTimeout = (error instanceof io.oxmq.exception.JobTimeoutException) ||
+                            (job.getCancelReason() != null && job.getCancelReason().toLowerCase().contains("timed out"));
+
         boolean isUnrecoverable = (error instanceof UnrecoverableError) ||
                                   (error.getCause() instanceof UnrecoverableError) ||
-                                  (error instanceof io.oxmq.exception.JobCancelledException) ||
-                                  (error instanceof InterruptedException) ||
-                                  job.isCancelled() ||
+                                  (!isTimeout && (error instanceof io.oxmq.exception.JobCancelledException)) ||
+                                  (!isTimeout && (error instanceof InterruptedException)) ||
+                                  (!isTimeout && job.isCancelled()) ||
                                   job.isDiscarded();
 
         if (maxStartedAttempts > 0 && job.getAttemptsStarted() >= maxStartedAttempts) {
@@ -420,7 +802,9 @@ public class OxmqWorker<T> implements Worker<T> {
         int currentAttempts = job.getAttemptsMade() + 1;
 
         String failedReasonValue;
-        if (job.isCancelled()) {
+        if (isTimeout) {
+            failedReasonValue = job.getCancelReason() != null ? job.getCancelReason() : error.getMessage();
+        } else if (job.isCancelled()) {
             failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
         } else {
             failedReasonValue = stackTrace;
@@ -429,6 +813,11 @@ public class OxmqWorker<T> implements Worker<T> {
         Map<String, Object> fieldsToUpdate = new HashMap<>();
         fieldsToUpdate.put("failedReason", failedReasonValue);
         fieldsToUpdate.put("stacktrace", serializer.serialize(List.of(stackTrace)));
+
+        String groupId = job.getGroupKey();
+        if (groupId != null && !groupId.isBlank()) {
+            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+        }
 
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
             BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
@@ -465,20 +854,53 @@ public class OxmqWorker<T> implements Worker<T> {
         emitFailed(job, error);
     }
 
-    private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
-        String jobName = fields.getOrDefault("name", "unnamed");
-        String dataStr = fields.get("data");
-        String optsStr = fields.get("opts");
-        String attemptsStr = fields.get("attemptsMade");
-        String attemptsStartedStr = fields.get("attemptsStarted");
-        String timestampStr = fields.get("timestamp");
-        String parentKeyStr = fields.get("parentKey");
+    @SuppressWarnings("unchecked")
+    private Job<T> buildJobFromFlatList(String jobId, List<?> flatList) {
+        String jobName = "unnamed";
+        String dataStr = null;
+        String optsStr = null;
+        String attemptsStr = null;
+        String attemptsStartedStr = null;
+        String timestampStr = null;
+        String parentKeyStr = null;
+        String groupKeyStr = null;
+        String checkpointStr = null;
+        String checkpointStepStr = null;
+        String rjkStr = null;
+
+        if (flatList != null && !flatList.isEmpty()) {
+            for (int i = 0; i < flatList.size() - 1; i += 2) {
+                String canonicalKey = matchCanonicalKey(flatList.get(i));
+                if (canonicalKey != null) {
+                    String val = toUtf8String(flatList.get(i + 1));
+                    switch (canonicalKey) {
+                        case "name" -> { if (val != null) jobName = val; }
+                        case "data" -> dataStr = val;
+                        case "opts" -> optsStr = val;
+                        case "attemptsMade" -> attemptsStr = val;
+                        case "attemptsStarted" -> attemptsStartedStr = val;
+                        case "timestamp" -> timestampStr = val;
+                        case "parentKey" -> parentKeyStr = val;
+                        case "groupKey" -> groupKeyStr = val;
+                        case "checkpoint" -> checkpointStr = val;
+                        case "checkpoint_step" -> checkpointStepStr = val;
+                        case "rjk", "repeatJobKey" -> rjkStr = val;
+                        default -> {}
+                    }
+                }
+            }
+        }
 
         T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
-        JobOptions opts = serializer.deserialize(optsStr, JobOptions.class);
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
         if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
         if (timestampStr != null) {
@@ -488,63 +910,61 @@ public class OxmqWorker<T> implements Worker<T> {
             metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
+        if (rjkStr != null && !rjkStr.isBlank()) {
+            job.setRepeatJobKey(rjkStr);
+        }
+
+        job.setContext(workerJobContext);
+        return job;
+    }
+
+    private Job<T> buildJobFromFields(String jobId, Map<String, String> fields) {
+        String jobName = fields.getOrDefault("name", "unnamed");
+        String dataStr = fields.get("data");
+        String optsStr = fields.get("opts");
+        String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
+        String attemptsStartedStr = fields.get("attemptsStarted");
+        if (attemptsStartedStr == null) {
+            attemptsStartedStr = fields.get("ats");
+        }
+        String timestampStr = fields.get("timestamp");
+        String parentKeyStr = fields.get("parentKey");
+
+        T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
+
+        Job<T> job = new Job<>(jobId, jobName, data, opts);
+        job.setQueueName(queueName);
+        String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        }
+        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (timestampStr != null) {
+            long ts = Long.parseLong(timestampStr);
+            job.setTimestamp(ts);
+            long waitTimeMs = System.currentTimeMillis() - ts;
+            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+        }
+        if (parentKeyStr != null) job.setParentKey(parentKeyStr);
+        String checkpointStr = fields.get("checkpoint");
+        String checkpointStepStr = fields.get("checkpoint_step");
+        if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
+        if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
         String rjkStr = fields.get("rjk");
         if (rjkStr != null && !rjkStr.isBlank()) {
             job.setRepeatJobKey(rjkStr);
         }
 
-        // Memory optimization: lazily load children values only when requested by processor
-        job.setChildrenValuesSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
-                if (childValsRaw == null || childValsRaw.isEmpty()) {
-                    childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
-                }
-                if (childValsRaw != null && !childValsRaw.isEmpty()) {
-                    Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
-                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
-                        try {
-                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
-                        } catch (Exception ex) {
-                            childVals.put(entry.getKey(), entry.getValue());
-                        }
-                    }
-                    return childVals;
-                }
-            } catch (Exception e) {
-                log.debug("No childrenValues or failed to fetch childrenValues for job {}", jobId, e);
-            }
-            return null;
-        });
-
-        job.setIgnoredChildrenFailuresSupplier(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
-                return failures != null ? failures : Map.of();
-            } catch (Exception e) {
-                return Map.of();
-            }
-        });
-
-        job.setProgressUpdater((percentage, payload) -> {
-            try {
-                bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
-                emitProgress(job, payload != null ? payload : percentage);
-            } catch (Exception e) {
-                log.warn("Failed to sync progress for job {}", jobId, e);
-            }
-        });
-
-        job.setLogAppender(msg -> {
-            try {
-                bullScripts.addLog(connectionManager.getBinaryConnection(), queueKeys, jobId, msg, 0);
-            } catch (Exception e) {
-                log.warn("Failed to append log for job {}", jobId, e);
-            }
-        });
-
+        job.setContext(workerJobContext);
         return job;
     }
 
@@ -555,14 +975,76 @@ public class OxmqWorker<T> implements Worker<T> {
         int expectedEntries = flatList.size() / 2;
         Map<String, String> map = new HashMap<>(Math.max(8, (int) (expectedEntries / 0.75f) + 1));
         for (int i = 0; i < flatList.size() - 1; i += 2) {
-            String key = toUtf8String(flatList.get(i));
-            if (key != null) {
-                String canonicalKey = CANONICAL_KEYS.getOrDefault(key, key);
+            String canonicalKey = matchCanonicalKey(flatList.get(i));
+            if (canonicalKey != null) {
                 String val = toUtf8String(flatList.get(i + 1));
                 map.put(canonicalKey, val);
             }
         }
         return map;
+    }
+
+    static String matchCanonicalKey(Object obj) {
+        if (obj instanceof byte[] b) {
+            return matchCanonicalBytes(b);
+        }
+        return obj != null ? CANONICAL_KEYS.getOrDefault(obj.toString(), obj.toString()) : null;
+    }
+
+    static String matchCanonicalBytes(byte[] b) {
+        int len = b.length;
+        switch (len) {
+            case 2:
+                if (b[0] == 'p' && b[1] == 'b') return "parentKey";
+                break;
+            case 3:
+                if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "repeatJobKey";
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "attemptsStarted";
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 'm') return "attemptsMade";
+                break;
+            case 4:
+                if (b[0] == 'n' && b[1] == 'a' && b[2] == 'm' && b[3] == 'e') return "name";
+                if (b[0] == 'd' && b[1] == 'a' && b[2] == 't' && b[3] == 'a') return "data";
+                if (b[0] == 'o' && b[1] == 'p' && b[2] == 't' && b[3] == 's') return "opts";
+                if (b[0] == 'd' && b[1] == 'e' && b[2] == 'i' && b[3] == 'd') return "deid";
+                break;
+            case 5:
+                if (b[0] == 'd' && b[1] == 'e' && b[2] == 'l' && b[3] == 'a' && b[4] == 'y') return "delay";
+                break;
+            case 6:
+                if (b[0] == 'p' && b[1] == 'a' && b[2] == 'r' && b[3] == 'e' && b[4] == 'n' && b[5] == 't') return "parent";
+                break;
+            case 8:
+                if (b[0] == 'p' && b[1] == 'r') {
+                    if (b[2] == 'i' && b[3] == 'o' && b[4] == 'r' && b[5] == 'i' && b[6] == 't' && b[7] == 'y') return "priority";
+                    if (b[2] == 'o' && b[3] == 'g' && b[4] == 'r' && b[5] == 'e' && b[6] == 's' && b[7] == 's') return "progress";
+                }
+                if (b[0] == 'g' && b[1] == 'r' && b[2] == 'o' && b[3] == 'u' && b[4] == 'p' && b[5] == 'K' && b[6] == 'e' && b[7] == 'y') return "groupKey";
+                break;
+            case 9:
+                if (b[0] == 't' && b[1] == 'i' && b[2] == 'm' && b[3] == 'e' && b[4] == 's' && b[5] == 't' && b[6] == 'a' && b[7] == 'm' && b[8] == 'p') return "timestamp";
+                if (b[0] == 'p' && b[1] == 'a' && b[2] == 'r' && b[3] == 'e' && b[4] == 'n' && b[5] == 't' && b[6] == 'K' && b[7] == 'e' && b[8] == 'y') return "parentKey";
+                break;
+            case 10:
+                if (b[0] == 'f' && b[1] == 'i' && b[2] == 'n' && b[3] == 'i' && b[4] == 's' && b[5] == 'h' && b[6] == 'e' && b[7] == 'd' && b[8] == 'O' && b[9] == 'n') return "finishedOn";
+                if (b[0] == 'c' && b[1] == 'h' && b[2] == 'e' && b[3] == 'c' && b[4] == 'k' && b[5] == 'p' && b[6] == 'o' && b[7] == 'i' && b[8] == 'n' && b[9] == 't') return "checkpoint";
+                break;
+            case 11:
+                if (b[0] == 'p' && b[1] == 'r' && b[2] == 'o' && b[3] == 'c' && b[4] == 'e' && b[5] == 's' && b[6] == 's' && b[7] == 'e' && b[8] == 'd' && b[9] == 'O' && b[10] == 'n') return "processedOn";
+                if (b[0] == 'r' && b[1] == 'e' && b[2] == 't' && b[3] == 'u' && b[4] == 'r' && b[5] == 'n' && b[6] == 'v' && b[7] == 'a' && b[8] == 'l' && b[9] == 'u' && b[10] == 'e') return "returnvalue";
+                break;
+            case 12:
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'M' && b[9] == 'a' && b[10] == 'd' && b[11] == 'e') return "attemptsMade";
+                if (b[0] == 'f' && b[1] == 'a' && b[2] == 'i' && b[3] == 'l' && b[4] == 'e' && b[5] == 'd' && b[6] == 'R' && b[7] == 'e' && b[8] == 'a' && b[9] == 's' && b[10] == 'o' && b[11] == 'n') return "failedReason";
+                if (b[0] == 'r' && b[1] == 'e' && b[2] == 'p' && b[3] == 'e' && b[4] == 'a' && b[5] == 't' && b[6] == 'J' && b[7] == 'o' && b[8] == 'b' && b[9] == 'K' && b[10] == 'e' && b[11] == 'y') return "repeatJobKey";
+                break;
+            case 15:
+                if (b[0] == 'a' && b[1] == 't' && b[2] == 't' && b[3] == 'e' && b[4] == 'm' && b[5] == 'p' && b[6] == 't' && b[7] == 's' && b[8] == 'S' && b[9] == 't' && b[10] == 'a' && b[11] == 'r' && b[12] == 't' && b[13] == 'e' && b[14] == 'd') return "attemptsStarted";
+                if (b[0] == 'c' && b[1] == 'h' && b[2] == 'e' && b[3] == 'c' && b[4] == 'k' && b[5] == 'p' && b[6] == 'o' && b[7] == 'i' && b[8] == 'n' && b[9] == 't' && b[10] == '_' && b[11] == 's' && b[12] == 't' && b[13] == 'e' && b[14] == 'p') return "checkpoint_step";
+                break;
+        }
+        String fallback = new String(b, StandardCharsets.UTF_8);
+        return CANONICAL_KEYS.getOrDefault(fallback, fallback);
     }
 
     private String toUtf8String(Object obj) {
@@ -573,7 +1055,7 @@ public class OxmqWorker<T> implements Worker<T> {
     }
 
     private void waitForMarkerOrSleep(StatefulRedisConnection<String, byte[]> pollerConn) {
-        double blockTimeout = Math.max(0.05, pollIntervalMs / 1000.0);
+        double blockTimeout = Math.max(2.0, Math.min(5.0, pollIntervalMs / 1000.0 * 40));
         try {
             pollerConn.sync().bzpopmin(blockTimeout, queueKeys.getKey("marker"));
         } catch (Exception e) {
@@ -586,81 +1068,79 @@ public class OxmqWorker<T> implements Worker<T> {
     }
 
     private void rescheduleJobScheduler(String schedulerId, Job<T> job) {
-        dispatcherExecutor.submit(() -> {
-            try {
-                RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                String schedulerKey = queueKeys.toKey("repeat:" + schedulerId);
-                Map<String, String> schedData = sync.hgetall(schedulerKey);
-                if (schedData == null || schedData.isEmpty()) {
-                    return;
-                }
-
-                long now = System.currentTimeMillis();
-                String endDateStr = schedData.get("endDate");
-                if (endDateStr != null && !endDateStr.isBlank()) {
-                    try {
-                        long endDate = Long.parseLong(endDateStr);
-                        if (now > endDate) {
-                            log.debug("JobScheduler {} reached endDate {}, skipping reschedule", schedulerId, endDate);
-                            return;
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-
-                String limitStr = schedData.get("limit");
-                String icStr = schedData.get("ic");
-                if (limitStr != null && !limitStr.isBlank() && icStr != null && !icStr.isBlank()) {
-                    try {
-                        int limit = Integer.parseInt(limitStr);
-                        int ic = Integer.parseInt(icStr);
-                        if (ic >= limit) {
-                            log.debug("JobScheduler {} reached iteration limit ({}/{}), skipping reschedule", schedulerId, ic, limit);
-                            return;
-                        }
-                    } catch (NumberFormatException ignored) {}
-                }
-
-                String everyStr = schedData.get("every");
-                String pattern = schedData.get("pattern");
-                String tz = schedData.get("tz");
-                String name = schedData.getOrDefault("name", job.getName());
-                String dataJson = schedData.getOrDefault("data", "{}");
-                String optsJson = schedData.get("opts");
-                @SuppressWarnings("unchecked")
-                Map<String, Object> optsMap = (optsJson != null && !optsJson.isBlank())
-                        ? serializer.deserialize(optsJson, Map.class)
-                        : Map.of();
-
-                Long every = null;
-                long nextMillis;
-
-                if (everyStr != null && !everyStr.isBlank()) {
-                    every = Long.parseLong(everyStr);
-                    nextMillis = now + every;
-                } else if (pattern != null && !pattern.isBlank()) {
-                    nextMillis = io.oxmq.util.CronEvaluator.parse(pattern).nextExecution(now, tz);
-                } else {
-                    return;
-                }
-
-                bullScripts.addJobScheduler(
-                        connectionManager.getBinaryConnection(),
-                        queueKeys,
-                        schedulerId,
-                        nextMillis,
-                        name,
-                        dataJson,
-                        optsMap,
-                        every,
-                        pattern,
-                        tz
-                );
-                log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
-                        schedulerId, nextMillis, Math.max(0, nextMillis - now));
-            } catch (Exception e) {
-                log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            String schedulerKey = queueKeys.toKey("repeat:" + schedulerId);
+            Map<String, String> schedData = sync.hgetall(schedulerKey);
+            if (schedData == null || schedData.isEmpty()) {
+                return;
             }
-        });
+
+            long now = System.currentTimeMillis();
+            String endDateStr = schedData.get("endDate");
+            if (endDateStr != null && !endDateStr.isBlank()) {
+                try {
+                    long endDate = Long.parseLong(endDateStr);
+                    if (now > endDate) {
+                        log.debug("JobScheduler {} reached endDate {}, skipping reschedule", schedulerId, endDate);
+                        return;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String limitStr = schedData.get("limit");
+            String icStr = schedData.get("ic");
+            if (limitStr != null && !limitStr.isBlank() && icStr != null && !icStr.isBlank()) {
+                try {
+                    int limit = Integer.parseInt(limitStr);
+                    int ic = Integer.parseInt(icStr);
+                    if (ic >= limit) {
+                        log.debug("JobScheduler {} reached iteration limit ({}/{}), skipping reschedule", schedulerId, ic, limit);
+                        return;
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+
+            String everyStr = schedData.get("every");
+            String pattern = schedData.get("pattern");
+            String tz = schedData.get("tz");
+            String name = schedData.getOrDefault("name", job.getName());
+            String dataJson = schedData.getOrDefault("data", "{}");
+            String optsJson = schedData.get("opts");
+            @SuppressWarnings("unchecked")
+            Map<String, Object> optsMap = (optsJson != null && !optsJson.isBlank())
+                    ? serializer.deserialize(optsJson, Map.class)
+                    : Map.of();
+
+            Long every = null;
+            long nextMillis;
+
+            if (everyStr != null && !everyStr.isBlank()) {
+                every = Long.parseLong(everyStr);
+                nextMillis = now + every;
+            } else if (pattern != null && !pattern.isBlank()) {
+                nextMillis = io.oxmq.util.CronEvaluator.parse(pattern).nextExecution(now, tz);
+            } else {
+                return;
+            }
+
+            bullScripts.addJobScheduler(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    schedulerId,
+                    nextMillis,
+                    name,
+                    dataJson,
+                    optsMap,
+                    every,
+                    pattern,
+                    tz
+            );
+            log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
+                    schedulerId, nextMillis, Math.max(0, nextMillis - now));
+        } catch (Exception e) {
+            log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
+        }
     }
 
     @Override
@@ -687,6 +1167,43 @@ public class OxmqWorker<T> implements Worker<T> {
     @Override
     public boolean isPaused() {
         return paused.get();
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster for the specified duration.
+     *
+     * @param groupId virtual group identifier
+     * @param duration duration to throttle
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, Duration duration) {
+        return rateLimitGroup(groupId, 1, duration);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window.
+     * Mirrors BullMQ Pro's setGroupRateLimit(groupId, max, duration).
+     *
+     * @param groupId  virtual group identifier
+     * @param maxJobs  maximum number of jobs allowed in the duration window
+     * @param duration duration of the window
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, int maxJobs, Duration duration) {
+        return rateLimitGroup(groupId, maxJobs, duration != null ? duration.toMillis() : 0);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window in milliseconds.
+     *
+     * @param groupId    virtual group identifier
+     * @param maxJobs    maximum number of jobs allowed in the duration window
+     * @param durationMs duration in milliseconds
+     * @return true if rate limit was applied
+     */
+    public boolean rateLimitGroup(String groupId, int maxJobs, long durationMs) {
+        return extensionScripts.setGroupRateLimit(connectionManager.getBinaryConnection(), queueKeys, groupId,
+                maxJobs, durationMs);
     }
 
     @Override
@@ -862,6 +1379,15 @@ public class OxmqWorker<T> implements Worker<T> {
                 lockExtender.close();
             }
 
+            if (controlPubSubConn != null) {
+                try {
+                    controlPubSubConn.sync().unsubscribe(queueKeys.toKey("control"));
+                    if (controlListener != null) {
+                        controlPubSubConn.removeListener(controlListener);
+                    }
+                } catch (Exception ignored) {}
+            }
+
             if (ownsConnectionManager && connectionManager != null) {
                 connectionManager.close();
             }
@@ -876,13 +1402,16 @@ public class OxmqWorker<T> implements Worker<T> {
         private RedisClient redisClient;
         private String redisUri;
         private JobProcessor<T, ?> processor;
+        private io.oxmq.reactive.ReactiveJobProcessor<T, ?> reactiveProcessor;
         private Class<T> payloadClass;
         private int concurrency = 20;
+        private int groupConcurrency = 0;
         private boolean useVirtualThreads = true;
         private ExecutorService customExecutor;
         private long lockDurationMs = 30_000;
         private long drainTimeoutMs = 10_000;
         private long pollIntervalMs = 50;
+        private long defaultJobTimeoutMs = 0;
         private int maxStalledCount = 2;
         private int maxStartedAttempts = 0;
         private int rateLimitMax = 0;
@@ -921,6 +1450,16 @@ public class OxmqWorker<T> implements Worker<T> {
             return this;
         }
 
+        public Builder<T> reactiveProcessor(io.oxmq.reactive.ReactiveJobProcessor<T, ?> reactiveProcessor) {
+            this.reactiveProcessor = reactiveProcessor;
+            return this;
+        }
+
+        public Builder<T> reactiveStreamsProcessor(io.oxmq.reactive.ReactiveStreamProcessor<T, ?> reactiveStreamsProcessor) {
+            this.reactiveProcessor = io.oxmq.reactive.ReactiveJobProcessor.from(reactiveStreamsProcessor);
+            return this;
+        }
+
         public Builder<T> payloadClass(Class<T> payloadClass) {
             this.payloadClass = payloadClass;
             return this;
@@ -928,6 +1467,11 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> concurrency(int concurrency) {
             this.concurrency = concurrency;
+            return this;
+        }
+
+        public Builder<T> groupConcurrency(int groupConcurrency) {
+            this.groupConcurrency = Math.max(0, groupConcurrency);
             return this;
         }
 
@@ -958,6 +1502,36 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> drainTimeoutMs(long drainTimeoutMs) {
             this.drainTimeoutMs = drainTimeoutMs;
+            return this;
+        }
+
+        public Builder<T> defaultJobTimeout(Duration defaultJobTimeout) {
+            this.defaultJobTimeoutMs = defaultJobTimeout != null ? defaultJobTimeout.toMillis() : 0;
+            return this;
+        }
+
+        public Builder<T> defaultJobTimeoutMs(long defaultJobTimeoutMs) {
+            this.defaultJobTimeoutMs = defaultJobTimeoutMs;
+            return this;
+        }
+
+        private final Map<String, Long> jobTimeoutsMs = new HashMap<>();
+
+        public Builder<T> jobTimeout(String jobName, Duration timeout) {
+            if (jobName != null && timeout != null) {
+                this.jobTimeoutsMs.put(jobName, timeout.toMillis());
+            }
+            return this;
+        }
+
+        public Builder<T> jobTimeouts(Map<String, Duration> timeouts) {
+            if (timeouts != null) {
+                timeouts.forEach((k, v) -> {
+                    if (k != null && v != null) {
+                        this.jobTimeoutsMs.put(k, v.toMillis());
+                    }
+                });
+            }
             return this;
         }
 

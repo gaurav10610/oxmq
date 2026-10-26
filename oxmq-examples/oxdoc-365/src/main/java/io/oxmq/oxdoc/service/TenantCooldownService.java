@@ -15,7 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * Distributed Multi-Tenant Quota & Cooldown Orchestrator.
+ * Distributed Multi-Tenant Quota &amp; Cooldown Orchestrator.
  * Powered natively by OxMQ's GroupRateLimiterPlugin, RateLimitSentinelPlugin, and PriorityQuotaGovernorPlugin.
  */
 @Service
@@ -166,7 +166,7 @@ public class TenantCooldownService {
     }
 
     /**
-     * Checks if available token bucket capacity is below the yield threshold (< 25%) via OxMQ PriorityQuotaGovernorPlugin.
+     * Checks if available token bucket capacity is below the yield threshold (&lt; 25%) via OxMQ PriorityQuotaGovernorPlugin.
      */
     public boolean checkHeadroomYield(String tenantId) {
         return governor.isYieldingActive(tenantId);

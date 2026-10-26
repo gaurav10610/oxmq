@@ -93,6 +93,134 @@ When cumulative payload bytes reach or exceed `maxBatchBytes`, the worker dispat
 
 ---
 
+## 🎯 Item-Level Granular Partial Failures (`job.setAsFailed`)
+
+In traditional batch workers, if a single record fails during processing (e.g. invalid document schema, third-party 400 Bad Request), throwing an exception causes the **entire batch of 100 jobs to fail and retry**, duplicating processing for the 99 records that succeeded.
+
+OxMQ introduces **Granular Item-Level Partial Failures**:
+
+```java
+@OxmqBatchListener(queue = "document-indexing", batchSize = 50)
+public void onDocumentBatch(List<Job<DocumentPayload>> batch) {
+    for (Job<DocumentPayload> job : batch) {
+        try {
+            indexDocument(job.getData());
+        } catch (ValidationException e) {
+            // Mark ONLY this specific job as failed!
+            // It will be recorded as FAILED in Redis with its stack trace.
+            job.setAsFailed(e);
+        }
+    }
+    // All non-failed jobs in the batch automatically succeed and complete!
+}
+```
+
+### Pure Java API
+
+```java
+OxmqBatchWorker<DocumentPayload> worker = OxmqBatchWorker.<DocumentPayload>builder()
+        .queueName("document-indexing")
+        .batchSize(50)
+        .processor(batch -> {
+            for (Job<DocumentPayload> job : batch) {
+                if (isCorrupt(job.getData())) {
+                    job.setAsFailed(new IllegalArgumentException("Corrupt document payload"));
+                } else {
+                    processItem(job.getData());
+                }
+            }
+            return "BATCH_PROCESSED";
+        })
+        .build();
+```
+
+When partial failures occur:
+- Jobs flagged with `job.setAsFailed(err)` are transitioned to `failed` state with the individual error message and truncated stack trace.
+- All other jobs in the batch are transitioned to `completed` state with the returned result.
+- Metrics record precise counts for completed vs failed items.
+
+---
+
+## ⏳ Batch Accumulation Buffering (`minBatchSize` & `batchTimeout`)
+
+When background job arrival rates fluctuate, popping batches immediately can result in tiny batches of 1 or 2 items during quiet periods, defeating the purpose of bulk operations.
+
+OxMQ provides built-in **Accumulation Buffering**:
+
+```java
+@OxmqBatchListener(
+    queue = "audit-events",
+    batchSize = 100,           // Maximum batch size target
+    minBatchSize = 10,         // Wait until at least 10 jobs arrive
+    batchTimeoutMs = 250       // BUT dispatch early if 250ms elapsed
+)
+public void onAuditBatch(List<Job<AuditEvent>> batch) {
+    bulkInsertToClickHouse(batch);
+}
+```
+
+Or programmatically:
+
+```java
+OxmqBatchWorker<AuditEvent> worker = OxmqBatchWorker.<AuditEvent>builder()
+        .queueName("audit-events")
+        .batchSize(100)
+        .minBatchSize(10)
+        .batchTimeout(Duration.ofMillis(250))
+        .processor(this::processBatch)
+        .build();
+```
+
+---
+
+## 🏢 Multi-Tenant Homogeneous Batches (`groupAffinity`)
+
+When processing multi-tenant data, mixing records from different tenants in a single batch violates multi-tenant database isolation (e.g. separate schemas per tenant or tenant-scoped transactions).
+
+Enable **Group Affinity** to guarantee that every batch delivered to your listener contains jobs from only **ONE** virtual group:
+
+```java
+@OxmqBatchListener(
+    queue = "tenant-analytics",
+    batchSize = 25,
+    groupAffinity = true,      // GUARANTEE: All items belong to the same tenant!
+    groupConcurrency = 2       // Max 2 simultaneous batches per tenant
+)
+public void onTenantBatch(List<Job<Event>> batch) {
+    String tenantId = batch.get(0).getGroupKey();
+    tenantScopedDatabase.bulkInsert(tenantId, batch);
+}
+```
+
+---
+
+## 🔗 Accessing Batched Jobs via `job.getBatch()` & Worker Callbacks
+
+When writing domain logic inside batch workers, you can access the sibling jobs directly from any individual `Job` instance (mirroring BullMQ Pro's `job.getBatch()`):
+
+```java
+// Inside batch processing logic:
+Job<AuditEvent> firstJob = batch.get(0);
+
+// Retrieve all jobs belonging to this batch execution
+List<Job<AuditEvent>> fullBatch = firstJob.getBatch();
+System.out.println("Processing batch of " + fullBatch.size() + " items");
+```
+
+### Fluent Event Callbacks for Batches
+`OxmqBatchWorker` provides lifecycle listener callbacks for monitoring batch executions:
+
+```java
+batchWorker
+    .onBatchActive(jobs -> log.info("Started processing batch of {} jobs", jobs.size()))
+    .onJobCompleted((job, result) -> log.info("Job {} completed in batch", job.getId()))
+    .onJobFailed((job, err) -> log.warn("Job {} failed in batch: {}", job.getId(), err.getMessage()))
+    .onBatchCompleted((jobs, result) -> log.info("Batch of {} jobs completed", jobs.size()))
+    .onBatchFailed((jobs, err) -> log.error("Entire batch failed", err));
+```
+
+---
+
 ## ⚡ Empirical Batch Worker Performance
 
 In our empirical benchmarks, `OxmqBatchWorker` reached up to **2,918.9 jobs/second** (Java 17 LTS) and **2,886.8 jobs/second** (Java 21 LTS) peak throughput—a **2.6x multiplier** over single-job workers:

@@ -31,6 +31,8 @@ public class JobOptions {
     private boolean continueParentOnFailure = false;
     private boolean ignoreDependencyOnFailure = false;
     private String groupKey;
+    private GroupOptions group;
+    private long jobTimeoutMs = 0;
     private String traceparent;
     private String tracestate;
     private Map<String, Object> telemetry;
@@ -269,6 +271,52 @@ public class JobOptions {
 
     public void setGroupKey(String groupKey) {
         this.groupKey = groupKey;
+        if (groupKey != null && (group == null || !groupKey.equals(group.getId()))) {
+            this.group = new GroupOptions(groupKey);
+        }
+    }
+
+    public GroupOptions getGroup() {
+        return group;
+    }
+
+    public void setGroup(GroupOptions group) {
+        this.group = group;
+        if (group != null) {
+            this.groupKey = group.getId();
+        }
+    }
+
+    public JobOptions group(String groupId) {
+        setGroupKey(groupId);
+        return this;
+    }
+
+    public JobOptions group(GroupOptions group) {
+        setGroup(group);
+        return this;
+    }
+
+    public long getJobTimeoutMs() {
+        return jobTimeoutMs;
+    }
+
+    public void setJobTimeoutMs(long jobTimeoutMs) {
+        this.jobTimeoutMs = jobTimeoutMs;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonSetter("jobTimeout")
+    public void setJobTimeout(Object value) {
+        if (value instanceof Number n) {
+            this.jobTimeoutMs = n.longValue();
+        }
+    }
+
+    @com.fasterxml.jackson.annotation.JsonSetter("ttl")
+    public void setTtl(Object value) {
+        if (value instanceof Number n) {
+            this.jobTimeoutMs = n.longValue();
+        }
     }
 
     public String getTraceparent() {
@@ -296,7 +344,7 @@ public class JobOptions {
     }
 
     public Map<String, Object> toMap() {
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new HashMap<>(24);
         if (jobId != null) map.put("jobId", jobId);
         map.put("delay", delayMs);
         map.put("attempts", attempts);
@@ -331,6 +379,17 @@ public class JobOptions {
         if (continueParentOnFailure) map.put("continueParentOnFailure", true);
         if (ignoreDependencyOnFailure) map.put("ignoreDependencyOnFailure", true);
         if (groupKey != null) map.put("groupKey", groupKey);
+        if (group != null) {
+            Map<String, Object> groupMap = new HashMap<>();
+            groupMap.put("id", group.getId());
+            if (group.getMaxSize() > 0) groupMap.put("maxSize", group.getMaxSize());
+            if (group.getPriority() > 0) groupMap.put("priority", group.getPriority());
+            map.put("group", groupMap);
+        }
+        if (jobTimeoutMs > 0) {
+            map.put("jobTimeout", jobTimeoutMs);
+            map.put("ttl", jobTimeoutMs);
+        }
         if (traceparent != null) {
             map.put("traceparent", traceparent);
             if (telemetry == null) {
@@ -498,7 +557,22 @@ public class JobOptions {
         }
 
         public Builder deduplicationTtl(Duration ttl) {
-            options.setDeduplicationTtlMs(ttl.toMillis());
+            options.setDeduplicationTtlMs(ttl != null ? ttl.toMillis() : 0);
+            return this;
+        }
+
+        public Builder debounce(Duration duration) {
+            return debounceDuration(duration);
+        }
+
+        public Builder debounceDuration(Duration duration) {
+            options.setDeduplicationTtlMs(duration != null ? duration.toMillis() : 0);
+            return this;
+        }
+
+        public Builder debounce(String id, Duration duration) {
+            options.setDeduplicationId(id);
+            options.setDeduplicationTtlMs(duration != null ? duration.toMillis() : 0);
             return this;
         }
 
@@ -529,6 +603,45 @@ public class JobOptions {
 
         public Builder groupKey(String groupKey) {
             options.setGroupKey(groupKey);
+            return this;
+        }
+
+        public Builder group(String groupId) {
+            if (groupId != null) {
+                options.setGroup(GroupOptions.of(groupId));
+            }
+            return this;
+        }
+
+        public Builder group(String groupId, long maxSize) {
+            if (groupId != null) {
+                options.setGroup(GroupOptions.of(groupId, maxSize));
+            }
+            return this;
+        }
+
+        public Builder group(GroupOptions group) {
+            options.setGroup(group);
+            return this;
+        }
+
+        public Builder jobTimeout(Duration timeout) {
+            options.setJobTimeoutMs(timeout != null ? timeout.toMillis() : 0);
+            return this;
+        }
+
+        public Builder jobTimeoutMs(long jobTimeoutMs) {
+            options.setJobTimeoutMs(jobTimeoutMs);
+            return this;
+        }
+
+        public Builder ttl(Duration ttl) {
+            options.setJobTimeoutMs(ttl != null ? ttl.toMillis() : 0);
+            return this;
+        }
+
+        public Builder ttl(long ttlMs) {
+            options.setJobTimeoutMs(ttlMs);
             return this;
         }
 

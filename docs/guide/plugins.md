@@ -25,9 +25,9 @@ sequenceDiagram
     rect rgb(240, 248, 255)
         Note over W,I: Pre-Execution Phase
         W->>I: beforeProcess(job)
-        alt InterceptorDecision.yield(delayMs)
-            I->>M: Increment yield counter
-            I-->>W: YIELD (delayMs, skipAttempt=true)
+        alt InterceptorDecision.delay(delayMs, true)
+            I->>M: Increment delay counter
+            I-->>W: DELAY (delayMs, skipAttempt=true)
             W->>R: moveToDelayed-11.lua (non-destructive)
             Note over W: Worker claims next job immediately
         else InterceptorDecision.reject(reason)

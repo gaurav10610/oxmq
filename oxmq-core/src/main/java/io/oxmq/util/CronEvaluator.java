@@ -35,13 +35,29 @@ public final class CronEvaluator {
         this.hasSeconds = hasSeconds;
     }
 
+    private static final java.util.concurrent.ConcurrentMap<String, CronEvaluator> CACHE = new java.util.concurrent.ConcurrentHashMap<>(64);
+    private static final int MAX_CACHE_SIZE = 512;
+
     public static CronEvaluator parse(String expression) {
         if (expression == null || expression.isBlank()) {
             throw new IllegalArgumentException("Cron expression must not be null or blank");
         }
-        String[] parts = expression.trim().split("\\s+");
+        String trimmed = expression.trim();
+        CronEvaluator cached = CACHE.get(trimmed);
+        if (cached != null) {
+            return cached;
+        }
+        CronEvaluator evaluator = parseInternal(trimmed);
+        if (CACHE.size() < MAX_CACHE_SIZE) {
+            CACHE.putIfAbsent(trimmed, evaluator);
+        }
+        return evaluator;
+    }
+
+    private static CronEvaluator parseInternal(String trimmed) {
+        String[] parts = trimmed.split("\\s+");
         if (parts.length != 5 && parts.length != 6) {
-            throw new IllegalArgumentException("Cron expression must have 5 or 6 fields, got " + parts.length + ": " + expression);
+            throw new IllegalArgumentException("Cron expression must have 5 or 6 fields, got " + parts.length + ": " + trimmed);
         }
 
         int idx = 0;

@@ -2,10 +2,10 @@ package io.oxmq.tracing;
 
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
-import java.security.SecureRandom;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * W3C Trace Context representation (traceparent and tracestate) matching BullMQ OpenTelemetry distributed tracing standards.
@@ -13,8 +13,6 @@ import java.util.Objects;
  * E.g., "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
  */
 public record TraceContext(String version, String traceId, String spanId, String traceFlags, String tracestate) {
-
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     public TraceContext {
         version = version != null ? version : "00";
@@ -43,7 +41,7 @@ public record TraceContext(String version, String traceId, String spanId, String
      */
     public TraceContext createChildSpan() {
         byte[] spanBytes = new byte[8];
-        RANDOM.nextBytes(spanBytes);
+        ThreadLocalRandom.current().nextBytes(spanBytes);
         String newSpanId = HexFormat.of().formatHex(spanBytes);
         return new TraceContext(this.version, this.traceId, newSpanId, this.traceFlags, this.tracestate);
     }
@@ -54,8 +52,9 @@ public record TraceContext(String version, String traceId, String spanId, String
     public static TraceContext generateNew() {
         byte[] traceBytes = new byte[16];
         byte[] spanBytes = new byte[8];
-        RANDOM.nextBytes(traceBytes);
-        RANDOM.nextBytes(spanBytes);
+        ThreadLocalRandom current = ThreadLocalRandom.current();
+        current.nextBytes(traceBytes);
+        current.nextBytes(spanBytes);
         String traceId = HexFormat.of().formatHex(traceBytes);
         String spanId = HexFormat.of().formatHex(spanBytes);
         return new TraceContext("00", traceId, spanId, "01", null);
@@ -69,7 +68,17 @@ public record TraceContext(String version, String traceId, String spanId, String
         if (traceparent == null || traceparent.isBlank()) {
             return null;
         }
-        String[] parts = traceparent.trim().split("-");
+        String tp = traceparent.trim();
+        int len = tp.length();
+        // Zero-regex fast-path for standard 55-char W3C traceparent (version 2, traceId 32, spanId 16, flags 2)
+        if (len == 55 && tp.charAt(2) == '-' && tp.charAt(35) == '-' && tp.charAt(52) == '-') {
+            String version = tp.substring(0, 2);
+            String traceId = tp.substring(3, 35);
+            String spanId = tp.substring(36, 52);
+            String flags = tp.substring(53, 55);
+            return new TraceContext(version, traceId, spanId, flags, tracestate);
+        }
+        String[] parts = tp.split("-");
         if (parts.length != 4) {
             return null;
         }
@@ -141,7 +150,7 @@ public record TraceContext(String version, String traceId, String spanId, String
             spanId = spanId.trim();
         } else {
             byte[] spanBytes = new byte[8];
-            RANDOM.nextBytes(spanBytes);
+            ThreadLocalRandom.current().nextBytes(spanBytes);
             spanId = HexFormat.of().formatHex(spanBytes);
         }
         return new TraceContext("00", traceId, spanId, "01", null);

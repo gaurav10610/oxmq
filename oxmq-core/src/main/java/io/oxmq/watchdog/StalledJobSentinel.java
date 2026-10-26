@@ -57,6 +57,9 @@ public class StalledJobSentinel implements Closeable {
                 if (stalledJobs != null && !stalledJobs.isEmpty()) {
                     for (Object id : stalledJobs) {
                         log.info("Job {} on queue {} stalled and was re-queued to wait", id, queueKeys.getQueueName());
+                        if (metrics != null) {
+                            metrics.recordJobStalled(queueKeys.getQueueName());
+                        }
                     }
                 }
             }

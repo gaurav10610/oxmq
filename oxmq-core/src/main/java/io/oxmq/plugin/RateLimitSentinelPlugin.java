@@ -42,6 +42,10 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
     private final MeterRegistry meterRegistry;
 
     private final ConcurrentMap<String, AtomicLong> throttleCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Long> localCooldownExpiry = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Long> negativeCheckCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> delayCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> cooldownCounters = new ConcurrentHashMap<>();
 
     public RateLimitSentinelPlugin(
             RedisConnectionManager connectionManager,
@@ -87,11 +91,12 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
         if (remainingMs > 0) {
             if (meterRegistry != null) {
                 try {
-                    Counter.builder("oxmq.plugin.sentinel.delays")
+                    String q = job.getQueueName() != null ? job.getQueueName() : "unknown";
+                    delayCounters.computeIfAbsent(groupKey + "::" + q, k -> Counter.builder("oxmq.plugin.sentinel.delays")
                             .description("Jobs preemptively delayed by RateLimitSentinelPlugin due to active 429 cooldown")
                             .tag("group", groupKey)
-                            .tag("queue", job.getQueueName() != null ? job.getQueueName() : "unknown")
-                            .register(meterRegistry)
+                            .tag("queue", q)
+                            .register(meterRegistry))
                             .increment();
                 } catch (Exception ignored) {}
             }
@@ -123,10 +128,10 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
             throttleCounters.computeIfAbsent(explicitKey, k -> new AtomicLong(0)).incrementAndGet();
             if (meterRegistry != null) {
                 try {
-                    Counter.builder("oxmq.plugin.sentinel.cooldowns")
+                    cooldownCounters.computeIfAbsent(explicitKey, k -> Counter.builder("oxmq.plugin.sentinel.cooldowns")
                             .description("Total 429/503 cooldown events triggered by RateLimitSentinelPlugin")
-                            .tag("group", explicitKey)
-                            .register(meterRegistry)
+                            .tag("group", k)
+                            .register(meterRegistry))
                             .increment();
                 } catch (Exception ignored) {}
             }
@@ -140,10 +145,10 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
             throttleCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
             if (meterRegistry != null) {
                 try {
-                    Counter.builder("oxmq.plugin.sentinel.cooldowns")
+                    cooldownCounters.computeIfAbsent(groupKey, k -> Counter.builder("oxmq.plugin.sentinel.cooldowns")
                             .description("Total 429/503 cooldown events triggered by RateLimitSentinelPlugin")
-                            .tag("group", groupKey)
-                            .register(meterRegistry)
+                            .tag("group", k)
+                            .register(meterRegistry))
                             .increment();
                 } catch (Exception ignored) {}
             }
@@ -158,8 +163,10 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
         if (groupKey == null || groupKey.isBlank()) return;
         long durationMs = duration != null ? duration.toMillis() : 3000;
         long expiryTime = System.currentTimeMillis() + durationMs;
-        String redisKey = keyPrefix + ":cooldown:" + groupKey;
+        localCooldownExpiry.put(groupKey, expiryTime);
+        negativeCheckCache.remove(groupKey);
 
+        String redisKey = keyPrefix + ":cooldown:" + groupKey;
         try {
             RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
             sync.set(redisKey, String.valueOf(expiryTime), SetArgs.Builder.px(durationMs));
@@ -170,6 +177,8 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
 
     public void clearCooldown(String groupKey) {
         if (groupKey == null || groupKey.isBlank()) return;
+        localCooldownExpiry.remove(groupKey);
+        negativeCheckCache.remove(groupKey);
         String redisKey = keyPrefix + ":cooldown:" + groupKey;
         try {
             connectionManager.getCommandConnection().sync().del(redisKey);
@@ -182,15 +191,42 @@ public class RateLimitSentinelPlugin implements JobInterceptor {
 
     public long getCooldownRemainingMs(String groupKey) {
         if (groupKey == null || groupKey.isBlank()) return 0;
-        String redisKey = keyPrefix + ":cooldown:" + groupKey;
+        long now = System.currentTimeMillis();
 
+        Long localExpiry = localCooldownExpiry.get(groupKey);
+        if (localExpiry != null) {
+            long remaining = localExpiry - now;
+            if (remaining > 0) {
+                return remaining;
+            } else {
+                localCooldownExpiry.remove(groupKey, localExpiry);
+            }
+        }
+
+        Long negExpiry = negativeCheckCache.get(groupKey);
+        if (negExpiry != null && now < negExpiry) {
+            return 0;
+        }
+
+        String redisKey = keyPrefix + ":cooldown:" + groupKey;
         try {
             RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
             String val = sync.get(redisKey);
-            if (val == null) return 0;
+            if (val == null) {
+                negativeCheckCache.put(groupKey, now + 500);
+                return 0;
+            }
             long expiryTime = Long.parseLong(val);
-            long diff = expiryTime - System.currentTimeMillis();
-            return Math.max(0, diff);
+            long diff = expiryTime - now;
+            if (diff > 0) {
+                localCooldownExpiry.put(groupKey, expiryTime);
+                negativeCheckCache.remove(groupKey);
+                return diff;
+            } else {
+                localCooldownExpiry.remove(groupKey);
+                negativeCheckCache.put(groupKey, now + 500);
+                return 0;
+            }
         } catch (Exception e) {
             return 0;
         }

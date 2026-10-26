@@ -29,6 +29,20 @@ public interface Queue<T> extends Closeable {
     Job<T> add(String name, T data, JobOptions opts);
 
     /**
+     * Asynchronously enqueues a job with default options.
+     */
+    default java.util.concurrent.CompletableFuture<Job<T>> addAsync(String name, T data) {
+        return addAsync(name, data, null);
+    }
+
+    /**
+     * Asynchronously enqueues a job with custom options.
+     */
+    default java.util.concurrent.CompletableFuture<Job<T>> addAsync(String name, T data, JobOptions opts) {
+        return java.util.concurrent.CompletableFuture.completedFuture(add(name, data, opts));
+    }
+
+    /**
      * Fetches a job by its unique ID.
      */
     Job<T> getJob(String jobId);
@@ -129,9 +143,65 @@ public interface Queue<T> extends Closeable {
     List<String> getJobLogs(String jobId, int start, int end);
 
     /**
+     * Clears all log entries for a job in Redis.
+     *
+     * @param jobId job identifier
+     * @return true if logs were cleared
+     */
+    default boolean clearJobLogs(String jobId) {
+        return false;
+    }
+
+    /**
+     * Updates the progress percentage of an active job in Redis.
+     * Mirrors BullMQ's queue.updateJobProgress(jobId, progress).
+     *
+     * @param jobId    job identifier
+     * @param progress progress integer (0-100)
+     */
+    default void updateJobProgress(String jobId, int progress) {
+    }
+
+    /**
+     * Appends a log line to a job.
+     * Mirrors BullMQ's queue.addJobLog(jobId, logRow).
+     *
+     * @param jobId  job identifier
+     * @param logRow log message string
+     * @return total number of logs stored for this job
+     */
+    default long addJobLog(String jobId, String logRow) {
+        return addJobLog(jobId, logRow, 0);
+    }
+
+    /**
+     * Appends a log line to a job with optional max limit (keepLogs).
+     * Mirrors BullMQ's queue.addJobLog(jobId, logRow, keepLogs).
+     *
+     * @param jobId    job identifier
+     * @param logRow   log message string
+     * @param keepLogs maximum number of logs to retain (0 = unlimited)
+     * @return total number of logs stored for this job
+     */
+    default long addJobLog(String jobId, String logRow, int keepLogs) {
+        return 0L;
+    }
+
+    /**
      * Clears a deduplication key, allowing a new job with the same deduplication ID to be added.
      */
     boolean removeDeduplicationKey(String deduplicationId);
+
+    /**
+     * Retrieves the Job ID that currently holds the active deduplication key lock,
+     * or null if the deduplication key is not currently held.
+     *
+     * @param deduplicationId custom deduplication identifier
+     * @return job ID holding the deduplication key, or null
+     */
+    default String getDeduplicationJobId(String deduplicationId) {
+        return null;
+    }
 
     /**
      * Upserts a recurring job scheduler (cron or fixed interval).
@@ -187,6 +257,40 @@ public interface Queue<T> extends Closeable {
      * Retrieves child dependency counts for a parent job in a DAG workflow.
      */
     io.oxmq.model.JobDependencyCounts getDependencyCounts(String jobId);
+
+    /**
+     * Retrieves detailed dependency breakdown (unprocessed child keys, processed results,
+     * and failed reasons) for a parent job in a workflow DAG.
+     * Mirrors BullMQ's job.getDependencies().
+     *
+     * @param jobId parent job identifier
+     * @return JobDependencies record containing child keys and results
+     */
+    default io.oxmq.model.JobDependencies getDependencies(String jobId) {
+        return new io.oxmq.model.JobDependencies(jobId, java.util.List.of(), java.util.Map.of(), java.util.Map.of());
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree starting from this job as root.
+     * Mirrors BullMQ's FlowProducer.getFlow().
+     *
+     * @param jobId parent/root job identifier
+     * @return populated JobNode tree with children dependencies, or null
+     */
+    default io.oxmq.model.JobNode getFlow(String jobId) {
+        return getFlow(jobId, 10);
+    }
+
+    /**
+     * Retrieves the hierarchical workflow execution tree with a maximum recursion depth.
+     *
+     * @param jobId parent/root job identifier
+     * @param maxDepth maximum recursion depth
+     * @return populated JobNode tree with children dependencies, or null
+     */
+    default io.oxmq.model.JobNode getFlow(String jobId, int maxDepth) {
+        return null;
+    }
 
     /**
      * Removes a child dependency from its parent job.
@@ -396,6 +500,247 @@ public interface Queue<T> extends Closeable {
      * @return true if the rate limit key was deleted, false if absent
      */
     boolean removeRateLimitKey();
+
+    /**
+     * Pauses processing for a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was paused, false if already paused
+     */
+    default boolean pauseGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Resumes processing for a paused virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was resumed, false if not paused
+     */
+    default boolean resumeGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Deletes all pending jobs in a virtual group and cleans up group indices.
+     *
+     * @param groupId virtual group identifier
+     * @return number of deleted pending jobs
+     */
+    default long deleteGroup(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Applies a temporary rate-limit / throttling window to a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @param duration duration of the rate limit
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, 1, duration);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the duration window.
+     * Mirrors BullMQ Pro's queue.setGroupRateLimit(groupId, max, duration).
+     *
+     * @param groupId  virtual group identifier
+     * @param maxJobs  maximum number of jobs allowed in the duration window
+     * @param duration duration of the window
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, int maxJobs, java.time.Duration duration) {
+        return setGroupRateLimit(groupId, maxJobs, duration != null ? duration.toMillis() : 0);
+    }
+
+    /**
+     * Dynamically throttles a virtual group across the cluster allowing up to maxJobs within the window in milliseconds.
+     *
+     * @param groupId    virtual group identifier
+     * @param maxJobs    maximum number of jobs allowed in the duration window
+     * @param durationMs duration of the window in milliseconds
+     * @return true if rate limit was applied
+     */
+    default boolean setGroupRateLimit(String groupId, int maxJobs, long durationMs) {
+        return false;
+    }
+
+    /**
+     * Returns the remaining time-to-live (in milliseconds) for a rate-limited virtual group.
+     * Returns 0 if the group is not currently rate-limited.
+     *
+     * @param groupId virtual group identifier
+     * @return remaining TTL in milliseconds, or 0 if not limited
+     */
+    default long getGroupRateLimitTtl(String groupId) {
+        return getGroupRateLimitTtl(groupId, 1);
+    }
+
+    /**
+     * Returns the remaining time-to-live (in milliseconds) for a rate-limited virtual group given maxJobs quota.
+     * Mirrors BullMQ Pro's queue.getGroupRateLimitTtl(groupId, maxJobs).
+     *
+     * @param groupId virtual group identifier
+     * @param maxJobs maximum allowed jobs in window
+     * @return remaining TTL in milliseconds, or 0 if not limited
+     */
+    default long getGroupRateLimitTtl(String groupId, int maxJobs) {
+        return 0;
+    }
+
+    /**
+     * Retrieves unique virtual group identifiers with pagination.
+     *
+     * @param start starting index (0-based)
+     * @param stop ending index (inclusive, or -1 for all)
+     * @return list of group IDs
+     */
+    default List<String> getGroups(long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Retrieves all unique virtual group identifiers in this queue.
+     *
+     * @return list of all group IDs
+     */
+    default List<String> getGroups() {
+        return getGroups(0, -1);
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across groups.
+     *
+     * @param limit maximum number of groups to inspect
+     * @return map of groupId to total pending job count
+     */
+    default java.util.Map<String, Long> getGroupsJobsCount(int limit) {
+        return java.util.Map.of();
+    }
+
+    /**
+     * Retrieves a breakdown map of pending job counts across all groups (default limit 1000).
+     *
+     * @return map of groupId to total pending job count
+     */
+    default java.util.Map<String, Long> getGroupsJobsCount() {
+        return getGroupsJobsCount(1000);
+    }
+
+    /**
+     * Self-heals and repairs a desynchronized virtual group stuck in the maxed state
+     * by reconciling active counts against actual running jobs in the active set.
+     *
+     * @param groupId virtual group identifier
+     * @return true if group was repaired
+     */
+    default boolean repairGroup(String groupId) {
+        return false;
+    }
+
+    /**
+     * Audits and repairs all groups currently in the maxed state.
+     *
+     * @return number of groups repaired
+     */
+    default int repairMaxedGroups() {
+        return 0;
+    }
+
+    /**
+     * Retrieves virtual groups by status ('waiting', 'limited', 'maxed', 'paused') with pagination.
+     */
+    default List<io.oxmq.lua.ExtensionScripts.GroupEntry> getGroupsByStatus(String status, long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Retrieves paginated jobs belonging to a virtual group.
+     */
+    default List<Job<T>> getGroupJobs(String groupId, long start, long stop) {
+        return List.of();
+    }
+
+    /**
+     * Returns total pending jobs in a virtual group.
+     */
+    default long getGroupJobsCount(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Returns active (currently processing) jobs count for a virtual group.
+     */
+    default long getGroupActiveCount(String groupId) {
+        return 0;
+    }
+
+    /**
+     * Returns job counts breakdown per priority for a specific virtual group.
+     * Priority 0 corresponds to non-prioritized FIFO jobs.
+     *
+     * @param groupId virtual group identifier
+     * @param priorities list of priorities to inspect
+     * @return map of priority to job count
+     */
+    default java.util.Map<Integer, Long> getCountsPerPriorityForGroup(String groupId, java.util.List<Integer> priorities) {
+        return java.util.Map.of();
+    }
+
+    /**
+     * Sets a dynamic concurrency limit override for a specific virtual group.
+     * Overrides the worker's default group concurrency for this group in Redis.
+     *
+     * @param groupId virtual group identifier
+     * @param concurrency maximum concurrent active jobs for this group
+     */
+    default void setGroupConcurrency(String groupId, int concurrency) {
+    }
+
+    /**
+     * Retrieves the specific concurrency limit override for a virtual group, or null if using default.
+     *
+     * @param groupId virtual group identifier
+     * @return configured concurrency override or null
+     */
+    default Integer getGroupConcurrency(String groupId) {
+        return null;
+    }
+
+    /**
+     * Removes the specific concurrency limit override for a virtual group.
+     *
+     * @param groupId virtual group identifier
+     * @return true if an override was removed
+     */
+    default boolean removeGroupConcurrency(String groupId) {
+        return false;
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide.
+     * If the job is active on any worker node in the cluster, sends a cancellation signal
+     * via Redis control channel to immediately interrupt its virtual thread and cancel its token.
+     *
+     * @param jobId job identifier
+     * @return true if cancellation request was dispatched
+     */
+    default boolean cancelJob(String jobId) {
+        return cancelJob(jobId, "User requested cancellation");
+    }
+
+    /**
+     * Cancels an active or waiting job cluster-wide with a specified reason.
+     *
+     * @param jobId job identifier
+     * @param reason human-readable cancellation reason
+     * @return true if cancellation request was dispatched
+     */
+    default boolean cancelJob(String jobId, String reason) {
+        return false;
+    }
 
     @Override
     void close();

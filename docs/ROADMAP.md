@@ -1,4 +1,4 @@
-# 🗺️ OxMQ Strategic Roadmap (v1.3.0 — v2.0.0+)
+# 🗺️ OxMQ Strategic Roadmap (v1.9.0 — v2.0.0+)
 
 **Vision:** Elevate OxMQ from 100% BullMQ wire-parity to the **standard distributed job queue and durable workflow engine for Java 17+ / Java 21+ and modern polyglot ecosystems**.
 
@@ -93,7 +93,7 @@ graph TD
   - On transaction commit, a lightweight Loom Virtual Thread dispatcher immediately delivers the job to Redis with sub-millisecond latency.
   - Guarantees **Atomic Enqueueing**: Zero phantom jobs on rollbacks, and zero lost jobs during Redis network blips.
 
-#### 2.2 `oxmq-tracing`: W3C Distributed Tracing & OpenTelemetry
+#### 2.2 `oxmq-tracing`: W3C Distributed Tracing & OpenTelemetry *(Delivered in v1.7.0 & v1.8.0)*
 * **Solution**: Full distributed trace propagation across asynchronous boundaries:
   - Automatically captures W3C `traceparent` and `tracestate` into job metadata on `queue.add()`.
   - Worker automatically restores the trace context and starts a child span for the job execution.
@@ -179,9 +179,9 @@ graph TD
 | **`v1.6.0`** | **Adaptive Rate Limiting & Cloud Resilience** | • Native `AdaptiveRateLimiterPlugin` (AIMD dynamic capacity)<br/>• Distributed `CheckpointStatePlugin` (cursor/delta resume)<br/>• Standalone `mock-office365-server` Cloud Chaos Engine<br/>• Production Kubernetes manifests & Clean-slate disaster recovery benchmark | 🟢 Released |
 | **`v1.7.0`** | **100% BullMQ Parity & Distributed Tracing** | • Queue pagination & state inspection (`getJobs`, `getJobCounts`)<br/>• Programmatic `job.discard()` & ignored children failures<br/>• Pluggable `BackoffStrategy.custom()` registry<br/>• Global queue concurrency & rate limits (`setGlobalConcurrency`, `setGlobalRateLimit`)<br/>• Worker lifecycle event emitters (`onActive`, `onCompleted`, etc.)<br/>• OpenTelemetry W3C distributed tracing (`TraceContext`)<br/>• Upstream BullMQ Lua deduplication sync & Enterprise docs overhaul | 🟢 Released |
 | **`v1.8.0`** | **Bull-Board Telemetry & Automated Queue Pruning** | • Full OpenTelemetry trace propagation into Bull-Board Data, Options, and Logs tabs<br/>• Standard `opts.telemetry` map parity with BullMQ<br/>• Automated completed-job Redis pruning via `removeOnComplete` & Dead-Letter retention<br/>• Modern Material Design UI & Real-Time SSE Streaming for OxDoc 365 showcase<br/>• Redis Exporter & Enhanced System Metrics Dashboards in Grafana<br/>• Enterprise 100k+ file multi-tenant stress testing & zero memory leaks | 🟢 Released |
-| **`v1.9.0`** | **Enterprise Reliability & Outbox** | • `oxmq-outbox` (Transactional Outbox for Spring/JPA)<br/>• DLQ Webhook / Slack Alerts & Human-in-the-loop replay<br/>• Valkey 8 certification & Prometheus Grafana expansions | ⚪ Planned |
-| **`v2.0.0`** | **Kotlin & Cloud-Native** | • `oxmq-kotlin` Coroutines DSL<br/>• GraalVM Native Image (AOT) hints & verification<br/>• Quarkus Extension exploration | ⚪ Planned |
-| **`v2.1.0`** | **AI Orchestration & Sagas** | • AI Dual-Rate Limiter (RPM + TPM token buckets)<br/>• SSE Progress Streaming endpoints<br/>• Durable Checkpointed Step Sagas | ⚪ Planned |
+| **`v1.9.0`** | **Virtual Groups, Transactional Outbox & Memory Ceiling** | • Virtual Queue Groups ($O(1)$ Fair Round-Robin) with self-healing reconciliation (`repairGroup`)<br/>• `oxmq-outbox` (Transactional Outbox Engine with `@EnableOxmqOutbox` & `@OxmqTransactional`)<br/>• Strict 200 MB Redis Memory Ceiling & Zero-Data-Loss Backpressure architecture<br/>• Dual-sensing hysteresis pacing via `JobInterceptor` (`skipAttempt: true`)<br/>• Complete 11-scenario Chaos Engineering test suite (Redis drop, worker crash, storm, lock expiry)<br/>• Micrometer 1.13.5 telemetry upgrade and bounded histogram timers<br/>• Live 30,817-doc multi-tenant scale verification across 5 M365 tiers | 🟢 Released |
+| **`v2.0.0`** | **Enterprise Reliability & Outbox Expansion** | • DLQ Webhook / Slack Alerts & Human-in-the-loop replay<br/>• Valkey 8 certification & Prometheus Grafana expansions<br/>• `oxmq-kotlin` Coroutines DSL & GraalVM Native Image AOT hints | ⚪ Planned |
+| **`v2.1.0`** | **AI Orchestration & Durable Sagas** | • AI Dual-Rate Limiter (RPM + TPM token buckets)<br/>• SSE Progress Streaming endpoints<br/>• Durable Checkpointed Step Sagas | ⚪ Planned |
 
 ---
 

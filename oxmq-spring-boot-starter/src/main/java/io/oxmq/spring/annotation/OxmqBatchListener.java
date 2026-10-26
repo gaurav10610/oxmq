@@ -72,4 +72,47 @@ public @interface OxmqBatchListener {
      * Polling interval in milliseconds. Defaults to 50 ms.
      */
     long pollIntervalMs() default 50;
+
+    /**
+     * Minimum batch size to accumulate before dispatching, unless batchTimeoutMs is exceeded.
+     * Defaults to 1.
+     */
+    int minBatchSize() default 1;
+
+    /**
+     * Property placeholder for minBatchSize, e.g. {@code "${app.batch.min-size:5}"}.
+     */
+    String minBatchSizeString() default "";
+
+    /**
+     * Maximum accumulation duration in milliseconds before dispatching even if batchSize has not been reached.
+     * Defaults to 0 (immediate dispatch once available).
+     */
+    long batchTimeoutMs() default 0;
+
+    /**
+     * Property placeholder for batchTimeoutMs, e.g. {@code "${app.batch.timeout:200}"}.
+     */
+    String batchTimeoutMsString() default "";
+
+    /**
+     * Whether all jobs in a single batch must belong to the exact same virtual group (group affinity).
+     * Defaults to false.
+     */
+    boolean groupAffinity() default false;
+
+    /**
+     * Property placeholder for groupAffinity, e.g. {@code "${app.batch.group-affinity:true}"}.
+     */
+    String groupAffinityString() default "";
+
+    /**
+     * Maximum concurrency per virtual group (0 = unlimited).
+     */
+    int groupConcurrency() default 0;
+
+    /**
+     * Property placeholder for groupConcurrency, e.g. {@code "${app.batch.group-concurrency:2}"}.
+     */
+    String groupConcurrencyString() default "";
 }

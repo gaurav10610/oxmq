@@ -24,6 +24,7 @@ For specialized technical deep dives, see the comprehensive documentation guides
 | **Sustained Throughput**| 10,000+ documents / sec | Specialized OxMQ queue pipeline running on tuned Java 17 platform thread pools. |
 | **Forward Latency** | $\le 30$ seconds (event to index) | Priority 1 scheduling + debounced webhook processing. |
 | **Backward Impact** | Zero starvation of forward traffic | Dynamic token-bucket yielding ($<25\%$ capacity $\to$ backward deferral). |
+| **Redis Memory Budget** | Strict 200 MB Ceiling | Dual-sensing admission backpressure (Redis used_memory + queue backlog) via OxMQ JobInterceptor. |
 | **Runtime Memory** | $< 512$ MB JVM Heap per worker pod | Zero-copy streaming downloads (`@microsoft.graph.downloadUrl` bypass). |
 
 ---
@@ -79,11 +80,17 @@ OxDoc 365 pairs **domain-specialized queues** with a **unified tenant-level toke
 
 ---
 
-## 4. Priority Arbitration & Debouncing
+## 4. Priority Arbitration, Debouncing & Memory Backpressure
 
-* **Forward Priority 1 vs Backward Priority 10:** Real-time webhook events process first.
-* **Dynamic Headroom Yielding:** When tenant token bucket headroom $< 25\%$, backward crawl workers yield by throwing `DelayedException(5000L, true)`.
-* **Auto-Save Debouncing:** 15s debounce window with `keepLastIfActive: true` collapses Office 365 auto-save bursts into 1 inspection job.
+* **Forward Priority 1 vs Backward Priority 10:** Real-time webhook events process first with dedicated high-priority execution.
+* **Dynamic Headroom Yielding:** When tenant token bucket headroom $< 25\%$, backward crawl workers yield via `InterceptorDecision.delay(200ms, true)`.
+* **Auto-Save Debouncing:** 15s debounce window with `keepLastIfActive: true` using OxMQ native `debounce()` collapses Office 365 auto-save bursts into 1 inspection job.
+* **Strict 200 MB Redis Memory Ceiling & Reactive Backpressure:**
+  - Managed by [`BackpressureService`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/service/BackpressureService.java) and OxMQ native [`JobInterceptor`](file:///Users/gaurav/git/oxmq/oxmq-core/src/main/java/io/oxmq/interceptor/JobInterceptor.java).
+  - Dual-sensing monitors Redis `used_memory` (trigger at 85% / 170 MB, recovery at 60% / 120 MB) and downstream queue backlog (trigger at 35,000 jobs, recovery at 10,000 jobs).
+  - When backpressured, delta continuation requests are paced with `delay(2500ms, true)` without consuming retry attempts.
+  - Priority 1 real-time forward scans bypass backpressure completely, ensuring live user uploads are never throttled.
+  - Checkpoint tokens remain safe in PostgreSQL and `CheckpointStatePlugin`.
 
 ---
 

@@ -36,7 +36,7 @@ export default withMermaid(
         'operatingSystem': 'Cross-platform (JVM)',
         'applicationCategory': 'DeveloperApplication',
         'description': 'Virtual Thread-native distributed message queue engine for Java 17+ and 21 with 100% BullMQ wire protocol parity.',
-        'softwareVersion': '1.8.0',
+        'softwareVersion': '1.9.0',
         'license': 'https://github.com/gaurav10610/oxmq/blob/main/LICENSE',
         'url': 'https://gaurav10610.github.io/oxmq/',
         'author': {
@@ -57,9 +57,9 @@ export default withMermaid(
         { text: 'Bull-Board', link: '/interop/bull-board' },
         { text: 'Roadmap', link: '/ROADMAP' },
         {
-          text: 'v1.8.0',
+          text: 'v1.9.0',
           items: [
-            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.8.0' },
+            { text: 'GitHub Release', link: 'https://github.com/gaurav10610/oxmq/releases/tag/v1.9.0' },
             { text: 'GitHub Repository', link: 'https://github.com/gaurav10610/oxmq' }
           ]
         }
@@ -93,6 +93,10 @@ export default withMermaid(
           text: 'Design Patterns',
           collapsed: false,
           items: [
+            { text: 'Virtual Queue Groups & Multi-Tenancy', link: '/patterns/virtual-queue-groups' },
+            { text: 'Cluster-Wide Distributed Cancellation', link: '/patterns/distributed-cancellation' },
+            { text: 'Distributed Pub/Sub Relay', link: '/patterns/distributed-relay' },
+            { text: 'Transactional Outbox Pattern', link: '/patterns/transactional-outbox' },
             { text: 'Request-Reply Synchronization', link: '/patterns/request-reply' },
             { text: 'Rate Limiting & Concurrency', link: '/patterns/rate-limiting' },
             { text: 'Retries & Backoff Policies', link: '/patterns/retries-backoff' },

@@ -204,6 +204,31 @@ Returns system-wide document intelligence statistics:
 }
 ```
 
+#### `GET /api/v1/dashboard/backpressure`
+Returns instantaneous Redis memory utilization, downstream queue backlog depths, and backpressure pacing status:
+*Response (HTTP 200 OK):*
+```json
+{
+  "enabled": true,
+  "redisUsedMemoryMB": 44.9,
+  "redisMaxMemoryCeilingMB": 200.0,
+  "memoryUtilizationPercent": 22.45,
+  "downstreamBacklogJobs": 1240,
+  "isBackpressureActive": false,
+  "totalYields": 1,
+  "lastThrottleReason": null,
+  "lastEvaluatedAt": "2026-10-27T01:10:00Z"
+}
+```
+
+#### `GET /api/v1/dashboard/stream`
+Server-Sent Events (SSE) telemetry stream emitting real-time JSON payloads every 1,500 ms for live UI updates:
+*Event Stream Output:*
+```
+event: metrics
+data: {"totalDocuments":30817,"searchableDocuments":29850,"externalShared":840,"publicAnonymous":127,"redisUsedMemoryMB":44.9,"redisMaxMemoryCeilingMB":200.0,"isBackpressureActive":false,"downstreamBacklogJobs":1240}
+```
+
 #### `POST /api/v1/dashboard/tenants/{tenantId}/override?tier={TIER}`
 Pins a static administrative override on a tenant, bypassing adaptive auto-tuning.
 *Request Example:* `POST /api/v1/dashboard/tenants/tenant-smb-250/override?tier=HYPERSCALE`

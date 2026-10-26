@@ -161,6 +161,16 @@
                     <span class="text-slate-400">🔍 W3C OTel:</span>
                     <strong class="text-indigo-700 font-mono">MDC Active</strong>
                 </span>
+                <span class="text-slate-300">•</span>
+                <span class="flex items-center space-x-1" title="Strict Redis Memory Ceiling (200MB Max)">
+                    <span class="text-slate-400">⚡ Redis RAM:</span>
+                    <strong id="sysRedisMem" class="text-emerald-700 font-mono">-- / 200 MB</strong>
+                </span>
+                <span class="text-slate-300">•</span>
+                <span class="flex items-center space-x-1" title="Dynamic Dual-Watermark Backpressure Guard">
+                    <span class="text-slate-400">🛑 Ingestion Gate:</span>
+                    <span id="sysBackpressureBadge" class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">NORMAL</span>
+                </span>
             </div>
             <div class="flex items-center space-x-3 text-[11px] font-mono text-slate-500">
                 <span class="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600">Java 17 LTS</span>
@@ -817,6 +827,32 @@
                     document.getElementById('sysThreads').innerText = `${s.activeThreadCount || 0} active`;
                     document.getElementById('sysDbFiles').innerText = `${Number(s.totalDocumentsIndexed || 0).toLocaleString()} docs`;
                     document.getElementById('sysDbDrives').innerText = `${s.totalDrivesMonitored || 25} libraries`;
+
+                    if (s.redisUsedMemoryMB !== undefined) {
+                        const redisUsed = s.redisUsedMemoryMB || 0;
+                        const redisCeiling = s.redisMaxMemoryCeilingMB || 200;
+                        const redisEl = document.getElementById('sysRedisMem');
+                        if (redisEl) {
+                            redisEl.innerText = `${redisUsed} / ${redisCeiling} MB`;
+                            if (redisUsed >= redisCeiling * 0.85) {
+                                redisEl.className = "text-amber-700 font-mono font-bold animate-pulse";
+                            } else {
+                                redisEl.className = "text-emerald-700 font-mono";
+                            }
+                        }
+                    }
+                    const badge = document.getElementById('sysBackpressureBadge');
+                    if (badge) {
+                        if (s.isBackpressureActive) {
+                            badge.className = "px-2 py-0.5 rounded text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-300 animate-pulse";
+                            badge.innerText = `PACING (${Number(s.downstreamBacklogJobs || 0).toLocaleString()} jobs)`;
+                            badge.title = s.lastThrottleReason || "Backpressure Active (guerving 200MB ceiling)";
+                        } else {
+                            badge.className = "px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200";
+                            badge.innerText = "NORMAL";
+                            badge.title = "Memory and queue capacity healthy";
+                        }
+                    }
                 })
                 .catch(err => console.debug('System metrics error:', err));
         }

@@ -106,7 +106,7 @@ spec:
       terminationGracePeriodSeconds: 45
       containers:
         - name: oxdoc-worker
-          image: ghcr.io/gaurav10610/oxdoc-365:1.8.0
+          image: ghcr.io/gaurav10610/oxdoc-365:1.9.0
           lifecycle:
             preStop:
               exec:

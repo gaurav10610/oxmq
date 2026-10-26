@@ -86,6 +86,33 @@ OxMQ executes the complete suite of **49 official BullMQ Lua scripts** directly 
 | `removeJobScheduler-3.lua` | Removes a recurring scheduler and its next pending delayed job. |
 | `removeDeduplicationKey-1.lua`| Clears a custom deduplication lock key early. |
 
+### 7. OxMQ Virtual Queue Groups (`lua/extensions/`)
+All extension scripts are strictly isolated in `oxmq-core/src/main/resources/lua/extensions/` to maintain clean upstream sync:
+
+| Script Name | Location | Purpose |
+| :--- | :--- | :--- |
+| `addGroupJob-1.lua` | `extensions/` | Atomically adds a job to a virtual group, checks `maxSize` bounds, and registers the group in `groups:waiting`. |
+| `moveToActiveGroup-1.lua` | `extensions/` | $O(1)$ fair circular round-robin dequeue (`RPOPLPUSH groups:waiting`), enforcing group concurrency caps, paused state, and dynamic rate limits. |
+| `moveToActiveBatchGroup-1.lua` | `extensions/` | Pops an entire batch of jobs with strict **Group Affinity** (homogeneous tenant batching). |
+| `decrementGroupActive-1.lua` | `extensions/` | Decrements group active count upon job finish/fail and automatically restores maxed groups to `groups:waiting`. |
+| `pauseGroup-1.lua` | `extensions/` | Pauses an individual virtual group across the entire cluster without affecting other tenants. |
+| `resumeGroup-1.lua` | `extensions/` | Resumes a paused virtual group and re-enqueues it into `groups:waiting`. |
+| `deleteGroup-1.lua` | `extensions/` | Atomically deletes all waiting and prioritized jobs for a virtual group and cleans up Redis metadata. |
+| `setGroupRateLimit-1.lua` | `extensions/` | Applies dynamic, cluster-wide throttling to a virtual group (e.g. upon upstream HTTP 429). |
+| `getGroupsByStatus-1.lua` | `extensions/` | Returns paginated virtual groups by status (`waiting`, `limited`, `maxed`, `paused`). |
+| `getGroupJobs-1.lua` | `extensions/` | Returns paginated job IDs waiting inside a specific virtual group. |
+| `repairGroup-1.lua` | `extensions/` | Self-healing atomic reconciliation of orphaned or desynchronized maxed virtual groups after ungraceful worker crashes. |
+
+---
+
+## Strict Lua Isolation & Upstream Synchronization Architecture
+
+A core architectural principle of OxMQ is **Upstream Maintainability**:
+
+1. **Frozen 49 Upstream Scripts**: All 49 core BullMQ scripts in `oxmq-core/src/main/resources/lua/` are kept 100% identical to the open-source BullMQ distribution. No custom OxMQ logic is ever injected into these files.
+2. **Dedicated Extensions Subfolder**: All custom OxMQ capabilities (such as Virtual Queue Groups) are placed in `resources/lua/extensions/` and invoked through `ExtensionScripts.java` and `ExtensionLuaScript.java`.
+3. **Zero Merge Conflicts on Sync**: When a new open-source BullMQ version is released, the upstream Lua scripts can be updated directly via script or copy with **zero risk of merge conflicts or regressions** in OxMQ's enterprise features.
+
 ---
 
 ## Upstream Synchronization & Optimizations (BullMQ v5 / v6 Parity)

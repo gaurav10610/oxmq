@@ -62,7 +62,7 @@ public class GraphWebhookController {
     }
 
     /**
-     * Ingestion endpoint receiving change notifications for SharePoint Libraries & OneDrives.
+     * Ingestion endpoint receiving change notifications for SharePoint Libraries &amp; OneDrives.
      * Decouples synchronous HTTP delivery by immediately enqueuing DriveDeltaSyncPayload at Priority 1.
      */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)

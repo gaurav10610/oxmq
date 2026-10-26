@@ -86,11 +86,30 @@ queue.add(
 
 ---
 
-## 🔓 Early Release of Deduplication Keys
+## 🔍 Querying & Early Releasing Deduplication Keys
 
-If a job completes and you immediately want to allow new submissions with the same key:
+### 1. Query Active Job ID by Deduplication Key
+You can query the active job associated with any deduplication ID in $O(1)$ time complexity without scanning queue lists:
 
 ```java
+// Query via Queue
+String activeJobId = queue.getDeduplicationJobId("catalog_reindex");
+if (activeJobId != null) {
+    System.out.println("Job " + activeJobId + " currently holds deduplication key");
+}
+
+// Or via Spring Boot OxmqTemplate
+String jobId = oxmqTemplate.getDeduplicationJobId("search-queue", "catalog_reindex");
+```
+
+### 2. Early Release of Deduplication Keys
+If a job completes or is administratively cancelled and you immediately want to allow new submissions with the same key before the TTL expires:
+
+```java
+// Via Queue
 queue.removeDeduplicationKey("catalog_reindex");
+
+// Via Spring Boot OxmqTemplate
+oxmqTemplate.removeDeduplicationKey("search-queue", "catalog_reindex");
 ```
 BullMQ's `removeDeduplicationKey-1.lua` clears the Redis deduplication lock.

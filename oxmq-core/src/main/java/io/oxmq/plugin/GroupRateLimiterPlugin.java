@@ -1,5 +1,6 @@
 package io.oxmq.plugin;
 
+import io.lettuce.core.RedisException;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.micrometer.core.instrument.Counter;
@@ -9,8 +10,11 @@ import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.interceptor.InterceptorDecision;
 import io.oxmq.interceptor.JobInterceptor;
 import io.oxmq.model.Job;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -40,8 +44,24 @@ public class GroupRateLimiterPlugin implements JobInterceptor {
     private final Duration windowDuration;
     private final long retryDelayMs;
     private final MeterRegistry meterRegistry;
+    private final String windowTtlSecondsString;
 
     private final ConcurrentMap<String, AtomicLong> yieldCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> yieldMetricCounters = new ConcurrentHashMap<>();
+    private static final String INCR_EXPIRE_SCRIPT =
+            "local c = redis.call('INCR', KEYS[1]); if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return c";
+    private static final String INCR_EXPIRE_SCRIPT_SHA;
+    static {
+        String sha;
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] d = md.digest(INCR_EXPIRE_SCRIPT.getBytes(StandardCharsets.UTF_8));
+            sha = HexFormat.of().formatHex(d);
+        } catch (Exception e) {
+            sha = null;
+        }
+        INCR_EXPIRE_SCRIPT_SHA = sha;
+    }
 
     public GroupRateLimiterPlugin(
             RedisConnectionManager connectionManager,
@@ -70,6 +90,7 @@ public class GroupRateLimiterPlugin implements JobInterceptor {
         this.windowDuration = windowDuration != null ? windowDuration : Duration.ofSeconds(1);
         this.retryDelayMs = Math.max(20, retryDelayMs);
         this.meterRegistry = meterRegistry != null ? meterRegistry : Metrics.globalRegistry;
+        this.windowTtlSecondsString = String.valueOf(Math.max(2, this.windowDuration.toSeconds() + 1));
     }
 
     public static Builder builder() {
@@ -102,20 +123,31 @@ public class GroupRateLimiterPlugin implements JobInterceptor {
             StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
             RedisCommands<String, String> sync = conn.sync();
 
-            Long currentUsage = sync.incr(redisKey);
-            if (currentUsage != null && currentUsage == 1) {
-                sync.expire(redisKey, Math.max(2, windowDuration.toSeconds() + 1));
+            String[] redisKeys = new String[]{redisKey};
+            Long currentUsage;
+            if (INCR_EXPIRE_SCRIPT_SHA != null) {
+                try {
+                    currentUsage = sync.evalsha(INCR_EXPIRE_SCRIPT_SHA, io.lettuce.core.ScriptOutputType.INTEGER,
+                            redisKeys, windowTtlSecondsString);
+                } catch (RedisException ex) {
+                    currentUsage = sync.eval(INCR_EXPIRE_SCRIPT, io.lettuce.core.ScriptOutputType.INTEGER,
+                            redisKeys, windowTtlSecondsString);
+                }
+            } else {
+                currentUsage = sync.eval(INCR_EXPIRE_SCRIPT, io.lettuce.core.ScriptOutputType.INTEGER,
+                        redisKeys, windowTtlSecondsString);
             }
 
             if (currentUsage != null && currentUsage > limit) {
                 yieldCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
                 if (meterRegistry != null) {
                     try {
-                        Counter.builder("oxmq.plugin.ratelimiter.yields")
+                        String q = job.getQueueName() != null ? job.getQueueName() : "unknown";
+                        yieldMetricCounters.computeIfAbsent(groupKey + "::" + q, k -> Counter.builder("oxmq.plugin.ratelimiter.yields")
                                 .description("Jobs delayed by GroupRateLimiterPlugin due to quota exhaustion")
                                 .tag("group", groupKey)
-                                .tag("queue", job.getQueueName() != null ? job.getQueueName() : "unknown")
-                                .register(meterRegistry)
+                                .tag("queue", q)
+                                .register(meterRegistry))
                                 .increment();
                     } catch (Exception ignored) {}
                 }

@@ -29,62 +29,68 @@ public class FlowProducer implements Closeable {
     private final JobSerializer serializer;
     private final String defaultPrefix;
     private final String clusterTag;
+    private final boolean ownsConnectionManager;
 
     public static FlowProducer forCluster(String clusterTag, String redisUri) {
-        return new FlowProducer(new RedisConnectionManager(redisUri), null, clusterTag);
+        return new FlowProducer(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, true);
     }
 
     public static FlowProducer forCluster(String clusterTag, RedisClient redisClient) {
-        return new FlowProducer(new RedisConnectionManager(redisClient), null, clusterTag);
+        return new FlowProducer(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, true);
     }
 
     public static FlowProducer forCluster(String clusterTag, RedisConnectionManager connectionManager) {
-        return new FlowProducer(connectionManager, null, clusterTag);
+        return new FlowProducer(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, false);
     }
 
     public FlowProducer(String redisUri) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, null, true);
     }
 
     public FlowProducer(String redisUri, String defaultPrefix) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, true);
     }
 
     public FlowProducer(RedisClient redisClient) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, null, true);
     }
 
     public FlowProducer(RedisClient redisClient, String defaultPrefix) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, true);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix, String clusterTag) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, clusterTag);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, clusterTag, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
-        this(connectionManager, scriptManager, serializer, null, null);
+        this(connectionManager, scriptManager, serializer, null, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix) {
-        this(connectionManager, scriptManager, serializer, defaultPrefix, null);
+        this(connectionManager, scriptManager, serializer, defaultPrefix, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix, String clusterTag) {
+        this(connectionManager, scriptManager, serializer, defaultPrefix, clusterTag, false);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix, String clusterTag, boolean ownsConnectionManager) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.defaultPrefix = defaultPrefix;
         this.clusterTag = clusterTag;
+        this.ownsConnectionManager = ownsConnectionManager;
     }
 
     public String getDefaultPrefix() {
@@ -193,12 +199,70 @@ public class FlowProducer implements Closeable {
                 if (node.getOpts().isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
             }
 
-            // Recursively add all children
+            // Recursively add all children (pipelining leaf tasks for high-speed DAG ingestion)
+            java.util.List<FlowJob<?>> leafChildren = new java.util.ArrayList<>();
             for (FlowJob<?> child : node.getChildren()) {
-                addNode(child, nodeParentKey, childParentObj);
+                if (child.getChildren().isEmpty()) {
+                    leafChildren.add(child);
+                } else {
+                    addNode(child, nodeParentKey, childParentObj);
+                }
+            }
+
+            if (!leafChildren.isEmpty()) {
+                addLeafChildrenPipelined(leafChildren, nodeParentKey, childParentObj);
             }
 
             return parentId;
+        }
+    }
+
+    private void addLeafChildrenPipelined(java.util.List<FlowJob<?>> leaves, String parentKey, Map<String, Object> parentObj) {
+        if (leaves.size() == 1) {
+            addNode(leaves.get(0), parentKey, parentObj);
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        java.util.List<java.util.concurrent.CompletableFuture<String>> futures = new java.util.ArrayList<>(leaves.size());
+        io.lettuce.core.api.StatefulRedisConnection<String, byte[]> conn = connectionManager.getBinaryConnection();
+        Map<String, QueueKeys> localKeysCache = new HashMap<>();
+
+        for (FlowJob<?> leaf : leaves) {
+            String queueName = leaf.getQueueName();
+            String nodePrefix = leaf.getPrefix() != null && !leaf.getPrefix().isBlank() ? leaf.getPrefix() : defaultPrefix;
+            String cacheKey = (nodePrefix != null ? nodePrefix : "") + ":" + queueName;
+            QueueKeys queueKeys = localKeysCache.computeIfAbsent(cacheKey, k ->
+                    (clusterTag != null && !clusterTag.isBlank())
+                            ? QueueKeys.forClusterFlow(clusterTag, nodePrefix, queueName)
+                            : new QueueKeys(nodePrefix, queueName)
+            );
+
+            String customJobId = leaf.getOpts() != null ? leaf.getOpts().getJobId() : null;
+            String serializedData = serializer.serialize(leaf.getData());
+
+            Map<String, Object> optsMap = leaf.getOpts() != null ? leaf.getOpts().toMap() : new HashMap<>();
+            if (parentKey != null) {
+                optsMap.put("parentKey", parentKey);
+            }
+            if (parentObj != null) {
+                Map<String, Object> effectiveParentObj = new HashMap<>(parentObj);
+                if (leaf.getOpts() != null) {
+                    if (leaf.getOpts().isFailParentOnFailure()) effectiveParentObj.put("fpof", true);
+                    if (leaf.getOpts().isContinueParentOnFailure()) effectiveParentObj.put("cpof", true);
+                    if (leaf.getOpts().isIgnoreDependencyOnFailure()) effectiveParentObj.put("idof", true);
+                    if (leaf.getOpts().isRemoveDependencyOnFailure()) effectiveParentObj.put("rdof", true);
+                }
+                optsMap.put("parent", effectiveParentObj);
+            }
+
+            futures.add(bullScripts.addStandardJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now));
+        }
+
+        try {
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Error awaiting pipelined leaf flow jobs: {}", e.getMessage(), e);
         }
     }
 
@@ -248,6 +312,9 @@ public class FlowProducer implements Closeable {
         io.oxmq.model.Job<Object> job = new io.oxmq.model.Job<>(jobId, name, dataStr, opts);
         job.setQueueName(queueName);
         String attemptsStr = fields.get("attemptsMade");
+        if (attemptsStr == null) {
+            attemptsStr = fields.get("atm");
+        }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
         String progressStr = fields.get("progress");
         if (progressStr != null) {
@@ -289,6 +356,8 @@ public class FlowProducer implements Closeable {
 
     @Override
     public void close() {
-        connectionManager.close();
+        if (ownsConnectionManager) {
+            connectionManager.close();
+        }
     }
 }

@@ -252,3 +252,33 @@ A central innovation in OxMQ is its non-destructive job deferral model.
 | **Cluster Scalability** | Low (OOM under large thread pools) | Poor (causes DLQ poisoning) | **Linear scale (zero heap overhead)** |
 
 In OxMQ, calling `moveToDelayed(delayMs, skipAttempt = true)` invokes upstream BullMQ Lua scripts directly. The job is placed in Redis `delayed` sorted set ordered by execution timestamp. The retry attempt count is preserved, guaranteeing that transient rate limiting never results in false-positive job failures or Dead Letter Queue poisoning.
+
+---
+
+## 9. Cooperative Multi-Tier Admission & Zero-Data-Loss Backpressure Gate
+
+To guarantee total system stability across both external cloud API quotas and internal Redis memory budgets, OxDoc 365 chains 4 cooperative admission control mechanisms:
+
+```mermaid
+flowchart TD
+    Job["Dispatched Job<br/>(drive-delta-sync-queue)"] --> L1{"1. RateLimitSentinel<br/>Active 429 Cooldown?"}
+    
+    L1 -- "Yes (HTTP 429)" --> D1["delay(remainingMs, skipAttempt=true)<br/>(Zero network calls)"]
+    L1 -- "No" --> L2{"2. GroupRateLimiter<br/>Token Bucket Quota Available?"}
+    
+    L2 -- "Quota Depleted" --> D2["delay(150ms, skipAttempt=true)"]
+    L2 -- "Quota OK" --> L3{"3. PriorityQuotaGovernor<br/>Priority 10 & Headroom < 25%?"}
+    
+    L3 -- "Yes (Low Headroom)" --> D3["delay(200ms, skipAttempt=true)<br/>(Protects Priority 1 Webhooks)"]
+    L3 -- "Priority 1 OR Headroom >= 25%" --> L4{"4. BackpressureService<br/>RAM >= 170 MB OR Backlog >= 35k?"}
+    
+    L4 -- "Yes (PACING Active)" --> D4["delay(2500ms, skipAttempt=true)<br/>(Protects Strict 200 MB Ceiling)"]
+    L4 -- "No (NORMAL)" --> Exec["Execute Worker Business Logic<br/>(Process Page & Emit DAG)"]
+```
+
+### 9.1 Memory Ceiling & Queue Backlog Protection
+While Tiers 1-3 govern external Graph API quota consumption, Tier 4 ([`BackpressureService`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/service/BackpressureService.java)) governs internal cluster memory:
+* **Ceiling Target:** Strict $200.0\text{ MB}$ Redis memory limit.
+* **Dual Sensing:** Asynchronously polls Redis `used_memory` via Lettuce `INFO memory` and sums pending jobs across downstream extraction and categorization queues.
+* **Zero Data Loss Pacing:** Paces delta continuation requests by $2,500\text{ ms}$ via `delay(2500ms, skipAttempt=true)`, allowing downstream child workers to drain extraction backlogs without consuming job retry attempts.
+* **Real-Time Priority 1 Exemption:** Real-time user uploads carrying `ProcessingOrigin.FORWARD` are explicitly exempt from Tier 4 backpressure pacing, guaranteeing sub-second indexing latencies even when historical crawls are paced.

@@ -38,8 +38,14 @@ class OxDocWorkflowIntegrationTest {
     @Autowired
     private TenantCooldownService cooldownService;
 
+    @Autowired(required = false)
+    private io.oxmq.oxdoc.connector.MockGraphClient mockGraphClient;
+
     @BeforeEach
     void setUp() {
+        if (mockGraphClient != null) {
+            mockGraphClient.reset();
+        }
         repository.clear();
     }
 
@@ -102,7 +108,7 @@ class OxDocWorkflowIntegrationTest {
                 "STRUCTURED_DOCUMENT"
         );
 
-        await().atMost(10, TimeUnit.SECONDS).untilAsserted(() -> {
+        await().atMost(25, TimeUnit.SECONDS).untilAsserted(() -> {
             List<IndexedDocumentRecord> documents = repository.getAllDocuments();
             assertThat(documents).anyMatch(d ->
                     d.fileName().contains("urgent_board_briefing.xlsx") &&

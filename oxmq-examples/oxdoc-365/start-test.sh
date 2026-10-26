@@ -311,7 +311,8 @@ for tenant_id in "tenant-smb-250" "tenant-mid-2500" "tenant-ent-10k" "tenant-lar
 done
 
 # Check application log for unhandled errors
-ERROR_COUNT=$(grep -c "ERROR" "${LOG_FILE}" 2>/dev/null || echo "0")
+ERROR_COUNT=$(grep -c "ERROR" "${LOG_FILE}" 2>/dev/null || true)
+ERROR_COUNT="${ERROR_COUNT:-0}"
 echo -e "\n  📋 ${BOLD}Log Inspection (${LOG_FILE}):${NC}"
 if [ "${ERROR_COUNT}" -eq 0 ]; then
     echo -e "     ${GREEN}✔ Zero errors in application log! Execution clean.${NC}"
