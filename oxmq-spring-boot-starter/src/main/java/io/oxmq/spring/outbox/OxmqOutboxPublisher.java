@@ -210,10 +210,11 @@ public class OxmqOutboxPublisher implements SmartLifecycle {
     }
 
     private JobOptions parseOptions(OxmqOutboxRecord record) {
+        String optsJson = record.getOptionsJson();
         JobOptions options = null;
-        if (record.getOptionsJson() != null && !record.getOptionsJson().isBlank()) {
+        if (optsJson != null && !optsJson.isBlank() && !"{}".equals(optsJson)) {
             try {
-                options = serializer.deserialize(record.getOptionsJson(), JobOptions.class);
+                options = serializer.deserialize(optsJson, JobOptions.class);
             } catch (Exception e) {
                 log.debug("Failed to deserialize options for outbox record {}: {}", record.getId(), e.getMessage());
             }

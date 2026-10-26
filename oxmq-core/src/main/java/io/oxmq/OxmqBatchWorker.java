@@ -20,6 +20,7 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -76,6 +77,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private Thread pollerThread;
     private LockExtender lockExtender;
     private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
+    private io.lettuce.core.pubsub.RedisPubSubListener<String, String> controlListener;
     private final io.oxmq.model.JobContext batchWorkerJobContext;
 
     private record ActiveBatchExecution<T>(List<Job<T>> jobs, Thread thread) {}
@@ -235,11 +237,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private void startControlListener() {
         try {
-            this.controlPubSubConn = connectionManager.getClient().connectPubSub();
-            this.controlPubSubConn.addListener(new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
+            this.controlPubSubConn = connectionManager.getPubSubConnection();
+            this.controlListener = new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
                 @Override
                 public void message(String channel, String message) {
-                    if (message != null && message.startsWith("CANCEL:")) {
+                    if (channel != null && channel.equals(queueKeys.toKey("control"))
+                            && message != null && message.startsWith("CANCEL:")) {
                         String[] parts = message.split(":", 3);
                         if (parts.length >= 2) {
                             String targetJobId = parts[1];
@@ -252,7 +255,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                         }
                     }
                 }
-            });
+            };
+            this.controlPubSubConn.addListener(this.controlListener);
             this.controlPubSubConn.sync().subscribe(queueKeys.toKey("control"));
             log.debug("OxMQ Batch Worker [{}] subscribed to control channel {}", workerId, queueKeys.toKey("control"));
         } catch (Exception e) {
@@ -556,31 +560,34 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     private void completeBatch(List<Job<T>> jobs, Object result, Duration duration) {
         String serializedResult = serializer.serialize(result);
+        var binConn = connectionManager.getBinaryConnection();
+        List<CompletableFuture<?>> futures = new ArrayList<>(jobs.size() * 2);
+
         for (Job<T> job : jobs) {
-            try {
-                JobOptions opts = job.getOpts();
-                bullScripts.moveToFinished(
-                    connectionManager.getBinaryConnection(),
-                    queueKeys,
-                    job.getId(),
-                    serializedResult,
-                    "returnvalue",
-                    "completed",
-                    workerId,
-                    false,
-                    opts != null ? opts.toMap() : Map.of()
-                );
-                String groupId = job.getGroupKey();
-                if (groupId != null && !groupId.isBlank()) {
-                    try {
-                        extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
-                    } catch (Exception e) {
-                        log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("Failed to mark job {} completed in batch: {}", job.getId(), e.getMessage());
+            JobOptions opts = job.getOpts();
+            futures.add(bullScripts.moveToFinishedAsync(
+                binConn,
+                queueKeys,
+                job.getId(),
+                serializedResult,
+                "returnvalue",
+                "completed",
+                workerId,
+                false,
+                opts != null ? opts.toMap() : Map.of()
+            ));
+
+            String groupId = job.getGroupKey();
+            if (groupId != null && !groupId.isBlank()) {
+                futures.add(extensionScripts.decrementGroupActiveAsync(binConn, queueKeys, groupId, groupConcurrency));
             }
+        }
+
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .get(15, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Error awaiting pipelined batch completion on queue {}: {}", queueName, e.getMessage());
         }
     }
 
@@ -608,13 +615,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         Map.entry("ats", "ats")
     );
 
-    private void failBatch(List<Job<T>> jobs, Throwable error, Duration duration) {
-        for (Job<T> job : jobs) {
-            failSingleJob(job, error, duration);
-        }
+    private void failSingleJob(Job<T> job, Throwable error, Duration duration) {
+        failBatch(List.of(job), error, duration);
     }
 
-    private void failSingleJob(Job<T> job, Throwable error, Duration duration) {
+    private void failBatch(List<Job<T>> jobs, Throwable error, Duration duration) {
         StringWriter sw = new StringWriter();
         if (error != null) {
             error.printStackTrace(new PrintWriter(sw));
@@ -626,7 +631,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             stackTrace = stackTrace.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
         }
 
-        try {
+        var binConn = connectionManager.getBinaryConnection();
+        List<CompletableFuture<?>> futures = new ArrayList<>(jobs.size() * 2);
+
+        for (Job<T> job : jobs) {
             JobOptions opts = job.getOpts();
             String failedReasonValue;
             if (job.isCancelled()) {
@@ -636,8 +644,9 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             } else {
                 failedReasonValue = stackTrace;
             }
-            bullScripts.moveToFinished(
-                connectionManager.getBinaryConnection(),
+
+            futures.add(bullScripts.moveToFinishedAsync(
+                binConn,
                 queueKeys,
                 job.getId(),
                 failedReasonValue,
@@ -646,17 +655,19 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 workerId,
                 false,
                 opts != null ? opts.toMap() : Map.of()
-            );
+            ));
+
             String groupId = job.getGroupKey();
             if (groupId != null && !groupId.isBlank()) {
-                try {
-                    extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
-                } catch (Exception e) {
-                    log.debug("Failed to decrement group active count for {}: {}", groupId, e.getMessage());
-                }
+                futures.add(extensionScripts.decrementGroupActiveAsync(binConn, queueKeys, groupId, groupConcurrency));
             }
+        }
+
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+                    .get(15, TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.warn("Failed to mark job {} failed in batch: {}", job.getId(), e.getMessage());
+            log.warn("Error awaiting pipelined batch failure on queue {}: {}", queueName, e.getMessage());
         }
     }
 
@@ -669,7 +680,9 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         String parentKeyStr = fields.get("parentKey");
 
         T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
-        JobOptions opts = serializer.deserialize(optsStr, JobOptions.class);
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
@@ -837,7 +850,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
             if (controlPubSubConn != null) {
                 try {
-                    controlPubSubConn.close();
+                    controlPubSubConn.sync().unsubscribe(queueKeys.toKey("control"));
+                    if (controlListener != null) {
+                        controlPubSubConn.removeListener(controlListener);
+                    }
                 } catch (Exception ignored) {}
             }
 

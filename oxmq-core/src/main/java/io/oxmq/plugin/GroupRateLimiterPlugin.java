@@ -42,6 +42,9 @@ public class GroupRateLimiterPlugin implements JobInterceptor {
     private final MeterRegistry meterRegistry;
 
     private final ConcurrentMap<String, AtomicLong> yieldCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> yieldMetricCounters = new ConcurrentHashMap<>();
+    private static final String INCR_EXPIRE_SCRIPT =
+            "local c = redis.call('INCR', KEYS[1]); if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end; return c";
 
     public GroupRateLimiterPlugin(
             RedisConnectionManager connectionManager,
@@ -102,20 +105,19 @@ public class GroupRateLimiterPlugin implements JobInterceptor {
             StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
             RedisCommands<String, String> sync = conn.sync();
 
-            Long currentUsage = sync.incr(redisKey);
-            if (currentUsage != null && currentUsage == 1) {
-                sync.expire(redisKey, Math.max(2, windowDuration.toSeconds() + 1));
-            }
+            Long currentUsage = sync.eval(INCR_EXPIRE_SCRIPT, io.lettuce.core.ScriptOutputType.INTEGER,
+                    new String[]{redisKey}, String.valueOf(Math.max(2, windowDuration.toSeconds() + 1)));
 
             if (currentUsage != null && currentUsage > limit) {
                 yieldCounters.computeIfAbsent(groupKey, k -> new AtomicLong(0)).incrementAndGet();
                 if (meterRegistry != null) {
                     try {
-                        Counter.builder("oxmq.plugin.ratelimiter.yields")
+                        String q = job.getQueueName() != null ? job.getQueueName() : "unknown";
+                        yieldMetricCounters.computeIfAbsent(groupKey + "::" + q, k -> Counter.builder("oxmq.plugin.ratelimiter.yields")
                                 .description("Jobs delayed by GroupRateLimiterPlugin due to quota exhaustion")
                                 .tag("group", groupKey)
-                                .tag("queue", job.getQueueName() != null ? job.getQueueName() : "unknown")
-                                .register(meterRegistry)
+                                .tag("queue", q)
+                                .register(meterRegistry))
                                 .increment();
                     } catch (Exception ignored) {}
                 }

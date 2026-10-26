@@ -19,14 +19,20 @@ public class TracingJobInterceptor implements JobInterceptor {
 
     private final String traceIdKey;
     private final String spanIdKey;
+    private final boolean recordJobLog;
 
     public TracingJobInterceptor() {
-        this(DEFAULT_MDC_TRACE_ID_KEY, DEFAULT_MDC_SPAN_ID_KEY);
+        this(DEFAULT_MDC_TRACE_ID_KEY, DEFAULT_MDC_SPAN_ID_KEY, false);
     }
 
     public TracingJobInterceptor(String traceIdKey, String spanIdKey) {
+        this(traceIdKey, spanIdKey, false);
+    }
+
+    public TracingJobInterceptor(String traceIdKey, String spanIdKey, boolean recordJobLog) {
         this.traceIdKey = traceIdKey != null ? traceIdKey : DEFAULT_MDC_TRACE_ID_KEY;
         this.spanIdKey = spanIdKey != null ? spanIdKey : DEFAULT_MDC_SPAN_ID_KEY;
+        this.recordJobLog = recordJobLog;
     }
 
     @Override
@@ -35,9 +41,11 @@ public class TracingJobInterceptor implements JobInterceptor {
         if (ctx != null) {
             MDC.put(traceIdKey, ctx.traceId());
             MDC.put(spanIdKey, ctx.spanId());
-            try {
-                job.log("W3C OTel Trace: traceId=" + ctx.traceId() + ", spanId=" + ctx.spanId() + " (traceparent=" + ctx.asTraceparent() + ")");
-            } catch (Exception ignored) {}
+            if (recordJobLog) {
+                try {
+                    job.log("W3C OTel Trace: traceId=" + ctx.traceId() + ", spanId=" + ctx.spanId() + " (traceparent=" + ctx.asTraceparent() + ")");
+                } catch (Exception ignored) {}
+            }
         }
         return InterceptorDecision.proceed();
     }

@@ -104,7 +104,8 @@ public class OxmqAutoConfiguration {
     public TracingJobInterceptor oxmqTracingJobInterceptor(OxmqProperties properties) {
         return new TracingJobInterceptor(
                 properties.getTracing().getTraceIdKey(),
-                properties.getTracing().getSpanIdKey()
+                properties.getTracing().getSpanIdKey(),
+                properties.getTracing().isRecordJobLog()
         );
     }
 

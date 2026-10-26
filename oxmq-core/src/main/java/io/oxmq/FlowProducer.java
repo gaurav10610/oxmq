@@ -29,62 +29,68 @@ public class FlowProducer implements Closeable {
     private final JobSerializer serializer;
     private final String defaultPrefix;
     private final String clusterTag;
+    private final boolean ownsConnectionManager;
 
     public static FlowProducer forCluster(String clusterTag, String redisUri) {
-        return new FlowProducer(new RedisConnectionManager(redisUri), null, clusterTag);
+        return new FlowProducer(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, true);
     }
 
     public static FlowProducer forCluster(String clusterTag, RedisClient redisClient) {
-        return new FlowProducer(new RedisConnectionManager(redisClient), null, clusterTag);
+        return new FlowProducer(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, true);
     }
 
     public static FlowProducer forCluster(String clusterTag, RedisConnectionManager connectionManager) {
-        return new FlowProducer(connectionManager, null, clusterTag);
+        return new FlowProducer(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, clusterTag, false);
     }
 
     public FlowProducer(String redisUri) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), null, null, true);
     }
 
     public FlowProducer(String redisUri, String defaultPrefix) {
-        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(new RedisConnectionManager(redisUri), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, true);
     }
 
     public FlowProducer(RedisClient redisClient) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), null, null, true);
     }
 
     public FlowProducer(RedisClient redisClient, String defaultPrefix) {
-        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(new RedisConnectionManager(redisClient), new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, true);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, null);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), null, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, String defaultPrefix, String clusterTag) {
-        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, clusterTag);
+        this(connectionManager, new LuaScriptManager(), new JacksonJobSerializer(), defaultPrefix, clusterTag, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer) {
-        this(connectionManager, scriptManager, serializer, null, null);
+        this(connectionManager, scriptManager, serializer, null, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix) {
-        this(connectionManager, scriptManager, serializer, defaultPrefix, null);
+        this(connectionManager, scriptManager, serializer, defaultPrefix, null, false);
     }
 
     public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix, String clusterTag) {
+        this(connectionManager, scriptManager, serializer, defaultPrefix, clusterTag, false);
+    }
+
+    public FlowProducer(RedisConnectionManager connectionManager, LuaScriptManager scriptManager, JobSerializer serializer, String defaultPrefix, String clusterTag, boolean ownsConnectionManager) {
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.scriptManager = scriptManager != null ? scriptManager : new LuaScriptManager();
         this.bullScripts = new BullScripts(this.scriptManager);
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.defaultPrefix = defaultPrefix;
         this.clusterTag = clusterTag;
+        this.ownsConnectionManager = ownsConnectionManager;
     }
 
     public String getDefaultPrefix() {
@@ -343,6 +349,8 @@ public class FlowProducer implements Closeable {
 
     @Override
     public void close() {
-        connectionManager.close();
+        if (ownsConnectionManager) {
+            connectionManager.close();
+        }
     }
 }

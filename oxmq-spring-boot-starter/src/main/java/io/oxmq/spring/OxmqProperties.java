@@ -334,5 +334,15 @@ public class OxmqProperties {
         public void setSpanIdKey(String spanIdKey) {
             this.spanIdKey = spanIdKey;
         }
+
+        private boolean recordJobLog = false;
+
+        public boolean isRecordJobLog() {
+            return recordJobLog;
+        }
+
+        public void setRecordJobLog(boolean recordJobLog) {
+            this.recordJobLog = recordJobLog;
+        }
     }
 }

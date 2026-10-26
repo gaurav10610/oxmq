@@ -40,6 +40,7 @@ import org.slf4j.LoggerFactory;
 public class OxmqQueue<T> implements Queue<T> {
 
     private static final Logger log = LoggerFactory.getLogger(OxmqQueue.class);
+    private static final String[] DEFAULT_COUNT_TYPES = {"wait", "active", "delayed", "completed", "failed", "paused", "waiting-children", "prioritized"};
 
     private final String name;
     private final String prefix;
@@ -404,7 +405,9 @@ public class OxmqQueue<T> implements Queue<T> {
         String checkpointStepStr = fields.get("checkpoint_step");
 
         T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
-        JobOptions opts = serializer.deserialize(optsStr, JobOptions.class);
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(name);
@@ -684,11 +687,10 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public java.util.Map<String, Long> getJobCounts() {
-        String[] types = {"wait", "active", "delayed", "completed", "failed", "paused", "waiting-children", "prioritized"};
-        List<Long> counts = bullScripts.getCounts(connectionManager.getBinaryConnection(), queueKeys, types);
-        java.util.Map<String, Long> map = new java.util.LinkedHashMap<>();
-        for (int i = 0; i < types.length && i < counts.size(); i++) {
-            map.put(types[i], counts.get(i));
+        List<Long> counts = bullScripts.getCounts(connectionManager.getBinaryConnection(), queueKeys, DEFAULT_COUNT_TYPES);
+        java.util.Map<String, Long> map = new java.util.LinkedHashMap<>(DEFAULT_COUNT_TYPES.length);
+        for (int i = 0; i < DEFAULT_COUNT_TYPES.length && i < counts.size(); i++) {
+            map.put(DEFAULT_COUNT_TYPES[i], counts.get(i));
         }
         return map;
     }

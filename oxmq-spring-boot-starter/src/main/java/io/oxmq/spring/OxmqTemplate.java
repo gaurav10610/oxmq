@@ -98,7 +98,8 @@ public class OxmqTemplate {
     public <T> OxmqQueue<T> getQueue(String prefix, String queueName, Class<T> payloadClass) {
         Objects.requireNonNull(queueName, "queueName must not be null");
         String effectivePrefix = prefix != null && !prefix.isBlank() ? prefix.trim() : this.defaultPrefix;
-        String cacheKey = (effectivePrefix != null ? effectivePrefix : "bull") + ":" + queueName;
+        String cacheKey = (effectivePrefix != null ? effectivePrefix : "bull") + ":" + queueName
+                + ":" + (payloadClass != null ? payloadClass.getName() : "java.lang.Object");
         return (OxmqQueue<T>) queueCache.computeIfAbsent(cacheKey, k ->
                 OxmqQueue.<T>builder()
                         .prefix(effectivePrefix)

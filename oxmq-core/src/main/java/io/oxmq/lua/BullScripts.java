@@ -345,6 +345,56 @@ public class BullScripts {
             valueBytes, targetBytes, fetchNextBytes, prefixBytes, optsBytes, emptyFieldsBytes);
     }
 
+    public CompletableFuture<Object> moveToFinishedAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                         QueueKeys keys, String jobId, String value,
+                                                         String propVal, String target, String token,
+                                                         boolean fetchNext, Map<String, Object> jobOpts) {
+        String[] redisKeys = new String[] {
+            keys.getKey("wait"),
+            keys.getKey("active"),
+            keys.getKey("prioritized"),
+            keys.getKey("events"),
+            keys.getKey("stalled"),
+            keys.getKey("limiter"),
+            keys.getKey("delayed"),
+            keys.getKey("paused"),
+            keys.getKey("meta"),
+            keys.getKey("pc"),
+            keys.getKey(target),
+            keys.toJobKey(jobId),
+            keys.toKey("metrics:" + target),
+            keys.getKey("marker")
+        };
+
+        long timestamp = System.currentTimeMillis();
+        Map<String, Object> packedOpts = new HashMap<>();
+        packedOpts.put("token", token != null ? token : "0");
+        packedOpts.put("keepJobs", resolveKeepJobs(target, jobOpts));
+        packedOpts.put("maxMetricsSize", "");
+        packedOpts.put("attempts", (jobOpts != null && jobOpts.get("attempts") != null) ? jobOpts.get("attempts") : 1);
+        if (jobOpts != null) {
+            packedOpts.put("fpof", Boolean.TRUE.equals(jobOpts.get("failParentOnFailure")));
+            packedOpts.put("cpof", Boolean.TRUE.equals(jobOpts.get("continueParentOnFailure")));
+            packedOpts.put("idof", Boolean.TRUE.equals(jobOpts.get("ignoreDependencyOnFailure")));
+            packedOpts.put("rdof", Boolean.TRUE.equals(jobOpts.get("removeDependencyOnFailure")));
+        }
+
+        byte[] jobIdBytes = jobId.getBytes(StandardCharsets.UTF_8);
+        byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
+        byte[] propValBytes = propVal.getBytes(StandardCharsets.UTF_8);
+        byte[] valueBytes = (value != null ? value : "").getBytes(StandardCharsets.UTF_8);
+        byte[] targetBytes = target.getBytes(StandardCharsets.UTF_8);
+        byte[] fetchNextBytes = (fetchNext ? "1" : "").getBytes(StandardCharsets.UTF_8);
+        byte[] prefixBytes = keys.getPrefixBytes();
+        byte[] optsBytes = BullMsgPack.pack(packedOpts);
+        byte[] emptyFieldsBytes = new byte[0];
+
+        return scriptManager.evalBinaryAsync(connection, LuaScript.MOVE_TO_FINISHED,
+            ScriptOutputType.MULTI, redisKeys, jobIdBytes, tsBytes, propValBytes,
+            valueBytes, targetBytes, fetchNextBytes, prefixBytes, optsBytes, emptyFieldsBytes)
+            .toCompletableFuture();
+    }
+
     public boolean extendLock(StatefulRedisConnection<String, byte[]> connection,
                               QueueKeys keys, String jobId, String token, int durationMs) {
         String[] redisKeys = new String[] {

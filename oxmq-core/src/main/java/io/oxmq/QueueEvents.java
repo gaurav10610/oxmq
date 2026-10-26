@@ -180,9 +180,9 @@ public class QueueEvents implements Closeable {
                 }
             }
 
-            Map<String, Object> payload = new HashMap<>(body);
             List<BiConsumer<String, Map<String, Object>>> listeners = eventListeners.get(event);
-            if (listeners != null) {
+            if (listeners != null && !listeners.isEmpty()) {
+                Map<String, Object> payload = new HashMap<>(body);
                 for (var listener : listeners) {
                     try {
                         listener.accept(jobId, payload);

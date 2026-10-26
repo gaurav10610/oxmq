@@ -94,6 +94,7 @@ public class OxmqWorker<T> implements Worker<T> {
     private java.util.concurrent.ScheduledExecutorService timeoutWatchdog;
     private final Map<String, Long> jobTimeoutsMs;
     private io.lettuce.core.pubsub.StatefulRedisPubSubConnection<String, String> controlPubSubConn;
+    private io.lettuce.core.pubsub.RedisPubSubListener<String, String> controlListener;
     private final byte[] defaultWorkerOptsBytes;
     private final io.oxmq.model.JobContext workerJobContext;
 
@@ -368,11 +369,12 @@ public class OxmqWorker<T> implements Worker<T> {
 
     private void startControlListener() {
         try {
-            this.controlPubSubConn = connectionManager.getClient().connectPubSub();
-            this.controlPubSubConn.addListener(new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
+            this.controlPubSubConn = connectionManager.getPubSubConnection();
+            this.controlListener = new io.lettuce.core.pubsub.RedisPubSubAdapter<>() {
                 @Override
                 public void message(String channel, String message) {
-                    if (message != null && message.startsWith("CANCEL:")) {
+                    if (channel != null && channel.equals(queueKeys.toKey("control"))
+                            && message != null && message.startsWith("CANCEL:")) {
                         String[] parts = message.split(":", 3);
                         if (parts.length >= 2) {
                             String targetJobId = parts[1];
@@ -385,7 +387,8 @@ public class OxmqWorker<T> implements Worker<T> {
                         }
                     }
                 }
-            });
+            };
+            this.controlPubSubConn.addListener(this.controlListener);
             this.controlPubSubConn.sync().subscribe(queueKeys.toKey("control"));
             log.debug("OxMQ Worker [{}] subscribed to control channel {}", workerId, queueKeys.toKey("control"));
         } catch (Exception e) {
@@ -861,7 +864,9 @@ public class OxmqWorker<T> implements Worker<T> {
         String parentKeyStr = fields.get("parentKey");
 
         T data = payloadClass != null ? serializer.deserialize(dataStr, payloadClass) : (T) dataStr;
-        JobOptions opts = serializer.deserialize(optsStr, JobOptions.class);
+        JobOptions opts = (optsStr == null || optsStr.isBlank() || "{}".equals(optsStr))
+                ? JobOptions.defaults()
+                : serializer.deserialize(optsStr, JobOptions.class);
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
@@ -1304,7 +1309,10 @@ public class OxmqWorker<T> implements Worker<T> {
 
             if (controlPubSubConn != null) {
                 try {
-                    controlPubSubConn.close();
+                    controlPubSubConn.sync().unsubscribe(queueKeys.toKey("control"));
+                    if (controlListener != null) {
+                        controlPubSubConn.removeListener(controlListener);
+                    }
                 } catch (Exception ignored) {}
             }
 
