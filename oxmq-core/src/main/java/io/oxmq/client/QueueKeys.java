@@ -327,11 +327,21 @@ public class QueueKeys {
     }
 
     public String[] getMoveToFinishedKeys(String target, String jobId) {
-        String[] keys = "completed".equals(target)
-                ? moveToCompletedKeysTemplate.clone()
-                : moveToFailedKeysTemplate.clone();
-        keys[11] = toJobKey(jobId);
-        return keys;
+        if ("completed".equals(target)) {
+            String[] keys = moveToCompletedKeysTemplate.clone();
+            keys[11] = toJobKey(jobId);
+            return keys;
+        } else if ("failed".equals(target)) {
+            String[] keys = moveToFailedKeysTemplate.clone();
+            keys[11] = toJobKey(jobId);
+            return keys;
+        } else {
+            String[] keys = moveToCompletedKeysTemplate.clone();
+            keys[10] = getKey(target);
+            keys[11] = toJobKey(jobId);
+            keys[12] = toKey("metrics:" + target);
+            return keys;
+        }
     }
 
     public String[] getMoveToDelayedKeys(String jobId) {

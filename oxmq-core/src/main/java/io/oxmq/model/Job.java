@@ -366,9 +366,6 @@ public class Job<T> {
     }
 
     public JobState getState() {
-        if (this.state != null) {
-            return this.state;
-        }
         if (context != null) {
             JobState fetched = context.getState(this.id);
             if (fetched != null) {

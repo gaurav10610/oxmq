@@ -28,7 +28,7 @@ import org.springframework.stereotype.Component;
 /**
  * Executes incremental delta synchronization on drives.
  * Enforces Forward (Priority 1) vs Backward (Priority 10) priority arbitration,
- * yields capacity when tenant token headroom < 25%, and dispatches OxMQ FlowProducer DAGs.
+ * yields capacity when tenant token headroom &lt; 25%, and dispatches OxMQ FlowProducer DAGs.
  * Checkpoints delta tokens using native OxMQ CheckpointStatePlugin and PostgreSQL for seamless crash recovery.
  */
 @Component

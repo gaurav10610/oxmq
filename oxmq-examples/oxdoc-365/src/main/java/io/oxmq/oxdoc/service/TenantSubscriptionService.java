@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
  * <p>
  * Implements a 4-level fallback waterfall:
  * 1. Static Configuration / Admin API Override
- * 2. Microsoft Graph GET /v1.0/subscribedSkus (Seat Count & SKU)
+ * 2. Microsoft Graph GET /v1.0/subscribedSkus (Seat Count &amp; SKU)
  * 3. Heuristic User Count Fallback via GET /v1.0/users?$count=true (User.Read.All)
  * 4. Safe Baseline Fallback (Tier 1: SMB - 250 seats, 25 RUs/s)
  */

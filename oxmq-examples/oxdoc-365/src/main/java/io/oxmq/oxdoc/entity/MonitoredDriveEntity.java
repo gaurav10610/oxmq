@@ -10,7 +10,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 /**
- * PostgreSQL Entity persisting discovered monitored drives (SharePoint libraries & user OneDrives).
+ * PostgreSQL Entity persisting discovered monitored drives (SharePoint libraries &amp; user OneDrives).
  */
 @Entity
 @Table(name = "oxdoc_monitored_drives")

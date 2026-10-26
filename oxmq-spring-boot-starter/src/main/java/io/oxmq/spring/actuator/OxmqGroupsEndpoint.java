@@ -27,7 +27,7 @@ public class OxmqGroupsEndpoint {
 
     /**
      * Lists virtual groups and breakdown of pending job counts across groups for a queue.
-     * GET /actuator/oxmq-groups?queue=notifications&limit=50
+     * {@code GET /actuator/oxmq-groups?queue=notifications&limit=50}
      */
     @ReadOperation
     public Map<String, Object> getGroupsOverview(String queue, @Nullable Integer limit) {
