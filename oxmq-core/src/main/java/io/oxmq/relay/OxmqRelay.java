@@ -1,6 +1,9 @@
 package io.oxmq.relay;
 
+import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import io.lettuce.core.pubsub.RedisPubSubAdapter;
@@ -313,12 +316,18 @@ public class OxmqRelay implements AutoCloseable {
     public List<String> getActiveNodes() {
         try {
             RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-            List<String> keys = sync.keys(nodesKeyPrefix + "*");
-            if (keys == null || keys.isEmpty()) return List.of();
-            List<String> nodes = new ArrayList<>(keys.size());
-            for (String key : keys) {
-                nodes.add(key.substring(nodesKeyPrefix.length()));
-            }
+            List<String> nodes = new ArrayList<>();
+            ScanCursor scanCursor = ScanCursor.INITIAL;
+            ScanArgs scanArgs = ScanArgs.Builder.matches(nodesKeyPrefix + "*").limit(100);
+            do {
+                KeyScanCursor<String> cursor = sync.scan(scanCursor, scanArgs);
+                if (cursor.getKeys() != null) {
+                    for (String key : cursor.getKeys()) {
+                        nodes.add(key.substring(nodesKeyPrefix.length()));
+                    }
+                }
+                scanCursor = cursor;
+            } while (!scanCursor.isFinished());
             return nodes;
         } catch (Exception e) {
             return List.of();

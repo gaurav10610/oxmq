@@ -100,4 +100,57 @@ public class FlowProducerIntegrationTest {
         childWorker.close();
         parentWorker.close();
     }
+
+    @Test
+    void testFlowLeafNodeDelayAndPriority() throws Exception {
+        FlowJob<String> parent = FlowJob.of(parentQueue, "parent-task", "parent-data");
+        FlowJob<String> delayedChild = FlowJob.of(childQueue, "delayed-child", "delayed-data",
+                io.oxmq.model.JobOptions.builder().delayMs(5000).build());
+        FlowJob<String> prioritizedChild = FlowJob.of(childQueue, "prio-child", "prio-data",
+                io.oxmq.model.JobOptions.builder().priority(5).build());
+
+        parent.addChild(delayedChild);
+        parent.addChild(prioritizedChild);
+
+        flowProducer.add(parent);
+
+        // Delayed leaf child must be in DELAYED state
+        assertThat(cQueue.count(JobState.DELAYED)).isEqualTo(1);
+        // Prioritized leaf child must be in WAITING state (prioritized jobs in BullMQ sit in wait/prioritized zset)
+        assertThat(cQueue.count(JobState.WAITING) + cQueue.count(JobState.PRIORITIZED)).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    void testFlowTreeWithUnsuccessfulChild() throws Exception {
+        FlowJob<String> parent = FlowJob.of(parentQueue, "parent-root", "root-data");
+        FlowJob<String> failChild = FlowJob.of(childQueue, "fail-child", "fail-data",
+                io.oxmq.model.JobOptions.builder().failParentOnFailure(true).build());
+
+        parent.addChild(failChild);
+        String parentJobId = flowProducer.add(parent);
+
+        // Fail the child
+        OxmqWorker<String> childWorker = OxmqWorker.<String>builder()
+                .queueName(childQueue)
+                .redisClient(redisClient)
+                .payloadClass(String.class)
+                .pollIntervalMs(20)
+                .processor(job -> {
+                    throw new RuntimeException("Child failure");
+                })
+                .build();
+
+        CountDownLatch failLatch = new CountDownLatch(1);
+        childWorker.onFailed((job, err) -> failLatch.countDown());
+        childWorker.start();
+
+        assertThat(failLatch.await(5, TimeUnit.SECONDS)).isTrue();
+        childWorker.close();
+
+        // Retrieve flow tree via getFlow
+        io.oxmq.model.JobNode flowNode = flowProducer.getFlow(parentQueue, parentJobId);
+        assertThat(flowNode).isNotNull();
+        assertThat(flowNode.getChildren()).hasSize(1);
+        assertThat(flowNode.getChildren().get(0).getJob().getName()).isEqualTo("fail-child");
+    }
 }

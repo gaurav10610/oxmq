@@ -54,7 +54,7 @@ public class QueueEvents implements Closeable {
     public QueueEvents(String prefix, String queueName, RedisConnectionManager connectionManager, JobSerializer serializer, boolean ownsConnectionManager) {
         this.queueName = Objects.requireNonNull(queueName, "queueName must not be null");
         this.prefix = QueueKeys.resolvePrefix(prefix);
-        this.channelName = this.prefix + ":" + queueName + ":events";
+        this.channelName = new QueueKeys(prefix, queueName).getKey("events");
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.ownsConnectionManager = ownsConnectionManager;

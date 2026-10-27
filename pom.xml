@@ -38,7 +38,7 @@
         <connection>scm:git:git://github.com/gaurav10610/oxmq.git</connection>
         <developerConnection>scm:git:ssh://github.com:gaurav10610/oxmq.git</developerConnection>
         <url>https://github.com/gaurav10610/oxmq</url>
-        <tag>v1.7.0</tag>
+        <tag>v1.9.0</tag>
     </scm>
 
     <issueManagement>

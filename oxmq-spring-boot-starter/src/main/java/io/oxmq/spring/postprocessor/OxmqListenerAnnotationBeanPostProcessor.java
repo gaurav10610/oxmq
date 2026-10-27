@@ -62,7 +62,7 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
     private OxmqMetrics metrics;
     private OxmqProperties properties;
 
-    private final List<Worker<?>> registeredWorkers = new ArrayList<>();
+    private final List<Worker<?>> registeredWorkers = new java.util.concurrent.CopyOnWriteArrayList<>();
     private volatile boolean running = false;
     private volatile List<JobInterceptor> cachedInterceptors = null;
 

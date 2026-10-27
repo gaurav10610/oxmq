@@ -298,7 +298,9 @@ public class OxmqQueue<T> implements Queue<T> {
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         String jobId;
         String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
-        if (groupId != null && !groupId.isBlank()) {
+        if (delayMs > 0) {
+            jobId = bullScripts.addDelayedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+        } else if (groupId != null && !groupId.isBlank()) {
             long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
             int priority = options.getGroup() != null && options.getGroup().getPriority() > 0
                     ? options.getGroup().getPriority()
@@ -306,8 +308,6 @@ public class OxmqQueue<T> implements Queue<T> {
             String dedupId = options.getDeduplicationId();
             jobId = extensionScripts.addGroupJob(binConn, queueKeys, customJobId, jobName,
                     serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
-        } else if (delayMs > 0) {
-            jobId = bullScripts.addDelayedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
         } else if (options.getPriority() > 0) {
             jobId = bullScripts.addPrioritizedJob(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
         } else {
@@ -344,7 +344,9 @@ public class OxmqQueue<T> implements Queue<T> {
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         CompletableFuture<String> futureJobId;
         String groupId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
-        if (groupId != null && !groupId.isBlank()) {
+        if (delayMs > 0) {
+            futureJobId = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
+        } else if (groupId != null && !groupId.isBlank()) {
             long maxSize = options.getGroup() != null ? options.getGroup().getMaxSize() : 0;
             int priority = options.getGroup() != null && options.getGroup().getPriority() > 0
                     ? options.getGroup().getPriority()
@@ -352,8 +354,6 @@ public class OxmqQueue<T> implements Queue<T> {
             String dedupId = options.getDeduplicationId();
             futureJobId = extensionScripts.addGroupJobAsync(binConn, queueKeys, customJobId, jobName,
                     serializedData, serializer.serialize(options), groupId, maxSize, priority, dedupId, now);
-        } else if (delayMs > 0) {
-            futureJobId = bullScripts.addDelayedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, delayMs);
         } else if (options.getPriority() > 0) {
             futureJobId = bullScripts.addPrioritizedJobAsync(binConn, queueKeys, customJobId, jobName, serializedData, optsMap, now, options.getPriority());
         } else {
@@ -504,12 +504,14 @@ public class OxmqQueue<T> implements Queue<T> {
         RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
         try {
             return switch (state) {
-                case WAITING -> sync.llen(queueKeys.toKey("wait"));
+                case WAITING -> sync.llen(queueKeys.toKey("wait")) + sync.zcard(queueKeys.toKey("prioritized"));
                 case ACTIVE -> sync.llen(queueKeys.toKey("active"));
                 case DELAYED -> sync.zcard(queueKeys.toKey("delayed"));
                 case COMPLETED -> sync.zcard(queueKeys.toKey("completed"));
                 case FAILED -> sync.zcard(queueKeys.toKey("failed"));
                 case WAITING_CHILDREN -> sync.zcard(queueKeys.toKey("waiting-children"));
+                case PRIORITIZED -> sync.zcard(queueKeys.toKey("prioritized"));
+                case PAUSED -> sync.llen(queueKeys.toKey("paused"));
                 default -> 0L;
             };
         } catch (Exception e) {
@@ -531,7 +533,15 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public void obliterate() {
-        bullScripts.obliterate(connectionManager.getBinaryConnection(), queueKeys, 1000, true);
+        try {
+            pause();
+        } catch (Exception e) {
+            log.debug("Pause before obliterate in queue {} caught: {}", name, e.getMessage());
+        }
+        Long res;
+        do {
+            res = bullScripts.obliterate(connectionManager.getBinaryConnection(), queueKeys, 1000, true);
+        } while (res != null && res == 1L);
         log.info("Obliterated queue {}", name);
     }
 
