@@ -303,9 +303,10 @@ public class OxmqWorker<T> implements Worker<T> {
             public Map<String, Object> getChildrenValues(String jobId) {
                 try {
                     RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                    Map<String, String> childValsRaw = sync.hgetall(prefix + ":" + jobId + ":processed");
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    Map<String, String> childValsRaw = sync.hgetall(jobKey + ":processed");
                     if (childValsRaw == null || childValsRaw.isEmpty()) {
-                        childValsRaw = sync.hgetall(prefix + ":" + jobId + ":childrenValues");
+                        childValsRaw = sync.hgetall(jobKey + ":childrenValues");
                     }
                     if (childValsRaw != null && !childValsRaw.isEmpty()) {
                         Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
@@ -328,7 +329,7 @@ public class OxmqWorker<T> implements Worker<T> {
             public Map<String, String> getIgnoredChildrenFailures(String jobId) {
                 try {
                     RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
-                    Map<String, String> failures = sync.hgetall(prefix + ":" + jobId + ":failed");
+                    Map<String, String> failures = sync.hgetall(queueKeys.toJobKey(jobId) + ":failed");
                     return failures != null ? failures : Map.of();
                 } catch (Exception e) {
                     return Map.of();
@@ -524,6 +525,16 @@ public class OxmqWorker<T> implements Worker<T> {
             }, effectiveTimeoutMs, TimeUnit.MILLISECONDS);
         }
 
+        java.util.concurrent.atomic.AtomicBoolean groupDecremented = new java.util.concurrent.atomic.AtomicBoolean(false);
+        Runnable decrementGroupOnce = () -> {
+            if (groupDecremented.compareAndSet(false, true)) {
+                String groupId = job.getGroupKey();
+                if (groupId != null && !groupId.isBlank()) {
+                    extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+                }
+            }
+        };
+
         try {
             // 1. Interceptor pre-processing
             if (!interceptors.isEmpty()) {
@@ -536,7 +547,7 @@ public class OxmqWorker<T> implements Worker<T> {
                                 job.getName(), job.getId(), decision.delayMs(), decision.skipAttempt());
                         return;
                     } else if (decision != null && decision.isReject()) {
-                        failJob(job, new io.oxmq.exception.JobRejectedException(decision.reason()), Duration.ZERO);
+                        failJob(job, new io.oxmq.exception.JobRejectedException(decision.reason()), Duration.ZERO, decrementGroupOnce);
                         return;
                     }
                 }
@@ -556,7 +567,7 @@ public class OxmqWorker<T> implements Worker<T> {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
 
-            completeJob(job, result, duration);
+            completeJob(job, result, duration, decrementGroupOnce);
             log.debug("Completed job {} [id: {}] in {} ms", job.getName(), job.getId(), duration.toMillis());
 
             // 2. Interceptor post-processing
@@ -580,7 +591,7 @@ public class OxmqWorker<T> implements Worker<T> {
             if (reason.toLowerCase().contains("timed out") || ie instanceof io.oxmq.exception.JobTimeoutException) {
                 finalError = new io.oxmq.exception.JobTimeoutException(reason, Duration.ofMillis(effectiveTimeoutMs));
             }
-            failJob(job, finalError, duration);
+            failJob(job, finalError, duration, decrementGroupOnce);
             metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
             log.info("Job {} [id: {}] was cancelled on queue {}: {}", job.getName(), job.getId(), queueName, reason);
         } catch (io.oxmq.exception.RateLimitException rle) {
@@ -627,11 +638,12 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             if (!handledByInterceptor) {
-                failJob(job, finalError, duration);
+                failJob(job, finalError, duration, decrementGroupOnce);
                 metrics.recordJobFailed(queueName, job.getGroupKey(), duration, finalError.getClass().getSimpleName());
                 log.warn("Job {} [id: {}] failed on queue {}: {}", job.getName(), job.getId(), queueName, finalError.toString(), finalError);
             }
         } finally {
+            decrementGroupOnce.run();
             if (timeoutFuture != null) {
                 timeoutFuture.cancel(false);
             }
@@ -738,17 +750,17 @@ public class OxmqWorker<T> implements Worker<T> {
         }
     }
 
-    private void completeJob(Job<T> job, Object result, Duration duration) {
+    private void completeJob(Job<T> job, Object result, Duration duration, Runnable decrementGroupOnce) {
         String serializedResult = serializer.serialize(result);
         JobOptions opts = job.getOpts();
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
                 serializedResult, "returnvalue", "completed", workerId, false, opts != null ? opts.toMap() : Map.of());
 
-        String groupId = job.getGroupKey();
-        if (groupId != null && !groupId.isBlank()) {
-            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+        if (decrementGroupOnce != null) {
+            decrementGroupOnce.run();
         }
 
+        String groupId = job.getGroupKey();
         metrics.recordJobCompleted(queueName, groupId, duration);
         emitCompleted(job, result);
     }
@@ -779,7 +791,7 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("pb", "parentKey")
     );
 
-    private void failJob(Job<T> job, Throwable error, Duration duration) {
+    private void failJob(Job<T> job, Throwable error, Duration duration, Runnable decrementGroupOnce) {
         StringWriter sw = new StringWriter();
         error.printStackTrace(new PrintWriter(sw));
         String stackTrace = sw.toString();
@@ -818,9 +830,8 @@ public class OxmqWorker<T> implements Worker<T> {
         fieldsToUpdate.put("failedReason", failedReasonValue);
         fieldsToUpdate.put("stacktrace", serializer.serialize(List.of(stackTrace)));
 
-        String groupId = job.getGroupKey();
-        if (groupId != null && !groupId.isBlank()) {
-            extensionScripts.decrementGroupActiveAsync(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+        if (decrementGroupOnce != null) {
+            decrementGroupOnce.run();
         }
 
         if (!isUnrecoverable && currentAttempts < maxAttempts) {
@@ -1128,20 +1139,18 @@ public class OxmqWorker<T> implements Worker<T> {
                 return;
             }
 
-            bullScripts.addJobScheduler(
+            String nextJobId = bullScripts.updateJobScheduler(
                     connectionManager.getBinaryConnection(),
                     queueKeys,
                     schedulerId,
                     nextMillis,
-                    name,
                     dataJson,
                     optsMap,
-                    every,
-                    pattern,
-                    tz
+                    now,
+                    job.getId()
             );
-            log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
-                    schedulerId, nextMillis, Math.max(0, nextMillis - now));
+            log.debug("Rescheduled next occurrence for JobScheduler {} at {} (nextJobId: {}, in {} ms)",
+                    schedulerId, nextMillis, nextJobId, Math.max(0, nextMillis - now));
         } catch (Exception e) {
             log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
         }

@@ -256,6 +256,7 @@ public class MockOffice365Server {
     }
 
     private HttpServer httpServer;
+    private java.util.concurrent.ExecutorService httpExecutor;
     private final Map<String, MockFileInfo> filesInventory = new ConcurrentHashMap<>();
     private final Map<String, List<String>> driveFiles = new ConcurrentHashMap<>();
     private final Map<String, DriveMetadata> drivesMetadata = new ConcurrentHashMap<>();
@@ -330,7 +331,8 @@ public class MockOffice365Server {
         seedPhysicalFilesAcrossTenants(storageDir);
 
         httpServer = HttpServer.create(new InetSocketAddress(port), 0);
-        httpServer.setExecutor(Executors.newCachedThreadPool());
+        this.httpExecutor = Executors.newCachedThreadPool();
+        httpServer.setExecutor(this.httpExecutor);
 
         // OAuth2 Token Endpoints (per-tenant and generic)
         httpServer.createContext("/contoso-enterprise-tenant/oauth2/v2.0/token", this::handleOAuthToken);
@@ -374,6 +376,9 @@ public class MockOffice365Server {
         if (httpServer != null) {
             httpServer.stop(0);
             log.info("Mock Office 365 Server stopped.");
+        }
+        if (httpExecutor != null) {
+            httpExecutor.shutdownNow();
         }
     }
 

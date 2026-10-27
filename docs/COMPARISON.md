@@ -127,7 +127,7 @@ OxMQ includes a dedicated **JMH (Java Microbenchmark Harness)** module in [`oxmq
 ./mvnw clean test-compile -pl oxmq-benchmarks
 
 # Run benchmarks against your local or remote Redis instance
-java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.9.0.jar
+java -jar oxmq-benchmarks/target/oxmq-benchmarks-1.10.0.jar
 ```
 
 ---

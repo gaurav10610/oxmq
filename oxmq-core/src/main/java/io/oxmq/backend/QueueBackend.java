@@ -141,6 +141,10 @@ public interface QueueBackend extends Closeable {
 
     String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp);
 
+    default String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp, String currentJobId) {
+        return updateJobScheduler(jobSchedulerId, nextMillis, jsonData, opts, timestamp);
+    }
+
     @Override
     void close();
 }

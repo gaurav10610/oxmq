@@ -45,12 +45,14 @@ public class CancellationToken {
      *
      * @param reason cancellation reason
      */
-    public void cancel(String reason) {
+    public synchronized void cancel(String reason) {
+        if (this.cancelled) {
+            return;
+        }
         this.reason = reason;
         this.cancelled = true;
-        List<Consumer<String>> list = this.callbacks;
-        if (list != null) {
-            for (Consumer<String> callback : list) {
+        if (this.callbacks != null) {
+            for (Consumer<String> callback : this.callbacks) {
                 try {
                     callback.accept(reason);
                 } catch (Exception ignored) {}
@@ -64,20 +66,17 @@ public class CancellationToken {
      *
      * @param callback consumer receiving the cancellation reason
      */
-    public void onCancel(Consumer<String> callback) {
+    public synchronized void onCancel(Consumer<String> callback) {
         Objects.requireNonNull(callback, "callback must not be null");
-        if (callbacks == null) {
-            synchronized (this) {
-                if (callbacks == null) {
-                    callbacks = new CopyOnWriteArrayList<>();
-                }
-            }
-        }
-        callbacks.add(callback);
         if (cancelled) {
             try {
                 callback.accept(reason);
             } catch (Exception ignored) {}
+            return;
         }
+        if (callbacks == null) {
+            callbacks = new CopyOnWriteArrayList<>();
+        }
+        callbacks.add(callback);
     }
 }

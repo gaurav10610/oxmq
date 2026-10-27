@@ -158,9 +158,9 @@ public final class CronEvaluator {
                     for (int i = start; i <= 6; i += step) values.add(i % 7);
                 } else if (sub.contains("-")) {
                     String[] rangeParts = sub.split("-");
-                    int from = Integer.parseInt(rangeParts[0]) % 7;
-                    int to = Integer.parseInt(rangeParts[1]) % 7;
-                    for (int i = from; i <= to; i++) values.add(i);
+                    int from = Integer.parseInt(rangeParts[0]);
+                    int to = Integer.parseInt(rangeParts[1]);
+                    for (int i = from; i <= to; i++) values.add(i % 7);
                 } else {
                     int val = Integer.parseInt(sub);
                     values.add(val % 7); // 7 is Sunday, same as 0

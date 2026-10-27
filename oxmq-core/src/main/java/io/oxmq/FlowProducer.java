@@ -6,10 +6,12 @@ import io.oxmq.client.RedisConnectionManager;
 import io.oxmq.lua.BullScripts;
 import io.oxmq.lua.LuaScriptManager;
 import io.oxmq.model.FlowJob;
+import io.oxmq.model.JobOptions;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.io.Closeable;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -157,15 +159,41 @@ public class FlowProducer implements Closeable {
 
         if (node.getChildren().isEmpty()) {
             // Leaf node: schedule directly into wait queue
-            String jobId = bullScripts.addStandardJob(
-                connectionManager.getBinaryConnection(),
-                queueKeys,
-                customJobId,
-                node.getName(),
-                serializedData,
-                optsMap,
-                now
-            );
+            String jobId;
+            JobOptions opts = node.getOpts();
+            if (opts != null && opts.getDelayMs() > 0) {
+                jobId = bullScripts.addDelayedJob(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    customJobId,
+                    node.getName(),
+                    serializedData,
+                    optsMap,
+                    now,
+                    opts.getDelayMs()
+                );
+            } else if (opts != null && opts.getPriority() > 0) {
+                jobId = bullScripts.addPrioritizedJob(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    customJobId,
+                    node.getName(),
+                    serializedData,
+                    optsMap,
+                    now,
+                    opts.getPriority()
+                );
+            } else {
+                jobId = bullScripts.addStandardJob(
+                    connectionManager.getBinaryConnection(),
+                    queueKeys,
+                    customJobId,
+                    node.getName(),
+                    serializedData,
+                    optsMap,
+                    now
+                );
+            }
             log.debug("Enqueued flow leaf job {} [id: {}] with parent: {}", node.getName(), jobId, parentKey);
             return jobId;
 
@@ -256,7 +284,14 @@ public class FlowProducer implements Closeable {
                 optsMap.put("parent", effectiveParentObj);
             }
 
-            futures.add(bullScripts.addStandardJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now));
+            JobOptions opts = leaf.getOpts();
+            if (opts != null && opts.getDelayMs() > 0) {
+                futures.add(bullScripts.addDelayedJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now, opts.getDelayMs()));
+            } else if (opts != null && opts.getPriority() > 0) {
+                futures.add(bullScripts.addPrioritizedJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now, opts.getPriority()));
+            } else {
+                futures.add(bullScripts.addStandardJobAsync(conn, queueKeys, customJobId, leaf.getName(), serializedData, optsMap, now));
+            }
         }
 
         try {
@@ -330,7 +365,7 @@ public class FlowProducer implements Closeable {
             return jobNode;
         }
 
-        // Collect child job keys from pending, processed, and failed sets
+        // Collect child job keys from pending, processed, failed, and unsuccessful sets
         Set<String> childKeys = new java.util.LinkedHashSet<>();
         Set<String> pending = sync.smembers(jobKey + ":dependencies");
         if (pending != null) childKeys.addAll(pending);
@@ -338,12 +373,14 @@ public class FlowProducer implements Closeable {
         if (processed != null) childKeys.addAll(processed.keySet());
         Map<String, String> failed = sync.hgetall(jobKey + ":failed");
         if (failed != null) childKeys.addAll(failed.keySet());
+        List<String> unsuccessful = sync.zrange(jobKey + ":unsuccessful", 0, -1);
+        if (unsuccessful != null) childKeys.addAll(unsuccessful);
 
         for (String childKey : childKeys) {
             String[] tokens = childKey.split(":");
             if (tokens.length >= 2) {
                 String childJobId = tokens[tokens.length - 1];
-                String childQueue = tokens[tokens.length - 2];
+                String childQueue = tokens[tokens.length - 2].replace("{", "").replace("}", "");
                 io.oxmq.model.JobNode childNode = getFlow(childQueue, childJobId, maxDepth - 1);
                 if (childNode != null) {
                     jobNode.addChild(childNode);

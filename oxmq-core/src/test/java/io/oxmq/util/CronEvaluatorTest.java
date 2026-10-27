@@ -53,6 +53,29 @@ class CronEvaluatorTest {
     }
 
     @Test
+    @DisplayName("parse: parses day-of-week range ending in 7 (Sunday) correctly")
+    void testDayOfWeekRangeEndingInSeven() {
+        // "0 12 * * 1-7" (every day Mon-Sun at 12:00)
+        CronEvaluator evaluator = CronEvaluator.parse("0 12 * * 1-7");
+        assertNotNull(evaluator);
+
+        // Saturday Oct 24, 2026 at 13:00 -> next is Sunday Oct 25 at 12:00
+        ZonedDateTime saturday = ZonedDateTime.of(2026, 10, 24, 13, 0, 0, 0, ZoneId.of("UTC"));
+        long next = evaluator.nextExecution(saturday.toInstant().toEpochMilli(), "UTC");
+        ZonedDateTime nextDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(next), ZoneId.of("UTC"));
+
+        assertEquals(25, nextDt.getDayOfMonth()); // Sunday
+        assertEquals(12, nextDt.getHour());
+
+        // "0 12 * * 5-7" (Friday to Sunday)
+        CronEvaluator weekendEvaluator = CronEvaluator.parse("0 12 * * 5-7");
+        long nextWeekend = weekendEvaluator.nextExecution(saturday.toInstant().toEpochMilli(), "UTC");
+        ZonedDateTime nextWeekendDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(nextWeekend), ZoneId.of("UTC"));
+        assertEquals(25, nextWeekendDt.getDayOfMonth()); // Sunday
+        assertEquals(12, nextWeekendDt.getHour());
+    }
+
+    @Test
     @DisplayName("parse: rejects invalid cron patterns")
     void testInvalidCron() {
         assertThrows(IllegalArgumentException.class, () -> CronEvaluator.parse(null));

@@ -81,7 +81,7 @@ Getting started in Spring Boot takes under 2 minutes:
 <dependency>
     <groupId>io.github.gaurav10610</groupId>
     <artifactId>oxmq-spring-boot-starter</artifactId>
-    <version>1.9.0</version>
+    <version>1.10.0</version>
 </dependency>
 ```
 
@@ -196,7 +196,7 @@ Open `http://localhost:3000` to immediately inspect queue depths, pause/resume w
 If you’re building distributed background processing in Java and want high performance without Kafka-level operational baggage:
 - **Project Repository:** [github.com/gaurav10610/oxmq](https://github.com/gaurav10610/oxmq)
 - **Official Documentation:** [gaurav10610.github.io/oxmq](https://gaurav10610.github.io/oxmq/)
-- **Maven Central:** `io.github.gaurav10610:oxmq:1.9.0`
+- **Maven Central:** `io.github.gaurav10610:oxmq:1.10.0`
 - **License:** 100% Free & Open Source (Apache 2.0 / MIT)
 
 ⭐ If you find OxMQ helpful, star the project on GitHub and let us know your feedback!
