@@ -774,7 +774,12 @@ public class BullScripts {
         Object result = scriptManager.evalBinary(connection, LuaScript.GET_STATE,
             ScriptOutputType.STATUS, redisKeys, jobIdBytes);
 
-        return result != null ? result.toString() : "unknown";
+        if (result instanceof byte[] bytes) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        } else if (result != null) {
+            return result.toString();
+        }
+        return "unknown";
     }
 
     public List<Long> getCounts(StatefulRedisConnection<String, byte[]> connection,
@@ -843,6 +848,20 @@ public class BullScripts {
         if (every != null) schedulerOpts.put("every", every);
         if (pattern != null && !pattern.isBlank()) schedulerOpts.put("pattern", pattern);
         if (tz != null && !tz.isBlank()) schedulerOpts.put("tz", tz);
+        if (opts != null) {
+            if (opts.get("limit") != null) schedulerOpts.put("limit", opts.get("limit"));
+            if (opts.get("endDate") != null) schedulerOpts.put("endDate", opts.get("endDate"));
+            if (opts.get("startDate") != null) schedulerOpts.put("startDate", opts.get("startDate"));
+            if (opts.get("offset") != null) schedulerOpts.put("offset", opts.get("offset"));
+            if (opts.get("tz") != null && (tz == null || tz.isBlank())) schedulerOpts.put("tz", opts.get("tz"));
+            if (opts.get("repeat") instanceof Map<?, ?> repeatMap) {
+                if (repeatMap.get("limit") != null) schedulerOpts.put("limit", repeatMap.get("limit"));
+                if (repeatMap.get("endDate") != null) schedulerOpts.put("endDate", repeatMap.get("endDate"));
+                if (repeatMap.get("startDate") != null) schedulerOpts.put("startDate", repeatMap.get("startDate"));
+                if (repeatMap.get("offset") != null) schedulerOpts.put("offset", repeatMap.get("offset"));
+                if (repeatMap.get("tz") != null && (tz == null || tz.isBlank())) schedulerOpts.put("tz", repeatMap.get("tz"));
+            }
+        }
 
         byte[] nextMillisBytes = String.valueOf(nextMillis).getBytes(StandardCharsets.UTF_8);
         byte[] repeatOptsBytes = BullMsgPack.pack(schedulerOpts);
@@ -1209,6 +1228,13 @@ public class BullScripts {
     public String updateJobScheduler(StatefulRedisConnection<String, byte[]> connection,
                                      QueueKeys keys, String jobSchedulerId, long nextMillis,
                                      String jsonData, Map<String, Object> opts, long timestamp) {
+        return updateJobScheduler(connection, keys, jobSchedulerId, nextMillis, jsonData, opts, timestamp, null);
+    }
+
+    public String updateJobScheduler(StatefulRedisConnection<String, byte[]> connection,
+                                     QueueKeys keys, String jobSchedulerId, long nextMillis,
+                                     String jsonData, Map<String, Object> opts, long timestamp,
+                                     String currentJobId) {
         String[] redisKeys = new String[] {
             keys.getKey("repeat"),
             keys.getKey("delayed"),
@@ -1229,7 +1255,7 @@ public class BullScripts {
         byte[] packedOpts = BullMsgPack.pack(BullMsgPack.encodeOpts(opts != null ? opts : Map.of()));
         byte[] tsBytes = String.valueOf(timestamp).getBytes(StandardCharsets.UTF_8);
         byte[] prefixBytes = keys.getPrefixBytes();
-        byte[] producerIdBytes = "".getBytes(StandardCharsets.UTF_8);
+        byte[] producerIdBytes = (currentJobId != null ? currentJobId : "").getBytes(StandardCharsets.UTF_8);
 
         Object result = scriptManager.evalBinary(connection, LuaScript.UPDATE_JOB_SCHEDULER,
             ScriptOutputType.VALUE, redisKeys, nextMillisBytes, schedulerIdBytes, dataBytes, packedOpts, tsBytes, prefixBytes, producerIdBytes);
@@ -1323,7 +1349,12 @@ public class BullScripts {
         Object result = scriptManager.evalBinary(connection, LuaScript.GET_STATE_V2,
             ScriptOutputType.STATUS, redisKeys, jobIdBytes);
 
-        return result != null ? result.toString() : "unknown";
+        if (result instanceof byte[] bytes) {
+            return new String(bytes, StandardCharsets.UTF_8);
+        } else if (result != null) {
+            return result.toString();
+        }
+        return "unknown";
     }
 
     public boolean isJobInList(StatefulRedisConnection<String, byte[]> connection,

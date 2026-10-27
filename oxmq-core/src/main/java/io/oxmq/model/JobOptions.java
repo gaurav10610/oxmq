@@ -36,6 +36,11 @@ public class JobOptions {
     private String traceparent;
     private String tracestate;
     private Map<String, Object> telemetry;
+    private Integer repeatLimit;
+    private Long repeatEndDate;
+    private Long repeatStartDate;
+    private Long repeatOffset;
+    private String repeatTz;
 
     public JobOptions() {}
 
@@ -343,6 +348,46 @@ public class JobOptions {
         this.telemetry = telemetry;
     }
 
+    public Integer getRepeatLimit() {
+        return repeatLimit;
+    }
+
+    public void setRepeatLimit(Integer repeatLimit) {
+        this.repeatLimit = repeatLimit;
+    }
+
+    public Long getRepeatEndDate() {
+        return repeatEndDate;
+    }
+
+    public void setRepeatEndDate(Long repeatEndDate) {
+        this.repeatEndDate = repeatEndDate;
+    }
+
+    public Long getRepeatStartDate() {
+        return repeatStartDate;
+    }
+
+    public void setRepeatStartDate(Long repeatStartDate) {
+        this.repeatStartDate = repeatStartDate;
+    }
+
+    public Long getRepeatOffset() {
+        return repeatOffset;
+    }
+
+    public void setRepeatOffset(Long repeatOffset) {
+        this.repeatOffset = repeatOffset;
+    }
+
+    public String getRepeatTz() {
+        return repeatTz;
+    }
+
+    public void setRepeatTz(String repeatTz) {
+        this.repeatTz = repeatTz;
+    }
+
     public Map<String, Object> toMap() {
         Map<String, Object> map = new HashMap<>(24);
         if (jobId != null) map.put("jobId", jobId);
@@ -406,6 +451,11 @@ public class JobOptions {
         }
         if (tracestate != null) map.put("tracestate", tracestate);
         if (telemetry != null) map.put("telemetry", telemetry);
+        if (repeatLimit != null) map.put("limit", repeatLimit);
+        if (repeatEndDate != null) map.put("endDate", repeatEndDate);
+        if (repeatStartDate != null) map.put("startDate", repeatStartDate);
+        if (repeatOffset != null) map.put("offset", repeatOffset);
+        if (repeatTz != null) map.put("tz", repeatTz);
         if (backoff != null) {
             if (backoff instanceof BackoffStrategy.Exponential exp) {
                 map.put("backoff", Map.of("type", "exponential", "delay", exp.initialDelayMs()));
@@ -657,6 +707,31 @@ public class JobOptions {
 
         public Builder telemetry(Map<String, Object> telemetry) {
             options.setTelemetry(telemetry);
+            return this;
+        }
+
+        public Builder repeatLimit(Integer repeatLimit) {
+            options.setRepeatLimit(repeatLimit);
+            return this;
+        }
+
+        public Builder repeatEndDate(Long repeatEndDate) {
+            options.setRepeatEndDate(repeatEndDate);
+            return this;
+        }
+
+        public Builder repeatStartDate(Long repeatStartDate) {
+            options.setRepeatStartDate(repeatStartDate);
+            return this;
+        }
+
+        public Builder repeatOffset(Long repeatOffset) {
+            options.setRepeatOffset(repeatOffset);
+            return this;
+        }
+
+        public Builder repeatTz(String repeatTz) {
+            options.setRepeatTz(repeatTz);
             return this;
         }
 

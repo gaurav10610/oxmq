@@ -389,6 +389,11 @@ public class RedisQueueBackend implements QueueBackend {
     }
 
     @Override
+    public String updateJobScheduler(String jobSchedulerId, long nextMillis, String jsonData, Map<String, Object> opts, long timestamp, String currentJobId) {
+        return bullScripts.updateJobScheduler(binaryConnection(), queueKeys, jobSchedulerId, nextMillis, jsonData, opts, timestamp, currentJobId);
+    }
+
+    @Override
     public void close() {
         if (ownsConnectionManager && connectionManager != null) {
             connectionManager.close();

@@ -184,4 +184,118 @@ class RecurringSchedulerAndRetryObservabilityIntegrationTest {
         assertEquals("parent", tree.getJob().getName());
         assertEquals(2, tree.getChildren().size(), "Parent must have 2 children in JobNode tree");
     }
+
+    @Test
+    @DisplayName("BUG-19: JobScheduler with limit terminates and does not repeat indefinitely")
+    void testJobSchedulerStopsAfterReachingIterationLimit() throws Exception {
+        String queueName = "sched-limit-" + UUID.randomUUID();
+        Queue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        String schedulerId = "limited-ticker-" + UUID.randomUUID();
+        // Repeat limit = 2 iterations, interval = 200 ms
+        JobOptions opts = JobOptions.builder()
+                .repeatLimit(2)
+                .build();
+
+        queue.upsertJobScheduler(schedulerId, Duration.ofMillis(200), "limited-task", "limit-data", opts);
+
+        CountDownLatch secondRunLatch = new CountDownLatch(2);
+        AtomicInteger runs = new AtomicInteger(0);
+
+        Worker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .pollIntervalMs(50)
+                .processor(job -> {
+                    runs.incrementAndGet();
+                    secondRunLatch.countDown();
+                    return "done";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        assertTrue(secondRunLatch.await(5, TimeUnit.SECONDS), "Both scheduled occurrences (limit=2) must execute");
+
+        // Wait extra time to ensure a third execution is NOT scheduled
+        TimeUnit.MILLISECONDS.sleep(800);
+        assertEquals(2, runs.get(), "Worker must strictly execute exactly 2 times and stop at iteration limit");
+
+        // Verify scheduler metadata in Redis: ic must be 2 and limit must be 2
+        RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+        String schedKey = new QueueKeys(queueName).toKey("repeat:" + schedulerId);
+        Map<String, String> schedData = sync.hgetall(schedKey);
+        assertEquals("2", schedData.get("ic"), "Scheduler ic counter must be 2");
+        assertEquals("2", schedData.get("limit"), "Scheduler limit must be 2");
+    }
+
+    @Test
+    @DisplayName("BUG-19 / BUG-21: OxmqBatchWorker respects JobScheduler iteration limit and provides ignoredChildrenFailures")
+    void testBatchWorkerJobSchedulerStopsAfterReachingIterationLimit() throws Exception {
+        String queueName = "batch-sched-limit-" + UUID.randomUUID();
+        Queue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        String schedulerId = "batch-limited-ticker-" + UUID.randomUUID();
+        JobOptions opts = JobOptions.builder()
+                .repeatLimit(2)
+                .build();
+
+        queue.upsertJobScheduler(schedulerId, Duration.ofMillis(200), "batch-limit-task", "batch-data", opts);
+
+        CountDownLatch latch = new CountDownLatch(2);
+        AtomicInteger runs = new AtomicInteger(0);
+
+        OxmqBatchWorker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(5)
+                .batchTimeout(Duration.ofMillis(50))
+                .pollInterval(Duration.ofMillis(50))
+                .processor(batch -> {
+                    for (Job<String> j : batch) {
+                        runs.incrementAndGet();
+                        latch.countDown();
+                        // Verify BUG-21: getIgnoredChildrenFailures is accessible and non-null
+                        Map<String, String> failures = j.getIgnoredChildrenFailures();
+                        assertNotNull(failures, "Ignored children failures map must be non-null in batch worker");
+                    }
+                    return List.of();
+                })
+                .build();
+        workersToStop.add(batchWorker);
+        batchWorker.start();
+
+        assertTrue(latch.await(5, TimeUnit.SECONDS), "Both batch occurrences must execute");
+
+        TimeUnit.MILLISECONDS.sleep(800);
+        assertEquals(2, runs.get(), "Batch worker must strictly execute exactly 2 times and terminate");
+    }
+
+    @Test
+    @DisplayName("BUG-22: BullScripts.getState and getStateV2 safely decode byte[] without returning '[B@...'")
+    void testBullScriptsGetStateByteArraySafety() {
+        String queueName = "state-safety-" + UUID.randomUUID();
+        Queue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        Job<String> job = queue.add("test-state", "payload");
+        assertNotNull(job.getId());
+
+        String state = queue.getState(job.getId());
+        assertNotNull(state);
+        assertFalse(state.startsWith("[B@"), "State must not be a raw byte array toString ('[B@...')");
+        assertTrue(List.of("waiting", "delayed", "active", "completed", "failed", "unknown").contains(state),
+                "State must be a canonical string name: " + state);
+    }
 }

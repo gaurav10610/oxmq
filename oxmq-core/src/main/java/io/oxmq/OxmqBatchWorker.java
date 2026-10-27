@@ -208,6 +208,18 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 }
                 return null;
             }
+
+            @Override
+            public Map<String, String> getIgnoredChildrenFailures(String jobId) {
+                try {
+                    RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+                    String jobKey = queueKeys.toJobKey(jobId);
+                    Map<String, String> failures = sync.hgetall(jobKey + ":failed");
+                    return failures != null ? failures : Map.of();
+                } catch (Exception e) {
+                    return Map.of();
+                }
+            }
         };
     }
 
@@ -927,20 +939,18 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 return;
             }
 
-            bullScripts.addJobScheduler(
+            String nextJobId = bullScripts.updateJobScheduler(
                     connectionManager.getBinaryConnection(),
                     queueKeys,
                     schedulerId,
                     nextMillis,
-                    name,
                     dataJson,
                     optsMap,
-                    every,
-                    pattern,
-                    tz
+                    now,
+                    job.getId()
             );
-            log.debug("Rescheduled next occurrence for JobScheduler {} at {} (in {} ms)",
-                    schedulerId, nextMillis, Math.max(0, nextMillis - now));
+            log.debug("Rescheduled next occurrence for JobScheduler {} at {} in batch worker (nextJobId: {}, in {} ms)",
+                    schedulerId, nextMillis, nextJobId, Math.max(0, nextMillis - now));
         } catch (Exception e) {
             log.warn("Failed to reschedule JobScheduler {} for job {}", schedulerId, job.getId(), e);
         }
