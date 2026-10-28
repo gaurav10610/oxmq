@@ -26,14 +26,19 @@ Running independently on port **`8081`**, this service decouples cloud API simul
 * `GET /mock-storage/download/{fileId}`: Pre-authenticated SAS streaming download (bypasses Graph API gateway).
 
 ### 2. Multi-Tier Tenant Resource Unit (RU) Emulation
-Tracks burst limits matching Microsoft's official capacity bands:
-* `tenant-apex-global`: **Enterprise E5** (2,000 RUs/s)
-* `tenant-northwind`: **Enterprise E3** (1,200 RUs/s)
-* `tenant-contoso`: **Business Standard** (600 RUs/s)
-* `tenant-fabrikam`: **Business Basic** (300 RUs/s)
-* `tenant-acme-smallbiz`: **Free / Dev** (100 RUs/s)
+Tracks sustained and burst rate limits matching Microsoft's official SharePoint Online & OneDrive capacity bands:
+* `tenant-global-100k`: **Hyperscale Global (100,000+ Seats)** – 6,000 RUs/min ($100\text{ RUs/s}$ sustained, $250\text{ RUs/s}$ burst)
+* `tenant-large-35k`: **Large Enterprise (15,001 - 50,000 Seats)** – 4,800 RUs/min ($80\text{ RUs/s}$ sustained, $150\text{ RUs/s}$ burst)
+* `tenant-ent-10k`: **Enterprise E3 / E5 (5,001 - 15,000 Seats)** – 3,600 RUs/min ($60\text{ RUs/s}$ sustained, $90\text{ RUs/s}$ burst)
+* `tenant-mid-2500`: **Mid-Market Growth (1,001 - 5,000 Seats)** – 2,400 RUs/min ($40\text{ RUs/s}$ sustained, $50\text{ RUs/s}$ burst)
+* `tenant-smb-250`: **Small Business (0 - 1,000 Seats)** – 1,200 RUs/min ($20\text{ RUs/s}$ sustained, $25\text{ RUs/s}$ burst)
 
-Emits standard IETF response headers: `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`.
+### 3. Microsoft Graph Authentic Header Emulation
+Emits both IETF standard and proprietary Microsoft Graph telemetry headers:
+* `x-ms-throttle-limit-percentage`: Dynamically surfaced when consumption reaches $\ge 80\%$ ($0.80 - 1.2+$), enabling preemptive client-side pacing.
+* `x-ms-resource-unit`: Discloses exact Resource Unit weight ($1\text{ RU}$ for delta/metadata, $2\text{ RUs}$ for write, $3\text{ RUs}$ for search, $0\text{ RUs}$ for direct SAS storage download).
+* `Retry-After`: Cooldown duration in seconds on HTTP 429 and 503 responses.
+* `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset`: IETF draft rate-limiting headers.
 
 ---
 

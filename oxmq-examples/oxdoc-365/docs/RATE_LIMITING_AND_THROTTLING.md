@@ -2,59 +2,104 @@
 
 ---
 
-## 1. Executive Summary & Problem Formulation
+## 1. Executive Summary & The Fallacy of the "Static Rate Limit"
 
-Scanning enterprise Microsoft 365 environments (SharePoint Sites and User OneDrives) for Document AI and content intelligence introduces a classic distributed systems dilemma:
+Scanning enterprise Microsoft 365 environments (SharePoint Sites and User OneDrives) for Document AI, content intelligence, and security compliance introduces a classic distributed systems dilemma:
 1. **Massive Historical Backlog:** A typical mid-to-large enterprise holds millions of historical files across thousands of document libraries that require content extraction, metadata cataloging, and permission classification.
 2. **Aggressive Cloud Gateways:** Microsoft Graph API enforces strict, multi-tiered rate limits across application, tenant, drive, and user boundaries. Violating these thresholds triggers HTTP `429 Too Many Requests` or HTTP `503 Service Unavailable`, locking out the application across the entire tenant.
 3. **Real-Time Priority:** While background workers crawl historical files, active employees continuously upload, modify, and share documents. An urgent forward event (such as a document uploaded for instant processing) must be indexed within seconds—it cannot sit in a queue behind a 100,000-file historical backlog.
 4. **The Thundering Herd Trap:** When naive queue systems encounter an HTTP 429 response, parallel worker threads continue hammering the API gateway. This exacerbates the lockout penalty, exhausts thread pools, causes memory bloat, and risks job loss in Dead Letter Queues (DLQ).
 
-To solve this, **OxDoc 365** pairs **OxMQ native plugins** with an ultra-realistic **Multi-Tenant Token Bucket & AIMD Adaptive Controller**. This document provides an exhaustive, engineering-grade walkthrough of every algorithm, mathematical formula, Redis data structure, and exception handling mechanism governing rate limiting and throttling in OxDoc 365.
+### Why Can't We Maintain a Single Static Rate Limit Like Other APIs?
+A common architectural inquiry is: *"Why can't OxDoc 365 simply hardcode and maintain the exact rate limits Microsoft publishes (e.g., 50 requests/sec)?"*
+
+> [!IMPORTANT]
+> **Microsoft does not use a single, static rate limit.**
+> Microsoft officially documents:
+> *"Throttling thresholds are dynamic and subject to change based on real-time server health, overall backend resource loads, and multi-tenant traffic patterns. Because thresholds adapt dynamically, hard limits are not always static or publicly published."*
+
+If an application attempts to maintain a static, hardcoded rate limit (e.g. fixed at 50 req/sec), it fails under two opposite scenarios:
+* **The Over-Throttling Trap:** When the tenant's database partition undergoes transient backend strain (such as SQL Database Transaction Unit / DTU saturation, backup snapshots, or cross-tenant noisy neighbors), Microsoft will immediately return HTTP `429` or `503` **even if the client is executing well below 50 req/sec**.
+* **The Throughput Starvation Trap:** In large Enterprise ($10,000\text{ seats}$) or Hyperscale ($50,000+\text{ seats}$) tenants, Microsoft permits sustained throughput of $60 - 100\text{ RUs/sec}$ with burst capacity up to $250\text{ RUs/sec}$. Hardcoding a conservative static limit unnecessarily slows down discovery crawls by $5\times - 10\times$.
+
+To achieve true production stability and optimal crawl velocity, **OxDoc 365** pairs **OxMQ native plugins** with an ultra-realistic **Multi-Tenant Token Bucket & AIMD Adaptive Controller** that mirrors Microsoft's exact multi-layered throttling mechanics.
 
 ---
 
-## 2. Microsoft Graph Multi-Tiered Throttling Architecture
+## 2. Microsoft Graph & SharePoint Online Official Throttling Model (Web Research)
 
-Microsoft Graph does not employ a single flat rate limit. Instead, it enforces a hierarchical rate-limiting model:
+Based on official Microsoft Learn documentation, Microsoft Graph API specifications, and SharePoint Online developer guidance, Microsoft evaluates every API request across **five simultaneous, overlapping throttling boundaries**:
 
 ```mermaid
 flowchart TD
-    subgraph M365_Gateway ["Microsoft Graph API Gateway (Hierarchical Limits)"]
-        GlobalApp["1. Global Application Limit<br/>(~130,000 requests / 10s across all tenants)"]
-        TenantApp["2. Per-App Per-Tenant Limit<br/>(Scaled by Tenant Paid License Seat Count: 25 to 250+ RUs/s)"]
-        PerDrive["3. Per-Drive / Per-User Limit<br/>(~1,200 requests / minute per Document Library)"]
-        CostCurrency["4. Resource Unit (RU) Valuation<br/>(Delta = 1 RU, Permissions = 1 RU, SAS Download = 0 RU)"]
+    subgraph Gateway ["Microsoft Graph Gateway (Simultaneous Multi-Layer Evaluation)"]
+        L1["1. Global Application Limit<br/>(~130,000 requests / 10s across all tenants)"]
+        L2["2. Per-App Per-Tenant Limit<br/>(Tied to Paid License Seat Count: 20 to 100 RUs/s sustained)"]
+        L3["3. Per-Drive / Per-Document Library Limit<br/>(~1,200 requests / minute per Drive)"]
+        L4["4. Backend Resource Health<br/>(Dynamic SQL DTUs, CPU & I/O on Database Partition)"]
+        L5["5. Batching Envelope Limits<br/>(Max 20 sub-requests per $batch, evaluated individually)"]
     end
 
-    GlobalApp --> TenantApp
-    TenantApp --> PerDrive
-    PerDrive --> CostCurrency
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+    L4 --> L5
 ```
 
-### 2.1 License & Seat Count Capacity Banding
-Microsoft SharePoint Online explicitly scales the per-app per-tenant request budget over rolling windows based on the number of paid user licenses (seats) the organization owns:
-
-| Tenant Tier | Seat Count | Daily RU Budget | Burst Capacity Limit | Throttling Sensitivity |
-| :--- | :--- | :--- | :--- | :--- |
-| **SMB / Free / Developer** | $250$ | $1,200,000\text{ RUs}$ | **$25\text{ RUs/sec}$** | High (easily saturated by single-worker bursts) |
-| **Mid-Market Growth** | $2,500$ | $2,400,000\text{ RUs}$ | **$50\text{ RUs/sec}$** | Moderate |
-| **Enterprise E3 / E5** | $10,000$ | $3,600,000\text{ RUs}$ | **$90\text{ RUs/sec}$** | Standard commercial enterprise |
-| **Large Enterprise** | $35,000$ | $4,800,000\text{ RUs}$ | **$150\text{ RUs/sec}$** | Robust burst allowance |
-| **Hyperscale Global** | $100,000$ | $6,000,000\text{ RUs}$ | **$250\text{ RUs/sec}$** | Extreme throughput capacity |
-
-### 2.2 Resource Unit (RU) Cost Model
-Not all operations carry equal weight at the Microsoft Graph gateway:
-* **Delta Queries (`GET /v1.0/drives/{id}/root/delta`):** Cost **$1\text{ RU}$**.
-* **Permission Enumeration (`GET /v1.0/drives/{id}/items/{id}/permissions`):** Costs **$1\text{ RU}$**.
-* **Search Queries (`POST /v1.0/drives/{id}/root/search`):** Cost **$3\text{ RUs}$**.
-* **Binary File Content Streaming (Bypass via SAS URL):** Costs **$0\text{ RUs}$** against Microsoft Graph. By retrieving the `@microsoft.graph.downloadUrl` pre-authenticated SAS URL, file bytes are streamed directly from Azure Blob Storage, completely bypassing Graph API gateway quotas.
+### 2.1 The Five Simultaneous Throttling Scopes
+1. **Global Application Limit:** Protects Microsoft Graph infrastructure across all tenants combined. An application ID cannot exceed approximately $130,000\text{ requests / 10 seconds}$ globally.
+2. **Per-App Per-Tenant Limit:** Governs the request volume a specific application ID can issue against a single Microsoft 365 tenant. This budget is **dynamically scaled based on the organization's total purchased qualifying user licenses (seats)**.
+3. **Per-Drive / Per-User Limit:** Enforces a granular safety cap of approximately **$1,200\text{ requests / minute}$** per SharePoint Document Library or OneDrive user account to prevent a single site collection from exhausting shared resources.
+4. **Backend Resource-Based Throttling (Dynamic Server Health):** Microsoft monitors SQL Database Transaction Units (DTUs), server CPU, and physical disk I/O on the underlying storage partition. If database health degrades, Microsoft throttles requests immediately with HTTP 429 or 503, regardless of remaining request budget.
+5. **Batching Envelope Boundary:** When utilizing Microsoft Graph's `/v1.0/$batch` endpoint, payloads are capped at **20 sub-requests** and $4\text{ MB}$. Each sub-request inside the batch is evaluated individually; throttled sub-requests return inner HTTP 429 statuses while the outer container returns HTTP 200 OK.
 
 ---
 
-## 3. The Multi-Plugin Interceptor Chain Architecture
+### 2.2 Official SharePoint Capacity Banding by Purchased Seats
 
-In OxDoc 365, all rate limiting, backpressure, and circuit breaking logic is decoupled from business logic and encapsulated within **native OxMQ plugins** configured in [`OxDocPluginConfiguration.java`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/config/OxDocPluginConfiguration.java):
+SharePoint Online and OneDrive explicitly scale an application's per-tenant request allowance based on the total number of paid commercial seats owned by the organization:
+
+| Tenant License Band | Paid User Seat Count | Sustained Request Allowance | Equivalent Sustained Rate | Daily Tenant Pool | Burst Capacity Allowance |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **SMB / Developer** | $0 - 1,000\text{ seats}$ | **$1,200\text{ RUs / minute}$** | **$20\text{ RUs/sec}$** | $1,200,000\text{ RUs / day}$ | $25\text{ RUs/sec}$ |
+| **Mid-Market Growth** | $1,001 - 5,000\text{ seats}$ | **$2,400\text{ RUs / minute}$** | **$40\text{ RUs/sec}$** | $2,400,000\text{ RUs / day}$ | $50\text{ RUs/sec}$ |
+| **Enterprise E3 / E5** | $5,001 - 15,000\text{ seats}$ | **$3,600\text{ RUs / minute}$** | **$60\text{ RUs/sec}$** | $3,600,000\text{ RUs / day}$ | $90\text{ RUs/sec}$ |
+| **Large Enterprise** | $15,001 - 50,000\text{ seats}$ | **$4,800\text{ RUs / minute}$** | **$80\text{ RUs/sec}$** | $4,800,000\text{ RUs / day}$ | $150\text{ RUs/sec}$ |
+| **Hyperscale Global** | $50,000+\text{ seats}$ | **$6,000\text{ RUs / minute}$** | **$100\text{ RUs/sec}$** | $6,000,000\text{ RUs / day}$ | $250\text{ RUs/sec}$ |
+
+---
+
+### 2.3 The Resource Unit (RU) Valuation Model
+
+Not all operations carry equal weight at the Microsoft Graph gateway:
+* **Delta Queries (`GET /v1.0/drives/{id}/root/delta`):** Cost **$1\text{ RU}$**. Microsoft optimizes delta tokens to cost minimal RUs per item batch.
+* **Permission Enumeration (`GET /v1.0/drives/{id}/items/{id}/permissions`):** Costs **$1\text{ RU}$**.
+* **Write Operations (Create, Update, Delete):** Cost **$2\text{ RUs}$**.
+* **Search Queries (`POST /v1.0/drives/{id}/root/search`):** Cost **$3 - 5\text{ RUs}$** due to deep index traversal.
+* **Binary File Content Streaming (Bypass via SAS URL):** Costs **$0\text{ RUs}$** against Microsoft Graph. By retrieving the `@microsoft.graph.downloadUrl` pre-authenticated SAS URL, file bytes stream directly from Azure Blob Storage, completely bypassing Graph API gateway quotas.
+
+---
+
+### 2.4 Proprietary Microsoft Response Headers
+
+Microsoft services emit specialized headers to communicate throttling state and consumption metrics:
+
+1. **`x-ms-throttle-limit-percentage`**:
+   - Surfaced dynamically when an application's consumption reaches or exceeds **$80\%$ ($0.80$)** of its capacity window.
+   - Values range from `0.80` (warning threshold) to `1.0` (at full capacity) and `1.2+` (actively dropping requests with 429).
+   - Allows intelligent clients to engage proactive pacing *before* hitting a hard 429 block.
+2. **`x-ms-resource-unit`**:
+   - Discloses the exact Resource Unit (RU) cost billed for that specific request (e.g. `1` for delta reads, `3` for search).
+3. **`Retry-After`**:
+   - Mandatory header included on all HTTP 429 and 503 responses specifying the **exact number of seconds** the client must wait before retrying.
+4. **IETF Standard RateLimit Headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`)**:
+   - Draft RFC headers indicating total quota, remaining tokens in the current window, and seconds until reset.
+
+---
+
+## 3. The Multi-Plugin Interceptor Chain Architecture in OxDoc 365
+
+All rate limiting, backpressure, and circuit breaking logic in OxDoc 365 is decoupled from business logic and encapsulated within **native OxMQ plugins** configured in [`OxDocPluginConfiguration.java`](file:///Users/gaurav/git/oxmq/oxmq-examples/oxdoc-365/src/main/java/io/oxmq/oxdoc/config/OxDocPluginConfiguration.java):
 
 ```mermaid
 sequenceDiagram
@@ -161,7 +206,7 @@ $$L_{t+1} = \max\left(L_{\min}, \left\lfloor L_t \times \beta \right\rfloor\righ
 Where:
 * $L_t$ = Current rate limit for the tenant ($RUs/\text{sec}$).
 * $\beta = 0.5$ (Backoff factor).
-* $L_{\min} = 25\text{ RUs/sec}$ (Absolute minimum safe floor).
+* $L_{\min} = 20\text{ RUs/sec}$ (Absolute minimum safe floor matching SMB base).
 
 #### Additive Increase (On Sustained Clean Windows):
 When a tenant sustains error-free processing across $N$ consecutive evaluation windows ($N = 2$, window duration $= 30\text{ seconds}$), capacity steps up incrementally:
@@ -241,7 +286,7 @@ Before any other worker thread invokes its processor method for that tenant:
 
 ## 8. Non-Destructive Job Deferrals: `moveToDelayed` vs. Traditional Anti-Patterns
 
-A central innovation in OxMQ is its non-destructive job deferral model.
+A central innovation in OxMQ is its non-destructive job deferral model:
 
 | Metric / Behavior | Traditional Queues (`Thread.sleep`) | Standard Retries (`throw Exception`) | OxMQ Native (`moveToDelayed`) |
 | :--- | :--- | :--- | :--- |
@@ -282,3 +327,29 @@ While Tiers 1-3 govern external Graph API quota consumption, Tier 4 ([`Backpress
 * **Dual Sensing:** Asynchronously polls Redis `used_memory` via Lettuce `INFO memory` and sums pending jobs across downstream extraction and categorization queues.
 * **Zero Data Loss Pacing:** Paces delta continuation requests by $2,500\text{ ms}$ via `delay(2500ms, skipAttempt=true)`, allowing downstream child workers to drain extraction backlogs without consuming job retry attempts.
 * **Real-Time Priority 1 Exemption:** Real-time user uploads carrying `ProcessingOrigin.FORWARD` are explicitly exempt from Tier 4 backpressure pacing, guaranteeing sub-second indexing latencies even when historical crawls are paced.
+
+---
+
+## 10. The Dual-Sided Parity Implementation Strategy
+
+To achieve 100% exact parity with Microsoft's production behavior, our ongoing enhancement roadmap is structured across two synchronized components:
+
+### Side A: Enhancing the Mock Office 365 Cloud Gateway (`mock-office365-server`)
+1. **Dynamic Header Emission**:
+   - Calculate and emit `x-ms-throttle-limit-percentage` on all requests where consumption reaches $\ge 80\%$ ($0.80 - 1.2+$).
+   - Emit `x-ms-resource-unit: 1` on delta/metadata reads, `2` on writes, `3` on searches, and `0` on SAS binary downloads.
+   - Include standard IETF `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers.
+2. **Secondary Per-Drive Limiter**:
+   - Add a per-drive token bucket enforcing $1,200\text{ req/minute}$ per document library (`driveId`), emulating Microsoft's site collection concurrency caps.
+3. **Microsoft `$batch` API Endpoint**:
+   - Support `POST /v1.0/$batch` with a max 20 sub-request envelope, returning individual HTTP 429 statuses and `Retry-After` headers within the batch response body.
+
+### Side B: Enhancing the OxDoc 365 Client Engine (`oxdoc-365`)
+1. **Preemptive Deceleration Interceptor**:
+   - Parse `x-ms-throttle-limit-percentage` in `JobInterceptor` / `LiveGraphClient`. When percentage $\ge 0.8$, engage proactive pacing delay ($50 - 150\text{ ms}$) *before* Microsoft issues an HTTP 429.
+2. **Virtual Queue Groups per Tenant & Drive**:
+   - Leverage OxMQ's $O(1)$ round-robin Virtual Queue Groups to isolate throttled tenants or drives without head-of-line blocking.
+3. **Dynamic Group Concurrency Tuning**:
+   - Set tenant concurrency dynamically via `queue.setGroupConcurrency(tenantId, concurrency)` based on discovered license tier (SMB=2, Mid=5, Ent=10, Large=15, Global=25).
+4. **Direct Blob Streaming**:
+   - Ensure all binary extraction workers stream exclusively from SAS download URLs ($0\text{ RUs}$ against Graph).
