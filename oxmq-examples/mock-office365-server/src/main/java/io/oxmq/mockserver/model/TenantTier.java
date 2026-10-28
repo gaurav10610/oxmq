@@ -31,4 +31,12 @@ public enum TenantTier {
     public int getDefaultBurstLimitRUs() {
         return defaultBurstLimitRUs;
     }
+
+    public int getSustainedRUsPerSec() {
+        return (int) (dailyRuBudget / 60_000L);
+    }
+
+    public int getRequestsPerMinute() {
+        return (int) (dailyRuBudget / 1_000L);
+    }
 }

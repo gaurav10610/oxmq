@@ -56,6 +56,14 @@ public enum TenantTier {
         return defaultBurstLimitRUs;
     }
 
+    public int getSustainedRUsPerSec() {
+        return (int) (dailyRuBudget / 60_000L);
+    }
+
+    public int getRequestsPerMinute() {
+        return (int) (dailyRuBudget / 1_000L);
+    }
+
     /**
      * Resolves the official Microsoft 365 capacity tier dynamically from burst limit RUs.
      */
