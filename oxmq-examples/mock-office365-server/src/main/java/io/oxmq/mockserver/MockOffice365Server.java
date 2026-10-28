@@ -135,11 +135,13 @@ public class MockOffice365Server {
 
         public ChaosDecision evaluate(int ruCost, Map<String, String> headersToSet) {
             int retrySec = customRetryAfterSeconds.get();
+            headersToSet.put("x-ms-resource-unit", String.valueOf(ruCost));
 
             // 1. Injected 503 Service Unavailable
             if (transient503Remaining.get() > 0) {
                 transient503Remaining.decrementAndGet();
                 headersToSet.put("Retry-After", String.valueOf(Math.max(2, retrySec)));
+                headersToSet.put("x-ms-throttle-limit-percentage", "1.00");
                 return ChaosDecision.SERVICE_UNAVAILABLE_503;
             }
 
@@ -160,9 +162,11 @@ public class MockOffice365Server {
                 double roll = java.util.concurrent.ThreadLocalRandom.current().nextDouble();
                 if (roll < 0.4) {
                     headersToSet.put("Retry-After", String.valueOf(retrySec));
+                    headersToSet.put("x-ms-throttle-limit-percentage", "1.25");
                     return ChaosDecision.THROTTLE_429;
                 } else if (roll < 0.7) {
                     headersToSet.put("Retry-After", String.valueOf(retrySec + 2));
+                    headersToSet.put("x-ms-throttle-limit-percentage", "1.00");
                     return ChaosDecision.SERVICE_UNAVAILABLE_503;
                 } else if (roll < 0.9) {
                     return ChaosDecision.GATEWAY_TIMEOUT_504;
@@ -178,6 +182,7 @@ public class MockOffice365Server {
                 headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
                 headersToSet.put("RateLimit-Remaining", "0");
                 headersToSet.put("RateLimit-Reset", String.valueOf(retrySec));
+                headersToSet.put("x-ms-throttle-limit-percentage", "1.25");
                 return ChaosDecision.THROTTLE_429;
             }
             if (burst429Active.get()) {
@@ -185,6 +190,7 @@ public class MockOffice365Server {
                 headersToSet.put("RateLimit-Limit", String.valueOf(burstLimitRUs.get()));
                 headersToSet.put("RateLimit-Remaining", "0");
                 headersToSet.put("RateLimit-Reset", String.valueOf(retrySec));
+                headersToSet.put("x-ms-throttle-limit-percentage", "1.25");
                 return ChaosDecision.THROTTLE_429;
             }
 
@@ -205,9 +211,15 @@ public class MockOffice365Server {
             headersToSet.put("RateLimit-Remaining", String.valueOf(remaining));
             headersToSet.put("RateLimit-Reset", "1");
 
+            double percentage = limit > 0 ? (double) current / (double) limit : 0.0;
+            if (percentage >= 0.80) {
+                headersToSet.put("x-ms-throttle-limit-percentage", String.format(java.util.Locale.ROOT, "%.2f", percentage));
+            }
+
             if (current > limit) {
                 headersToSet.put("Retry-After", String.valueOf(retrySec));
                 headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("x-ms-throttle-limit-percentage", String.format(java.util.Locale.ROOT, "%.2f", Math.max(1.0, percentage)));
                 return ChaosDecision.THROTTLE_429;
             }
 
@@ -255,12 +267,49 @@ public class MockOffice365Server {
         }
     }
 
+    // Per-Drive / Document Library Rate Limiter (~1,200 req/min = 20 req/s baseline per M365 spec)
+    public static class DriveRateLimiter {
+        private final String driveId;
+        private final int limitPerSec;
+        private final AtomicInteger currentSecondReqs = new AtomicInteger(0);
+        private final AtomicLong currentSecondEpoch = new AtomicLong(System.currentTimeMillis() / 1000L);
+
+        public DriveRateLimiter(String driveId, int limitPerSec) {
+            this.driveId = driveId;
+            this.limitPerSec = limitPerSec;
+        }
+
+        public boolean tryAcquire(Map<String, String> headersToSet) {
+            long nowSec = System.currentTimeMillis() / 1000L;
+            long currentSec = currentSecondEpoch.get();
+            if (nowSec > currentSec) {
+                if (currentSecondEpoch.compareAndSet(currentSec, nowSec)) {
+                    currentSecondReqs.set(0);
+                }
+            }
+            int current = currentSecondReqs.incrementAndGet();
+            if (current > limitPerSec) {
+                headersToSet.put("Retry-After", "2");
+                headersToSet.put("RateLimit-Remaining", "0");
+                headersToSet.put("x-ms-throttle-limit-percentage", "1.15");
+                return false;
+            }
+            return true;
+        }
+
+        public void reset() {
+            currentSecondReqs.set(0);
+        }
+    }
+
     private HttpServer httpServer;
     private java.util.concurrent.ExecutorService httpExecutor;
     private final Map<String, MockFileInfo> filesInventory = new ConcurrentHashMap<>();
     private final Map<String, List<String>> driveFiles = new ConcurrentHashMap<>();
     private final Map<String, DriveMetadata> drivesMetadata = new ConcurrentHashMap<>();
     private final Map<String, TenantRateLimiter> tenantLimiters = new ConcurrentHashMap<>();
+    private final Map<String, DriveRateLimiter> driveLimiters = new ConcurrentHashMap<>();
+    private final int driveBurstLimit;
 
     @Autowired
     public MockOffice365Server(
@@ -274,6 +323,7 @@ public class MockOffice365Server {
             @Value("${oxdoc.mock-server.ent-files:25000}") int entFiles,
             @Value("${oxdoc.mock-server.large-files:100000}") int largeFiles,
             @Value("${oxdoc.mock-server.global-files:100000}") int globalFiles,
+            @Value("${oxdoc.mock-server.drive-burst-limit:100}") int driveBurstLimit,
             @Value("${oxdoc.webhook.notification-url:http://localhost:8080/api/v1/webhooks/graph}") String webhookUrl,
             @Value("${oxdoc.webhook.client-state:oxdoc-secret-state-token}") String webhookClientState,
             ObjectMapper objectMapper
@@ -288,6 +338,7 @@ public class MockOffice365Server {
         this.entFiles = entFiles;
         this.largeFiles = largeFiles;
         this.globalFiles = globalFiles;
+        this.driveBurstLimit = driveBurstLimit;
         this.webhookUrl = webhookUrl;
         this.webhookClientState = webhookClientState;
         this.objectMapper = objectMapper;
@@ -307,7 +358,7 @@ public class MockOffice365Server {
             String webhookClientState,
             ObjectMapper objectMapper
     ) {
-        this(port, storageDirPath, simulate429Burst, totalFilesToSeed, "COMPACT", 200, 1000, 2000, 2000, 2000, webhookUrl, webhookClientState, objectMapper);
+        this(port, storageDirPath, simulate429Burst, totalFilesToSeed, "COMPACT", 200, 1000, 2000, 2000, 2000, 100, webhookUrl, webhookClientState, objectMapper);
     }
 
     public MockOffice365Server(
@@ -318,7 +369,7 @@ public class MockOffice365Server {
             String webhookClientState,
             ObjectMapper objectMapper
     ) {
-        this(port, storageDirPath, simulate429Burst, 1000, "COMPACT", 200, 200, 200, 200, 200, webhookUrl, webhookClientState, objectMapper);
+        this(port, storageDirPath, simulate429Burst, 1000, "COMPACT", 200, 200, 200, 200, 200, 100, webhookUrl, webhookClientState, objectMapper);
     }
 
     @PostConstruct
@@ -817,6 +868,10 @@ public class MockOffice365Server {
      * - Download: 0 RUs
      */
     private boolean checkRateLimitAndSetHeaders(HttpExchange exchange, String tenantId, int ruCost) throws IOException {
+        return checkRateLimitAndSetHeaders(exchange, tenantId, null, ruCost);
+    }
+
+    private boolean checkRateLimitAndSetHeaders(HttpExchange exchange, String tenantId, String driveId, int ruCost) throws IOException {
         String rateLimitTenant = "contoso-enterprise-tenant".equalsIgnoreCase(tenantId)
                 ? TenantProfile.MID_2500.tenantId()
                 : tenantId;
@@ -828,6 +883,17 @@ public class MockOffice365Server {
         Map<String, String> headers = new LinkedHashMap<>();
         ChaosDecision decision = limiter.evaluate(ruCost, headers);
 
+        // Check per-drive rate limit if driveId is present and tenant limit passed
+        if (decision == ChaosDecision.PROCEED && driveId != null && !driveId.isBlank()) {
+            DriveRateLimiter driveLimiter = driveLimiters.computeIfAbsent(
+                    driveId,
+                    id -> new DriveRateLimiter(id, driveBurstLimit)
+            );
+            if (!driveLimiter.tryAcquire(headers)) {
+                decision = ChaosDecision.THROTTLE_429;
+            }
+        }
+
         for (Map.Entry<String, String> entry : headers.entrySet()) {
             exchange.getResponseHeaders().set(entry.getKey(), entry.getValue());
         }
@@ -835,7 +901,10 @@ public class MockOffice365Server {
         switch (decision) {
             case THROTTLE_429 -> {
                 String retry = headers.getOrDefault("Retry-After", "3");
-                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"The request has been throttled because tenant [" + tenantId + "] application quota was exceeded. Retry after " + retry + " seconds.\"}}");
+                String reason = (driveId != null && !driveId.isBlank() && "1.15".equals(headers.get("x-ms-throttle-limit-percentage")))
+                        ? "document library [" + driveId + "] rate limit was exceeded."
+                        : "tenant [" + tenantId + "] application quota was exceeded.";
+                sendResponse(exchange, 429, "{\"error\": {\"code\": \"activityLimitReached\", \"message\": \"The request has been throttled because " + reason + " Retry after " + retry + " seconds.\"}}");
                 return false;
             }
             case SERVICE_UNAVAILABLE_503 -> {
@@ -1105,7 +1174,7 @@ public class MockOffice365Server {
             String driveId = parts[3];
             String tenantId = resolveTenantId(exchange, driveId);
 
-            if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            if (!checkRateLimitAndSetHeaders(exchange, tenantId, driveId, 1)) {
                 return;
             }
 
@@ -1174,7 +1243,7 @@ public class MockOffice365Server {
             String itemId = parts[5];
             String tenantId = resolveTenantId(exchange, driveId);
 
-            if (!checkRateLimitAndSetHeaders(exchange, tenantId, 1)) {
+            if (!checkRateLimitAndSetHeaders(exchange, tenantId, driveId, 1)) {
                 return;
             }
 

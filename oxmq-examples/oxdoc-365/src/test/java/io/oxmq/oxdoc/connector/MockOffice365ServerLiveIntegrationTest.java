@@ -163,4 +163,34 @@ public class MockOffice365ServerLiveIntegrationTest {
         assertNotNull(visibility);
         assertNotNull(visibility.scope());
     }
+
+    @Test
+    @DisplayName("Verify Microsoft Graph telemetry headers (x-ms-resource-unit and x-ms-throttle-limit-percentage)")
+    void testMicrosoftGraphTelemetryHeadersAndRateLimits() throws Exception {
+        java.net.http.HttpClient client = java.net.http.HttpClient.newHttpClient();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(java.net.URI.create("http://localhost:" + TEST_PORT + "/v1.0/drives/sp-drive-finance/root/delta"))
+                .header("X-Tenant-Id", "tenant-mid-2500")
+                .GET()
+                .build();
+
+        java.net.http.HttpResponse<String> response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+
+        // Verify authentic Microsoft Graph telemetry header
+        assertTrue(response.headers().firstValue("x-ms-resource-unit").isPresent(), "x-ms-resource-unit header should be present");
+        assertEquals("1", response.headers().firstValue("x-ms-resource-unit").get());
+
+        // Verify official TenantTier sustained and minute rates match Microsoft Learn specifications
+        assertEquals(20, io.oxmq.oxdoc.model.TenantTier.SMB.getSustainedRUsPerSec());
+        assertEquals(1200, io.oxmq.oxdoc.model.TenantTier.SMB.getRequestsPerMinute());
+        assertEquals(40, io.oxmq.oxdoc.model.TenantTier.MID_MARKET.getSustainedRUsPerSec());
+        assertEquals(2400, io.oxmq.oxdoc.model.TenantTier.MID_MARKET.getRequestsPerMinute());
+        assertEquals(60, io.oxmq.oxdoc.model.TenantTier.ENTERPRISE.getSustainedRUsPerSec());
+        assertEquals(3600, io.oxmq.oxdoc.model.TenantTier.ENTERPRISE.getRequestsPerMinute());
+        assertEquals(80, io.oxmq.oxdoc.model.TenantTier.LARGE_ENTERPRISE.getSustainedRUsPerSec());
+        assertEquals(4800, io.oxmq.oxdoc.model.TenantTier.LARGE_ENTERPRISE.getRequestsPerMinute());
+        assertEquals(100, io.oxmq.oxdoc.model.TenantTier.HYPERSCALE.getSustainedRUsPerSec());
+        assertEquals(6000, io.oxmq.oxdoc.model.TenantTier.HYPERSCALE.getRequestsPerMinute());
+    }
 }

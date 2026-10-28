@@ -128,7 +128,21 @@ public class LiveGraphClient implements GraphClient {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-            // Check IETF RateLimit-* headers for telemetry
+            // Check Microsoft Graph and IETF RateLimit-* headers for telemetry
+            response.headers().firstValue("x-ms-throttle-limit-percentage").ifPresent(pctStr -> {
+                try {
+                    double pct = Double.parseDouble(pctStr);
+                    if (pct >= 0.80) {
+                        log.warn("Microsoft Graph Preemptive Warning: Tenant [{}] throttle limit consumption at {}%",
+                                tId, Math.round(pct * 100));
+                    }
+                } catch (NumberFormatException ignored) {}
+            });
+
+            response.headers().firstValue("x-ms-resource-unit").ifPresent(ruStr -> {
+                log.trace("Microsoft Graph billed {} RUs for request on tenant [{}]: {}", ruStr, tId, url);
+            });
+
             response.headers().firstValue("RateLimit-Remaining").ifPresent(rem -> {
                 try {
                     int remaining = Integer.parseInt(rem);
