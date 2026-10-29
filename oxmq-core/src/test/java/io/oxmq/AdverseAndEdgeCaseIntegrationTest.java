@@ -611,4 +611,75 @@ public class AdverseAndEdgeCaseIntegrationTest {
         assertEquals(JobState.WAITING, retrieved.getState());
         assertNotNull(retrieved.getDependencies());
     }
+
+    @Test
+    @DisplayName("Queue: count(JobState.PAUSED) reflects waiting/prioritized jobs when queue is paused")
+    void testPausedCountReflectsWaitingWhenQueuePaused() {
+        String queueName = "adverse-paused-count-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        // Add 3 jobs to active queue
+        queue.add("job1", "data1");
+        queue.add("job2", "data2");
+        queue.add("job3", "data3");
+
+        assertEquals(3L, queue.count(JobState.WAITING));
+        assertEquals(0L, queue.count(JobState.PAUSED));
+
+        // Pause the queue
+        queue.pause();
+        assertTrue(queue.isPaused());
+
+        // When paused, JobState.PAUSED must report the waiting jobs
+        assertEquals(3L, queue.count(JobState.PAUSED));
+
+        // Resume queue
+        queue.resume();
+        assertFalse(queue.isPaused());
+        assertEquals(0L, queue.count(JobState.PAUSED));
+        assertEquals(3L, queue.count(JobState.WAITING));
+    }
+
+    @Test
+    @DisplayName("Queue: retryJobs with WAITING_CHILDREN respects hyphenated Redis key name")
+    void testRetryJobsWaitingChildrenHyphenParity() {
+        String queueName = "adverse-retry-waiting-children-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        // retryJobs for WAITING_CHILDREN on empty queue should return 0 without throwing error
+        long retried = queue.retryJobs(JobState.WAITING_CHILDREN, 10, null);
+        assertEquals(0L, retried);
+    }
+
+    @Test
+    @DisplayName("Queue: obliterate and subsequent re-creation lifecycle works without state corruption")
+    void testQueueObliterateLifecycleResilience() {
+        String queueName = "adverse-obliterate-lifecycle-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        queue.add("lifecycle-1", "test-data");
+        assertEquals(1L, queue.count(JobState.WAITING));
+
+        // Obliterate queue completely
+        queue.obliterate();
+        assertEquals(0L, queue.count(JobState.WAITING));
+        assertFalse(queue.isPaused());
+
+        // Subsequent adds to the same queue work properly
+        Job<String> newJob = queue.add("lifecycle-2", "new-data");
+        assertNotNull(newJob.getId());
+        assertEquals(1L, queue.count(JobState.WAITING));
+    }
 }
