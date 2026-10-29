@@ -575,7 +575,12 @@ public class OxmqQueue<T> implements Queue<T> {
                 case FAILED -> sync.zcard(queueKeys.toKey("failed"));
                 case WAITING_CHILDREN -> sync.zcard(queueKeys.toKey("waiting-children"));
                 case PRIORITIZED -> sync.zcard(queueKeys.toKey("prioritized"));
-                case PAUSED -> sync.llen(queueKeys.toKey("paused"));
+                case PAUSED -> {
+                    if (isPaused()) {
+                        yield sync.llen(queueKeys.toKey("wait")) + sync.zcard(queueKeys.toKey("prioritized"));
+                    }
+                    yield sync.llen(queueKeys.toKey("paused"));
+                }
                 default -> 0L;
             };
         } catch (Exception e) {
@@ -926,7 +931,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long retryJobs(JobState state, int count, Long timestamp) {
-        String stateStr = state != null ? (state == JobState.WAITING ? "wait" : state.name().toLowerCase()) : "failed";
+        String stateStr = state != null ? state.getBullMqName() : "failed";
         long ts = timestamp != null ? timestamp : System.currentTimeMillis();
         var sync = connectionManager.getCommandConnection().sync();
         long countBefore = sync.zcard(queueKeys.toKey(stateStr));

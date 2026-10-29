@@ -31,6 +31,9 @@ public class InvoiceControllerTest {
     @AfterEach
     void tearDown() {
         try {
+            oxmqTemplate.resume("java17-invoices");
+        } catch (Exception ignored) {}
+        try {
             oxmqTemplate.obliterate("java17-invoices");
             oxmqTemplate.obliterate("java17-audit-logs");
             oxmqTemplate.obliterate("java17-notifications");

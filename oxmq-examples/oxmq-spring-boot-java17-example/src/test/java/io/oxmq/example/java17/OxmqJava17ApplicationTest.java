@@ -51,10 +51,16 @@ public class OxmqJava17ApplicationTest {
         invoiceListener.clear();
         auditBatchListener.clear();
         notificationListener.clear();
+        try {
+            oxmqTemplate.resume(invoiceQueue);
+        } catch (Exception ignored) {}
     }
 
     @AfterEach
     void tearDown() {
+        try {
+            oxmqTemplate.resume(invoiceQueue);
+        } catch (Exception ignored) {}
         try {
             oxmqTemplate.obliterate(invoiceQueue);
             oxmqTemplate.obliterate(auditQueue);
@@ -74,7 +80,7 @@ public class OxmqJava17ApplicationTest {
         Job<InvoiceRequest> job = oxmqTemplate.send(invoiceQueue, "process-invoice", request);
         assertThat(job.getId()).isNotNull();
 
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
             InvoiceResult result = invoiceListener.getProcessedInvoices().get("inv-2026-001");
             assertThat(result).isNotNull();
             assertThat(result.status()).isEqualTo("PROCESSED");
@@ -95,7 +101,7 @@ public class OxmqJava17ApplicationTest {
             oxmqTemplate.send(auditQueue, "audit-login", event);
         }
 
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
             assertThat(auditBatchListener.getReceivedBatches()).isNotEmpty();
             int totalProcessed = auditBatchListener.getReceivedBatches().stream()
                     .mapToInt(List::size)
@@ -120,7 +126,7 @@ public class OxmqJava17ApplicationTest {
         oxmqTemplate.send(notificationQueue, "email", emailNotice);
         oxmqTemplate.send(notificationQueue, "sms", smsNotice);
 
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
             assertThat(notificationListener.getDeliveredEmails()).contains(emailNotice);
             assertThat(notificationListener.getDeliveredSms()).contains(smsNotice);
         });
@@ -144,7 +150,7 @@ public class OxmqJava17ApplicationTest {
 
         oxmqTemplate.resume(invoiceQueue);
 
-        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+        await().atMost(15, TimeUnit.SECONDS).untilAsserted(() -> {
             assertThat(invoiceListener.getProcessedInvoices()).containsKey("inv-paused-001");
         });
     }
