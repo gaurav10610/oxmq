@@ -1225,6 +1225,19 @@ public class BullScripts {
         return result != null ? result.intValue() : -1;
     }
 
+    public CompletableFuture<Integer> saveStacktraceAsync(StatefulRedisConnection<String, byte[]> connection,
+                                                          QueueKeys keys, String jobId, String stacktrace, String failedReason) {
+        String[] redisKeys = new String[] {
+            keys.toJobKey(jobId)
+        };
+        byte[] stackBytes = (stacktrace != null ? stacktrace : "").getBytes(StandardCharsets.UTF_8);
+        byte[] reasonBytes = (failedReason != null ? failedReason : "").getBytes(StandardCharsets.UTF_8);
+
+        return scriptManager.evalBinaryAsync(connection, LuaScript.SAVE_STACKTRACE,
+            ScriptOutputType.INTEGER, redisKeys, stackBytes, reasonBytes)
+            .thenApply(result -> result != null ? ((Number) result).intValue() : -1);
+    }
+
     public String updateJobScheduler(StatefulRedisConnection<String, byte[]> connection,
                                      QueueKeys keys, String jobSchedulerId, long nextMillis,
                                      String jsonData, Map<String, Object> opts, long timestamp) {

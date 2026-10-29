@@ -41,6 +41,7 @@ public class JobOptions {
     private Long repeatStartDate;
     private Long repeatOffset;
     private String repeatTz;
+    private int stackTraceLimit = 0;
 
     public JobOptions() {}
 
@@ -388,6 +389,19 @@ public class JobOptions {
         this.repeatTz = repeatTz;
     }
 
+    public int getStackTraceLimit() {
+        return stackTraceLimit;
+    }
+
+    public void setStackTraceLimit(int stackTraceLimit) {
+        this.stackTraceLimit = stackTraceLimit;
+    }
+
+    public JobOptions stackTraceLimit(int stackTraceLimit) {
+        this.stackTraceLimit = stackTraceLimit;
+        return this;
+    }
+
     public Map<String, Object> toMap() {
         Map<String, Object> map = new HashMap<>(24);
         if (jobId != null) map.put("jobId", jobId);
@@ -405,6 +419,9 @@ public class JobOptions {
         }
         map.put("priority", priority);
         map.put("lifo", lifo);
+        if (stackTraceLimit > 0) {
+            map.put("stackTraceLimit", stackTraceLimit);
+        }
         if (parentKey != null) map.put("parentKey", parentKey);
         if (deduplicationId != null && !deduplicationId.isBlank()) {
             map.put("deduplicationId", deduplicationId);
@@ -732,6 +749,11 @@ public class JobOptions {
 
         public Builder repeatTz(String repeatTz) {
             options.setRepeatTz(repeatTz);
+            return this;
+        }
+
+        public Builder stackTraceLimit(int stackTraceLimit) {
+            options.setStackTraceLimit(stackTraceLimit);
             return this;
         }
 

@@ -486,6 +486,16 @@ public class OxmqQueue<T> implements Queue<T> {
         }
         if (returnStr != null) job.setReturnvalue(returnStr);
         if (failedStr != null) job.setFailedReason(failedStr);
+        String stacktraceStr = fields.get("stacktrace");
+        if (stacktraceStr != null && !stacktraceStr.isBlank()) {
+            try {
+                @SuppressWarnings("unchecked")
+                List<String> traces = serializer.deserialize(stacktraceStr, List.class);
+                job.setStacktrace(traces);
+            } catch (Exception ignored) {
+                job.setStacktrace(List.of(stacktraceStr));
+            }
+        }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
         if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
@@ -614,6 +624,11 @@ public class OxmqQueue<T> implements Queue<T> {
         Long res;
         do {
             res = bullScripts.obliterate(connectionManager.getBinaryConnection(), queueKeys, 1000, true);
+            if (res != null && res == -1L) {
+                throw new IllegalStateException("Cannot obliterate non-paused queue '" + name + "'");
+            } else if (res != null && res == -2L) {
+                throw new IllegalStateException("Cannot obliterate queue '" + name + "' with active jobs");
+            }
         } while (res != null && res == 1L);
         log.info("Obliterated queue {}", name);
     }
@@ -976,7 +991,7 @@ public class OxmqQueue<T> implements Queue<T> {
         List<Long> counts = bullScripts.getCountsPerPriority(connectionManager.getBinaryConnection(), queueKeys, priorities);
         Map<Integer, Long> map = new java.util.LinkedHashMap<>();
         for (int i = 0; i < priorities.length; i++) {
-            map.put(priorities[i], i < counts.size() ? counts.get(i) : 0L);
+            map.put(priorities[i], i < counts.size() && counts.get(i) != null ? counts.get(i) : 0L);
         }
         return map;
     }
@@ -993,7 +1008,9 @@ public class OxmqQueue<T> implements Queue<T> {
         List<List<String>> raw = bullScripts.getRanges(connectionManager.getBinaryConnection(), queueKeys, start, end, asc, stateNames);
         Map<JobState, List<String>> result = new java.util.LinkedHashMap<>();
         for (int i = 0; i < states.length; i++) {
-            result.put(states[i], i < raw.size() ? raw.get(i) : List.of());
+            if (states[i] != null) {
+                result.put(states[i], i < raw.size() ? raw.get(i) : List.of());
+            }
         }
         return result;
     }
@@ -1194,7 +1211,7 @@ public class OxmqQueue<T> implements Queue<T> {
         }
         String[] stateStrings = new String[states.size()];
         for (int i = 0; i < states.size(); i++) {
-            stateStrings[i] = states.get(i).getBullMqName();
+            stateStrings[i] = states.get(i) != null ? states.get(i).getBullMqName() : "";
         }
 
         List<Job<T>> result = new java.util.ArrayList<>();
@@ -1271,12 +1288,14 @@ public class OxmqQueue<T> implements Queue<T> {
 
         String[] typeNames = new String[states.length];
         for (int i = 0; i < states.length; i++) {
-            typeNames[i] = states[i].getBullMqName();
+            typeNames[i] = states[i] != null ? states[i].getBullMqName() : "";
         }
         List<Long> countsList = bullScripts.getCounts(connectionManager.getBinaryConnection(), queueKeys, typeNames);
         Map<JobState, Long> result = new java.util.EnumMap<>(JobState.class);
         for (int i = 0; i < states.length; i++) {
-            result.put(states[i], i < countsList.size() && countsList.get(i) != null ? countsList.get(i) : 0L);
+            if (states[i] != null) {
+                result.put(states[i], i < countsList.size() && countsList.get(i) != null ? countsList.get(i) : 0L);
+            }
         }
         return result;
     }

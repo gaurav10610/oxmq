@@ -399,6 +399,16 @@ public class FlowProducer implements Closeable {
         if (returnStr != null) job.setReturnvalue(returnStr);
         String failedStr = fields.get("failedReason");
         if (failedStr != null) job.setFailedReason(failedStr);
+        String stacktraceStr = fields.get("stacktrace");
+        if (stacktraceStr != null && !stacktraceStr.isBlank()) {
+            try {
+                @SuppressWarnings("unchecked")
+                List<String> traces = serializer.deserialize(stacktraceStr, List.class);
+                job.setStacktrace(traces);
+            } catch (Exception ignored) {
+                job.setStacktrace(List.of(stacktraceStr));
+            }
+        }
 
         String progressStr = fields.get("progress");
         if (progressStr != null) {
