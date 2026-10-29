@@ -33,6 +33,7 @@ public class Job<T> {
     private Long finishedOn;
     private Object returnvalue;
     private String failedReason;
+    private List<String> stacktrace = new java.util.ArrayList<>();
     private Object progressPayload;
     private String parentKey;
     private String repeatJobKey;
@@ -68,7 +69,7 @@ public class Job<T> {
     private static class JobCallbacks<T> {
         BiConsumer<Integer, Object> progressUpdater;
         BiConsumer<String, Object> checkpointSaver;
-        Consumer<java.util.List<FlowJob>> childSpawner;
+        Consumer<java.util.List<? extends FlowJob<?>>> childSpawner;
         Consumer<String> logAppender;
         Supplier<Map<String, Object>> childrenValuesSupplier;
         Supplier<Map<String, String>> ignoredChildrenFailuresSupplier;
@@ -247,6 +248,14 @@ public class Job<T> {
 
     public void setFailedReason(String failedReason) {
         this.failedReason = failedReason;
+    }
+
+    public List<String> getStacktrace() {
+        return stacktrace != null ? stacktrace : java.util.Collections.emptyList();
+    }
+
+    public void setStacktrace(List<String> stacktrace) {
+        this.stacktrace = stacktrace != null ? new java.util.ArrayList<>(stacktrace) : new java.util.ArrayList<>();
     }
 
     public String getParentKey() {
@@ -586,7 +595,7 @@ public class Job<T> {
     /**
      * Sets the spawner callback used for dynamic runtime child dependency ingestion.
      */
-    public void setChildSpawner(Consumer<java.util.List<FlowJob>> childSpawner) {
+    public void setChildSpawner(Consumer<java.util.List<? extends FlowJob<?>>> childSpawner) {
         callbacks().childSpawner = childSpawner;
     }
 
@@ -597,7 +606,7 @@ public class Job<T> {
      * @param children the child jobs to schedule
      * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
      */
-    public void addChildren(java.util.List<FlowJob> children) {
+    public void addChildren(java.util.List<? extends FlowJob<?>> children) {
         if (context != null) {
             context.spawnChildren(this.id, children);
             return;
@@ -609,13 +618,23 @@ public class Job<T> {
     }
 
     /**
+     * Alias for {@link #addChildren(java.util.List)}.
+     *
+     * @param children the child jobs to schedule
+     * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
+     */
+    public void spawnChildren(java.util.List<? extends FlowJob<?>> children) {
+        addChildren(children);
+    }
+
+    /**
      * Dynamically spawns a single child job from inside this active job and transitions this parent job
      * into the {@code waiting-children} state.
      *
      * @param child the child job to schedule
      * @throws io.oxmq.exception.WaitingChildrenException automatically thrown to yield the active worker thread
      */
-    public void addChild(FlowJob child) {
+    public void addChild(FlowJob<?> child) {
         if (child != null) {
             addChildren(java.util.List.of(child));
         }

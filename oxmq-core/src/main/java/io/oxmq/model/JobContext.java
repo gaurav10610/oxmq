@@ -47,7 +47,7 @@ public interface JobContext {
 
     default void saveCheckpoint(String jobId, String step, Object state) {}
 
-    default void spawnChildren(String jobId, List<FlowJob> children) {}
+    default void spawnChildren(String jobId, List<? extends FlowJob<?>> children) {}
 
     default Map<String, Object> getChildrenValues(String jobId) {
         return null;

@@ -210,6 +210,58 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             }
 
             @Override
+            public void spawnChildren(String jobId, List<? extends io.oxmq.model.FlowJob<?>> children) {
+                if (children == null || children.isEmpty()) {
+                    return;
+                }
+                try {
+                    StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
+                    String parentKey = queueKeys.toJobKey(jobId);
+
+                    for (io.oxmq.model.FlowJob<?> child : children) {
+                        JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
+                        Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
+                        childOptsMap.put("parentKey", parentKey);
+
+                        Map<String, Object> childParentObj = new HashMap<>();
+                        childParentObj.put("id", jobId);
+                        childParentObj.put("queueKey", queueKeys.getQualifiedName());
+                        if (childOpts.isFailParentOnFailure()) childParentObj.put("fpof", true);
+                        if (childOpts.isContinueParentOnFailure()) childParentObj.put("cpof", true);
+                        if (childOpts.isIgnoreDependencyOnFailure()) childParentObj.put("idof", true);
+                        if (childOpts.isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
+                        childOptsMap.put("parent", childParentObj);
+
+                        String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
+                        io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
+                                ? queueKeys
+                                : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
+                        String childData = serializer.serialize(child.getData());
+                        long nowTs = System.currentTimeMillis();
+                        String customJobId = childOpts.getJobId() != null ? childOpts.getJobId() : "";
+
+                        if (childOpts.getDelayMs() > 0) {
+                            bullScripts.addDelayedJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs, childOpts.getDelayMs());
+                        } else if (childOpts.getPriority() > 0) {
+                            bullScripts.addPrioritizedJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs, childOpts.getPriority());
+                        } else {
+                            bullScripts.addStandardJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs);
+                        }
+                    }
+
+                    int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
+                    log.debug("Batch worker moved parent job {} to waiting-children: result code {}", jobId, moveRes);
+                    if (moveRes == 1) {
+                        bullScripts.moveJobFromActiveToWait(binConn, queueKeys, jobId, workerId);
+                        log.debug("All child dependencies already completed; moved parent job {} back to wait", jobId);
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to spawn child jobs for job " + jobId, e);
+                }
+                throw new io.oxmq.exception.WaitingChildrenException();
+            }
+
+            @Override
             public Map<String, String> getIgnoredChildrenFailures(String jobId) {
                 try {
                     RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
@@ -545,10 +597,48 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 log.info("Completed batch with partial failures on queue {}: {} succeeded, {} failed",
                         queueName, successfulJobs.size(), jobs.size() - successfulJobs.size());
             }
+        } catch (io.oxmq.exception.RateLimitException rle) {
+            for (Job<T> job : jobs) {
+                try {
+                    bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                            job.getId(), workerId, rle.getDelayMs(), true);
+                    String groupId = job.getGroupKey();
+                    if (groupId != null && !groupId.isBlank()) {
+                        extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+                    }
+                } catch (Exception ignored) {}
+            }
+            log.info("Batch of {} jobs rate-limited; moved to delayed (delay: {} ms, skipAttempt: true)", jobs.size(), rle.getDelayMs());
+        } catch (io.oxmq.exception.DelayedException de) {
+            for (Job<T> job : jobs) {
+                try {
+                    bullScripts.moveToDelayed(connectionManager.getBinaryConnection(), queueKeys,
+                            job.getId(), workerId, de.getDelayMs(), true);
+                    String groupId = job.getGroupKey();
+                    if (groupId != null && !groupId.isBlank()) {
+                        extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+                    }
+                } catch (Exception ignored) {}
+            }
+            log.debug("Batch of {} jobs moved to delayed state via DelayedException (delay: {} ms, skipAttempt: true)", jobs.size(), de.getDelayMs());
+        } catch (io.oxmq.exception.WaitingChildrenException wce) {
+            for (Job<T> job : jobs) {
+                String groupId = job.getGroupKey();
+                if (groupId != null && !groupId.isBlank()) {
+                    try {
+                        extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+                    } catch (Exception ignored) {}
+                }
+            }
+            log.debug("Batch job moved to waiting-children state via WaitingChildrenException");
         } catch (io.oxmq.exception.WaitingException we) {
             for (Job<T> job : jobs) {
                 try {
                     bullScripts.moveJobFromActiveToWait(connectionManager.getBinaryConnection(), queueKeys, job.getId(), workerId);
+                    String groupId = job.getGroupKey();
+                    if (groupId != null && !groupId.isBlank()) {
+                        extensionScripts.decrementGroupActive(connectionManager.getBinaryConnection(), queueKeys, groupId, groupConcurrency);
+                    }
                 } catch (Exception ignored) {}
             }
             log.debug("Batch of {} jobs moved to wait state via WaitingException", jobs.size());
@@ -680,12 +770,27 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             String failedReasonValue;
             if (job.isCancelled()) {
                 failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
+            } else if (job.isMarkedFailed() && job.getBatchFailureReason() != null &&
+                    (job.getBatchFailureReason() instanceof io.oxmq.exception.UnrecoverableError ||
+                     job.getBatchFailureReason().getCause() instanceof io.oxmq.exception.UnrecoverableError)) {
+                String msg = job.getBatchFailureReason().getMessage();
+                failedReasonValue = "UnrecoverableError: " + (msg != null ? msg : "");
+            } else if (error != null && (error instanceof io.oxmq.exception.UnrecoverableError || error.getCause() instanceof io.oxmq.exception.UnrecoverableError)) {
+                String msg = error.getMessage();
+                failedReasonValue = "UnrecoverableError: " + (msg != null ? msg : "");
             } else if (job.isMarkedFailed() && job.getBatchFailureReason() != null && job.getBatchFailureReason().getMessage() != null && !job.getBatchFailureReason().getMessage().isBlank()) {
                 failedReasonValue = job.getBatchFailureReason().getMessage();
             } else if (error != null && error.getMessage() != null && !error.getMessage().isBlank()) {
                 failedReasonValue = error.getMessage();
+            } else if (job.isMarkedFailed() && job.getBatchFailureReason() != null) {
+                failedReasonValue = job.getBatchFailureReason().toString();
+            } else if (error != null) {
+                failedReasonValue = error.toString();
             } else {
-                failedReasonValue = stackTrace;
+                failedReasonValue = "Job failed in batch execution";
+            }
+            if (failedReasonValue.length() > MAX_FAILED_REASON_LENGTH) {
+                failedReasonValue = failedReasonValue.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
             }
 
             Map<String, Object> fieldsToUpdate = new HashMap<>();
@@ -732,6 +837,13 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                             job.getName(), job.getId(), currentAttempts, maxAttempts);
                 }
             } else {
+                futures.add(bullScripts.saveStacktraceAsync(
+                    binConn,
+                    queueKeys,
+                    job.getId(),
+                    serializer.serialize(List.of(stackTrace)),
+                    failedReasonValue
+                ));
                 futures.add(bullScripts.moveToFinishedAsync(
                     binConn,
                     queueKeys,

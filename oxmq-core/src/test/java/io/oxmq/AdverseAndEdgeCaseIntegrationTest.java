@@ -682,4 +682,265 @@ public class AdverseAndEdgeCaseIntegrationTest {
         assertNotNull(newJob.getId());
         assertEquals(1L, queue.count(JobState.WAITING));
     }
+
+    @Test
+    @DisplayName("Observability: failedReason is concise exception message and stacktrace is preserved in Redis")
+    void testFailedReasonConciseAndStacktracePreserved() throws Exception {
+        String queueName = "adverse-failed-reason-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        CountDownLatch failLatch = new CountDownLatch(1);
+        AtomicReference<String> failedJobId = new AtomicReference<>();
+        String expectedMessage = "Simulated business transaction failure (code: 4001)";
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(j -> {
+                    failedJobId.set(j.getId());
+                    failLatch.countDown();
+                    throw new IllegalStateException(expectedMessage);
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        queue.add("fail-task", "payload", JobOptions.builder().attempts(1).build());
+        assertTrue(failLatch.await(10, TimeUnit.SECONDS));
+
+        // Allow worker to finish moving job to failed
+        Thread.sleep(500);
+
+        var sync = connectionManager.getCommandConnection().sync();
+        QueueKeys keys = new QueueKeys(queueName);
+        String jobKey = keys.toJobKey(failedJobId.get());
+
+        Map<String, String> hash = sync.hgetall(jobKey);
+        assertNotNull(hash);
+
+        // 1. failedReason must contain the concise error message
+        assertEquals(expectedMessage, hash.get("failedReason"));
+
+        // 2. stacktrace must contain the serialized stack trace array
+        String stacktraceStr = hash.get("stacktrace");
+        assertNotNull(stacktraceStr);
+        assertTrue(stacktraceStr.contains("IllegalStateException: " + expectedMessage));
+        assertTrue(stacktraceStr.contains("at io.oxmq.AdverseAndEdgeCaseIntegrationTest"));
+
+        // 3. Domain Job object mapping
+        Job<String> failedJob = queue.getJob(failedJobId.get());
+        assertNotNull(failedJob);
+        assertEquals(expectedMessage, failedJob.getFailedReason());
+        assertNotNull(failedJob.getStacktrace());
+        assertFalse(failedJob.getStacktrace().isEmpty());
+        assertTrue(failedJob.getStacktrace().get(0).contains(expectedMessage));
+    }
+
+    @Test
+    @DisplayName("Worker spawnChildren: preserves child custom JobId, delayMs, and priority routing")
+    void testSpawnChildrenChildOptionsAndRouting() throws Exception {
+        String queueName = "adverse-spawn-parent-" + UUID.randomUUID();
+        String childQueueName = "adverse-spawn-child-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        OxmqQueue<String> childQueue = OxmqQueue.<String>builder()
+                .name(childQueueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+        queuesToClean.add(childQueue);
+
+        CountDownLatch spawnLatch = new CountDownLatch(1);
+        String child1CustomId = "custom-delayed-child-" + UUID.randomUUID();
+        String child2CustomId = "custom-priority-child-" + UUID.randomUUID();
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(j -> {
+                    if ("parent-task".equals(j.getName())) {
+                        spawnLatch.countDown();
+                        j.spawnChildren(List.of(
+                                new FlowJob<>(childQueueName, "child-delayed", "child-data-1",
+                                        JobOptions.builder().jobId(child1CustomId).delay(Duration.ofSeconds(10)).build()),
+                                new FlowJob<>(childQueueName, "child-prioritized", "child-data-2",
+                                        JobOptions.builder().jobId(child2CustomId).priority(42).build())
+                        ));
+                    }
+                    return "processed";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        Job<String> parentJob = queue.add("parent-task", "parent-payload");
+        assertTrue(spawnLatch.await(10, TimeUnit.SECONDS));
+
+        Thread.sleep(500);
+
+        // 1. Parent moved to waiting-children
+        assertEquals(JobState.WAITING_CHILDREN, queue.getJobState(parentJob.getId()));
+
+        // 2. Child 1 enqueued into delayed with custom id
+        Job<String> child1 = childQueue.getJob(child1CustomId);
+        assertNotNull(child1);
+        assertEquals(JobState.DELAYED, childQueue.getJobState(child1CustomId));
+
+        // 3. Child 2 enqueued into prioritized with custom id and priority
+        Job<String> child2 = childQueue.getJob(child2CustomId);
+        assertNotNull(child2);
+        assertEquals(JobState.PRIORITIZED, childQueue.getJobState(child2CustomId));
+        assertEquals(42, child2.getOpts().getPriority());
+    }
+
+    @Test
+    @DisplayName("BatchWorker spawnChildren: dynamically spawns children and transitions to waiting-children")
+    void testBatchWorkerSpawnChildren() throws Exception {
+        String queueName = "adverse-batch-spawn-" + UUID.randomUUID();
+        String childQueueName = "adverse-batch-spawn-child-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        OxmqQueue<String> childQueue = OxmqQueue.<String>builder()
+                .name(childQueueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+        queuesToClean.add(childQueue);
+
+        CountDownLatch batchSpawnLatch = new CountDownLatch(1);
+        String childCustomId = "batch-child-" + UUID.randomUUID();
+
+        OxmqBatchWorker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(5)
+                .batchTimeout(Duration.ofMillis(50))
+                .processor(batch -> {
+                    for (Job<String> j : batch) {
+                        batchSpawnLatch.countDown();
+                        j.spawnChildren(List.of(
+                                new FlowJob<>(childQueueName, "batch-child", "data",
+                                        JobOptions.builder().jobId(childCustomId).build())
+                        ));
+                    }
+                    return "batch-processed";
+                })
+                .build();
+        workersToStop.add(batchWorker);
+        batchWorker.start();
+
+        Job<String> parent = queue.add("parent-batch-job", "input");
+        assertTrue(batchSpawnLatch.await(10, TimeUnit.SECONDS));
+
+        Thread.sleep(500);
+
+        // Parent moved to waiting-children
+        assertEquals(JobState.WAITING_CHILDREN, queue.getJobState(parent.getId()));
+
+        // Child enqueued into wait
+        Job<String> child = childQueue.getJob(childCustomId);
+        assertNotNull(child);
+        assertEquals(JobState.WAITING, childQueue.getJobState(childCustomId));
+    }
+
+    @Test
+    @DisplayName("FlowProducer: multi-tier DAG hierarchy correctly links parent-child relationships")
+    void testFlowProducerHierarchicalDAGLinkage() {
+        String queueName = "adverse-dag-linkage-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        FlowProducer flowProducer = new FlowProducer(connectionManager);
+
+        // Grandparent -> Parent -> Child
+        FlowJob<String> child = new FlowJob<>(queueName, "leaf-task", "leaf-data", JobOptions.builder().build());
+        FlowJob<String> parent = new FlowJob<>(queueName, "intermediate-parent", "parent-data",
+                JobOptions.builder().build());
+        parent.addChild(child);
+        FlowJob<String> grandparent = new FlowJob<>(queueName, "root-task", "root-data",
+                JobOptions.builder().build());
+        grandparent.addChild(parent);
+
+        String rootId = flowProducer.add(grandparent);
+        assertNotNull(rootId);
+
+        var sync = connectionManager.getCommandConnection().sync();
+        QueueKeys keys = new QueueKeys(queueName);
+
+        // Grandparent is in waiting-children
+        assertEquals(JobState.WAITING_CHILDREN, queue.getJobState(rootId));
+
+        // Inspect child job hash in Redis
+        List<String> waitIds = sync.lrange(keys.toKey("wait"), 0, -1);
+        assertFalse(waitIds.isEmpty());
+        String childId = waitIds.get(0);
+
+        Job<String> leafJob = queue.getJob(childId);
+        assertNotNull(leafJob);
+        assertNotNull(leafJob.getParentKey());
+        assertTrue(leafJob.getParentKey().contains(queueName));
+    }
+
+    @Test
+    @DisplayName("Queue API: getJobCounts, getRanges, and getJobs safely handle null array elements")
+    void testQueueNullStateSafety() {
+        String queueName = "adverse-null-state-safety-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        queue.add("job-1", "data-1");
+
+        // 1. getJobCounts with null state in array
+        Map<JobState, Long> counts = assertDoesNotThrow(() ->
+                queue.getJobCounts(JobState.WAITING, null, JobState.ACTIVE)
+        );
+        assertNotNull(counts);
+        assertEquals(1L, counts.get(JobState.WAITING));
+        assertEquals(0L, counts.get(JobState.ACTIVE));
+        assertFalse(counts.containsKey(null));
+
+        // 2. getRanges with null state in array
+        Map<JobState, List<String>> ranges = assertDoesNotThrow(() ->
+                queue.getRanges(new JobState[]{JobState.WAITING, null, JobState.ACTIVE}, 0, 10, true)
+        );
+        assertNotNull(ranges);
+        assertEquals(1, ranges.get(JobState.WAITING).size());
+        assertEquals(0, ranges.get(JobState.ACTIVE).size());
+        assertFalse(ranges.containsKey(null));
+
+        // 3. getJobs with null state in list
+        List<Job<String>> jobs = assertDoesNotThrow(() ->
+                queue.getJobs(Arrays.asList(JobState.WAITING, null, JobState.ACTIVE), 0, 10, true)
+        );
+        assertNotNull(jobs);
+        assertEquals(1, jobs.size());
+    }
+
+    @Test
+    @DisplayName("JobOptions: stackTraceLimit serializes to options map accurately")
+    void testJobOptionsStackTraceLimitSerialization() {
+        JobOptions opts = JobOptions.builder()
+                .attempts(3)
+                .stackTraceLimit(10)
+                .build();
+
+        assertEquals(10, opts.getStackTraceLimit());
+        Map<String, Object> map = opts.toMap();
+        assertTrue(map.containsKey("stackTraceLimit"));
+        assertEquals(10, map.get("stackTraceLimit"));
+    }
 }

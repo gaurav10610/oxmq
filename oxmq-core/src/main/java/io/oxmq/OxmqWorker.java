@@ -245,13 +245,13 @@ public class OxmqWorker<T> implements Worker<T> {
             }
 
             @Override
-            public void spawnChildren(String jobId, java.util.List<io.oxmq.model.FlowJob> children) {
+            public void spawnChildren(String jobId, java.util.List<? extends io.oxmq.model.FlowJob<?>> children) {
                 if (children == null || children.isEmpty()) return;
                 try {
                     StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
                     String parentKey = queueKeys.toJobKey(jobId);
 
-                    for (io.oxmq.model.FlowJob child : children) {
+                    for (io.oxmq.model.FlowJob<?> child : children) {
                         JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
                         Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
                         childOptsMap.put("parentKey", parentKey);
@@ -271,8 +271,15 @@ public class OxmqWorker<T> implements Worker<T> {
                                 : new io.oxmq.client.QueueKeys(queueKeys.getPrefix(), childQueueName);
                         String childData = serializer.serialize(child.getData());
                         long nowTs = System.currentTimeMillis();
+                        String customJobId = childOpts.getJobId() != null ? childOpts.getJobId() : "";
 
-                        bullScripts.addStandardJob(binConn, childKeys, "", child.getName(), childData, childOptsMap, nowTs);
+                        if (childOpts.getDelayMs() > 0) {
+                            bullScripts.addDelayedJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs, childOpts.getDelayMs());
+                        } else if (childOpts.getPriority() > 0) {
+                            bullScripts.addPrioritizedJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs, childOpts.getPriority());
+                        } else {
+                            bullScripts.addStandardJob(binConn, childKeys, customJobId, child.getName(), childData, childOptsMap, nowTs);
+                        }
                     }
 
                     int moveRes = bullScripts.moveToWaitingChildren(binConn, queueKeys, jobId, workerId, "", System.currentTimeMillis());
@@ -843,11 +850,19 @@ public class OxmqWorker<T> implements Worker<T> {
 
         String failedReasonValue;
         if (isTimeout) {
-            failedReasonValue = job.getCancelReason() != null ? job.getCancelReason() : error.getMessage();
+            failedReasonValue = job.getCancelReason() != null ? job.getCancelReason() : (error.getMessage() != null ? error.getMessage() : error.toString());
         } else if (job.isCancelled()) {
             failedReasonValue = job.getCancelReason() != null ? "Job cancelled: " + job.getCancelReason() : "Job cancelled";
+        } else if (error instanceof io.oxmq.exception.UnrecoverableError || (error != null && error.getCause() instanceof io.oxmq.exception.UnrecoverableError)) {
+            String msg = error.getMessage() != null ? error.getMessage() : (error.getCause() != null ? error.getCause().getMessage() : "");
+            failedReasonValue = "UnrecoverableError: " + msg;
+        } else if (error.getMessage() != null && !error.getMessage().isBlank()) {
+            failedReasonValue = error.getMessage();
         } else {
-            failedReasonValue = stackTrace;
+            failedReasonValue = error.toString();
+        }
+        if (failedReasonValue.length() > MAX_FAILED_REASON_LENGTH) {
+            failedReasonValue = failedReasonValue.substring(0, MAX_FAILED_REASON_LENGTH) + "\n[... stack trace truncated for memory optimization ...]";
         }
 
         Map<String, Object> fieldsToUpdate = new HashMap<>();
@@ -886,6 +901,13 @@ public class OxmqWorker<T> implements Worker<T> {
                         job.getName(), job.getId(), currentAttempts, maxAttempts);
                 return;
             }
+        }
+
+        try {
+            bullScripts.saveStacktrace(connectionManager.getBinaryConnection(), queueKeys,
+                    job.getId(), serializer.serialize(List.of(stackTrace)), failedReasonValue);
+        } catch (Exception e) {
+            log.warn("Failed to persist stacktrace for job {}: {}", job.getId(), e.getMessage());
         }
 
         bullScripts.moveToFinished(connectionManager.getBinaryConnection(), queueKeys, job.getId(),
