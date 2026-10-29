@@ -457,6 +457,7 @@ public class OxmqQueue<T> implements Queue<T> {
                     job.setProgress((int) Math.round(d));
                 } catch (NumberFormatException ignored) {}
             }
+            job.setProgressPayload(progressStr);
         }
         if (attemptsStr != null) {
             try {
@@ -561,6 +562,9 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long count(JobState state) {
+        if (state == null) {
+            return 0L;
+        }
         RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
         try {
             return switch (state) {
@@ -581,6 +585,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long clean(long graceMs, int limit, JobState state) {
+        Objects.requireNonNull(state, "JobState must not be null");
         String set = switch (state) {
             case COMPLETED -> "completed";
             case FAILED -> "failed";
@@ -978,7 +983,7 @@ public class OxmqQueue<T> implements Queue<T> {
         }
         String[] stateNames = new String[states.length];
         for (int i = 0; i < states.length; i++) {
-            stateNames[i] = states[i] == JobState.WAITING ? "wait" : states[i].name().toLowerCase();
+            stateNames[i] = states[i] != null ? states[i].getBullMqName() : "";
         }
         List<List<String>> raw = bullScripts.getRanges(connectionManager.getBinaryConnection(), queueKeys, start, end, asc, stateNames);
         Map<JobState, List<String>> result = new java.util.LinkedHashMap<>();
@@ -1147,8 +1152,6 @@ public class OxmqQueue<T> implements Queue<T> {
                 Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
                 String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
                 throw new RuntimeException(reason);
-            } else if (status == -1) {
-                throw new IllegalArgumentException("Job " + jobId + " does not exist in queue " + name);
             }
         }
         return events.waitUntilFinished(jobId, timeout);
@@ -1174,8 +1177,6 @@ public class OxmqQueue<T> implements Queue<T> {
                 Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
                 String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
                 return CompletableFuture.failedFuture(new RuntimeException(reason));
-            } else if (status == -1) {
-                return CompletableFuture.failedFuture(new IllegalArgumentException("Job " + jobId + " does not exist in queue " + name));
             }
         }
         return events.waitUntilFinishedAsync(jobId);
@@ -1481,8 +1482,8 @@ public class OxmqQueue<T> implements Queue<T> {
     public long getGroupJobsCount(String groupId) {
         if (groupId == null || groupId.isBlank()) return 0;
         var sync = connectionManager.getCommandConnection().sync();
-        Long waitLen = sync.llen(prefix + ":groups:" + groupId);
-        Long prioLen = sync.zcard(prefix + ":groups:" + groupId + ":prioritized");
+        Long waitLen = sync.llen(queueKeys.toKey("groups:" + groupId));
+        Long prioLen = sync.zcard(queueKeys.toKey("groups:" + groupId + ":prioritized"));
         return (waitLen != null ? waitLen : 0) + (prioLen != null ? prioLen : 0);
     }
 
@@ -1490,7 +1491,7 @@ public class OxmqQueue<T> implements Queue<T> {
     public long getGroupActiveCount(String groupId) {
         if (groupId == null || groupId.isBlank()) return 0;
         var sync = connectionManager.getCommandConnection().sync();
-        String val = sync.hget(prefix + ":groups:active:count", groupId);
+        String val = sync.hget(queueKeys.toKey("groups:active:count"), groupId);
         if (val == null || val.isBlank()) return 0;
         try {
             return Long.parseLong(val);
@@ -1506,8 +1507,8 @@ public class OxmqQueue<T> implements Queue<T> {
         }
         var sync = connectionManager.getCommandConnection().sync();
         Map<Integer, Long> counts = new HashMap<>();
-        String prioKey = prefix + ":groups:" + groupId + ":prioritized";
-        String waitKey = prefix + ":groups:" + groupId;
+        String prioKey = queueKeys.toKey("groups:" + groupId + ":prioritized");
+        String waitKey = queueKeys.toKey("groups:" + groupId);
         for (Integer p : priorities) {
             if (p == null) continue;
             if (p == 0) {

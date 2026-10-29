@@ -33,6 +33,7 @@ public class Job<T> {
     private Long finishedOn;
     private Object returnvalue;
     private String failedReason;
+    private Object progressPayload;
     private String parentKey;
     private String repeatJobKey;
     private String groupKey;
@@ -182,6 +183,14 @@ public class Job<T> {
 
     public void setProgress(int progress) {
         this.progress = progress;
+    }
+
+    public Object getProgressPayload() {
+        return progressPayload;
+    }
+
+    public void setProgressPayload(Object progressPayload) {
+        this.progressPayload = progressPayload;
     }
 
     public int getAttemptsMade() {

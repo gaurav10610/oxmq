@@ -10,6 +10,7 @@ import io.oxmq.model.JobOptions;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.io.Closeable;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -347,6 +348,24 @@ public class FlowProducer implements Closeable {
 
         io.oxmq.model.Job<Object> job = new io.oxmq.model.Job<>(jobId, name, dataStr, opts);
         job.setQueueName(queueName);
+        String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr == null) {
+            groupKeyStr = fields.get("gid");
+        }
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
+        }
+
+        String rjkStr = fields.get("repeatJobKey");
+        if (rjkStr == null) {
+            rjkStr = fields.get("rjk");
+        }
+        if (rjkStr != null && !rjkStr.isBlank()) {
+            job.setRepeatJobKey(rjkStr);
+        }
+
         String attemptsStr = fields.get("attemptsMade");
         if (attemptsStr == null) {
             attemptsStr = fields.get("atm");
@@ -361,14 +380,70 @@ public class FlowProducer implements Closeable {
         if (attemptsStartedStr != null) {
             try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
         }
+        String timestampStr = fields.get("timestamp");
+        if (timestampStr != null) {
+            try { job.setTimestamp(Long.parseLong(timestampStr)); } catch (NumberFormatException ignored) {}
+        }
+        String processedStr = fields.get("processedOn");
+        if (processedStr == null) {
+            processedStr = fields.get("pro");
+        }
+        if (processedStr != null) {
+            try { job.setProcessedOn(Long.parseLong(processedStr)); } catch (NumberFormatException ignored) {}
+        }
+        String finishedStr = fields.get("finishedOn");
+        if (finishedStr != null) {
+            try { job.setFinishedOn(Long.parseLong(finishedStr)); } catch (NumberFormatException ignored) {}
+        }
+        String returnStr = fields.get("returnvalue");
+        if (returnStr != null) job.setReturnvalue(returnStr);
+        String failedStr = fields.get("failedReason");
+        if (failedStr != null) job.setFailedReason(failedStr);
+
         String progressStr = fields.get("progress");
         if (progressStr != null) {
             try {
                 job.setProgress(Integer.parseInt(progressStr));
-            } catch (NumberFormatException ignored) {}
+            } catch (NumberFormatException nfe) {
+                try {
+                    double d = Double.parseDouble(progressStr);
+                    job.setProgress((int) Math.round(d));
+                } catch (NumberFormatException ignored) {}
+            }
+            job.setProgressPayload(progressStr);
         }
         String parentKey = fields.get("parentKey");
         if (parentKey != null) job.setParentKey(parentKey);
+
+        job.setStateSupplier(() -> {
+            try {
+                String stateStr = bullScripts.getState(connectionManager.getBinaryConnection(), queueKeys, jobId);
+                return io.oxmq.model.JobState.fromBullMqState(stateStr);
+            } catch (Exception ignored) {
+                return null;
+            }
+        });
+
+        job.setChildrenValuesSupplier(() -> {
+            try {
+                Map<String, String> childValsRaw = sync.hgetall(jobKey + ":processed");
+                if (childValsRaw == null || childValsRaw.isEmpty()) {
+                    childValsRaw = sync.hgetall(jobKey + ":childrenValues");
+                }
+                if (childValsRaw != null && !childValsRaw.isEmpty()) {
+                    Map<String, Object> childVals = new HashMap<>(childValsRaw.size());
+                    for (Map.Entry<String, String> entry : childValsRaw.entrySet()) {
+                        try {
+                            childVals.put(entry.getKey(), serializer.deserialize(entry.getValue(), Object.class));
+                        } catch (Exception ex) {
+                            childVals.put(entry.getKey(), entry.getValue());
+                        }
+                    }
+                    return childVals;
+                }
+            } catch (Exception ignored) {}
+            return Collections.emptyMap();
+        });
 
         io.oxmq.model.JobNode jobNode = new io.oxmq.model.JobNode(job);
         if (maxDepth == 0) {

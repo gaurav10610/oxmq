@@ -40,16 +40,23 @@ public class AdverseAndEdgeCaseIntegrationTest {
     private RedisConnectionManager connectionManager;
     private List<Queue<?>> queuesToClean;
     private List<Worker<?>> workersToStop;
+    private List<QueueEvents> eventsToClose;
 
     @BeforeEach
     void setUp() {
         connectionManager = new RedisConnectionManager(REDIS_URI);
         queuesToClean = new ArrayList<>();
         workersToStop = new ArrayList<>();
+        eventsToClose = new ArrayList<>();
     }
 
     @AfterEach
     void tearDown() {
+        for (QueueEvents events : eventsToClose) {
+            try {
+                events.close();
+            } catch (Exception ignored) {}
+        }
         for (Worker<?> worker : workersToStop) {
             try {
                 worker.close();
@@ -406,5 +413,202 @@ public class AdverseAndEdgeCaseIntegrationTest {
         assertTrue(parentLatch.await(10, TimeUnit.SECONDS), "Parent must execute despite child failure");
         assertNotNull(ignoredFailuresRef.get());
         assertFalse(ignoredFailuresRef.get().isEmpty());
+    }
+
+    @Test
+    @DisplayName("VirtualGroups: getGroupJobsCount, getGroupActiveCount, and getCountsPerPriorityForGroup correctly resolve queue namespace")
+    void testVirtualGroupNamespacingAndJobCounts() {
+        String queueName = "adverse-groups-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        // Add 2 jobs to group-alpha (one standard priority 0, one priority 5)
+        queue.add("job-alpha-0", "data-a0", JobOptions.builder().group(new GroupOptions("group-alpha")).build());
+        queue.add("job-alpha-5", "data-a5", JobOptions.builder().group(new GroupOptions("group-alpha")).priority(5).build());
+
+        // Add 1 job to group-beta (priority 10)
+        queue.add("job-beta-10", "data-b10", JobOptions.builder().group(new GroupOptions("group-beta")).priority(10).build());
+
+        // Verify group-alpha count is 2 (1 wait + 1 prioritized)
+        assertEquals(2, queue.getGroupJobsCount("group-alpha"));
+        assertEquals(1, queue.getGroupJobsCount("group-beta"));
+        assertEquals(0, queue.getGroupJobsCount("non-existent-group"));
+
+        // Verify priority breakdown for group-alpha
+        Map<Integer, Long> alphaPriorities = queue.getCountsPerPriorityForGroup("group-alpha", List.of(0, 5, 10));
+        assertEquals(1L, alphaPriorities.get(0));
+        assertEquals(1L, alphaPriorities.get(5));
+        assertEquals(0L, alphaPriorities.get(10));
+
+        // Verify priority breakdown for group-beta
+        Map<Integer, Long> betaPriorities = queue.getCountsPerPriorityForGroup("group-beta", List.of(0, 5, 10));
+        assertEquals(0L, betaPriorities.get(0));
+        assertEquals(0L, betaPriorities.get(5));
+        assertEquals(1L, betaPriorities.get(10));
+    }
+
+    @Test
+    @DisplayName("getRanges: correctly resolves JobState.WAITING_CHILDREN using hyphenated BullMQ key")
+    void testGetRangesWaitingChildrenHyphenParity() {
+        String parentQueue = "adverse-ranges-parent-" + UUID.randomUUID();
+        String childQueue = "adverse-ranges-child-" + UUID.randomUUID();
+
+        OxmqQueue<String> pQueue = OxmqQueue.<String>builder().name(parentQueue).connectionManager(connectionManager).build();
+        OxmqQueue<String> cQueue = OxmqQueue.<String>builder().name(childQueue).connectionManager(connectionManager).build();
+        queuesToClean.add(pQueue);
+        queuesToClean.add(cQueue);
+
+        FlowProducer flowProducer = new FlowProducer(connectionManager);
+        FlowJob<String> root = FlowJob.of(parentQueue, "parent-flow", "p-data");
+        root.addChild(FlowJob.of(childQueue, "child-flow", "c-data"));
+
+        String parentId = flowProducer.add(root);
+        assertNotNull(parentId);
+
+        // Parent should be in WAITING_CHILDREN zset
+        Map<JobState, List<String>> ranges = pQueue.getRanges(new JobState[]{JobState.WAITING_CHILDREN}, 0, -1, true);
+        assertNotNull(ranges);
+        List<String> waitingChildrenIds = ranges.get(JobState.WAITING_CHILDREN);
+        assertNotNull(waitingChildrenIds);
+        assertTrue(waitingChildrenIds.contains(parentId), "getRanges with WAITING_CHILDREN must retrieve parent job ID");
+    }
+
+    @Test
+    @DisplayName("QueueEvents: waitUntilFinished fast-path resolves instantly when job already completed or failed")
+    void testQueueEventsWaitUntilFinishedFastPathAlreadyFinished() throws Exception {
+        String queueName = "adverse-events-fastpath-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        CountDownLatch completedLatch = new CountDownLatch(1);
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(job -> {
+                    completedLatch.countDown();
+                    return "FAST_PATH_RESULT";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        Job<String> job = queue.add("quickJob", "quickData");
+        assertTrue(completedLatch.await(5, TimeUnit.SECONDS));
+
+        // Sleep briefly to ensure Redis moveToFinished completes
+        Thread.sleep(150);
+
+        // Create a BRAND NEW QueueEvents listener AFTER the job has already finished
+        QueueEvents events = QueueEvents.builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        eventsToClose.add(events);
+
+        // Fast-path isFinished check should immediately return without hanging or timing out
+        Object result = events.waitUntilFinished(job.getId(), Duration.ofSeconds(2));
+        assertNotNull(result);
+        assertEquals("FAST_PATH_RESULT", result.toString().trim().replace("\"", ""));
+    }
+
+    @Test
+    @DisplayName("Queue: count(null) returns 0 and clean(..., null) throws NullPointerException")
+    void testNullSafetyInCountAndClean() {
+        String queueName = "adverse-null-safety-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        // count(null) must return 0L safely
+        assertEquals(0L, queue.count(null));
+
+        // clean(..., null) must throw NullPointerException
+        assertThrows(NullPointerException.class, () -> queue.clean(0, 10, null));
+    }
+
+    @Test
+    @DisplayName("OxmqBatchWorker: resilient to malformed or floating point numeric fields in Redis")
+    void testBatchWorkerMalformedNumericResilience() throws Exception {
+        String queueName = "adverse-batch-resilience-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        Job<String> job = queue.add("corruptJob", "payload-42");
+        assertNotNull(job.getId());
+
+        // Corrupt numeric attributes in Redis to malformed strings
+        StatefulRedisConnection<String, String> cmdConn = connectionManager.getCommandConnection();
+        String jobKey = queue.getQueueKeys().toJobKey(job.getId());
+        cmdConn.sync().hset(jobKey, Map.of(
+                "attemptsMade", "malformed-attempts",
+                "timestamp", "malformed-timestamp"
+        ));
+
+        CountDownLatch batchLatch = new CountDownLatch(1);
+        AtomicReference<Job<String>> capturedJob = new AtomicReference<>();
+
+        OxmqBatchWorker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(1)
+                .processor(jobs -> {
+                    capturedJob.set(jobs.get(0));
+                    batchLatch.countDown();
+                    return "batch-ok";
+                })
+                .build();
+        workersToStop.add(batchWorker);
+        batchWorker.start();
+
+        assertTrue(batchLatch.await(5, TimeUnit.SECONDS), "Batch worker must process job without crashing on malformed numeric fields");
+        assertNotNull(capturedJob.get());
+        assertEquals(job.getId(), capturedJob.get().getId());
+    }
+
+    @Test
+    @DisplayName("FlowProducer: getFlow populates all job attributes with complete parity")
+    void testFlowProducerGetFlowParity() throws Exception {
+        String queueName = "adverse-flow-parity-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        FlowProducer flowProducer = new FlowProducer(connectionManager);
+        FlowJob<String> root = FlowJob.of(queueName, "dag-root", "root-data",
+                JobOptions.builder()
+                        .group(new GroupOptions("flow-tenant-1"))
+                        .attempts(3)
+                        .build());
+
+        String rootId = flowProducer.add(root);
+        assertNotNull(rootId);
+
+        // Update progress with structured payload
+        queue.updateJobProgress(rootId, 85);
+
+        // Query flow tree
+        io.oxmq.model.JobNode jobNode = flowProducer.getFlow(queueName, rootId);
+        assertNotNull(jobNode);
+        Job<?> retrieved = jobNode.getJob();
+        assertNotNull(retrieved);
+        assertEquals(rootId, retrieved.getId());
+        assertEquals("flow-tenant-1", retrieved.getGroupKey());
+        assertEquals(85, retrieved.getProgress());
+        assertNotNull(retrieved.getState());
+        assertEquals(JobState.WAITING, retrieved.getState());
+        assertNotNull(retrieved.getDependencies());
     }
 }

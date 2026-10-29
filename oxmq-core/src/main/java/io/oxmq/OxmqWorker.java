@@ -809,6 +809,8 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("progress", "progress"),
         Map.entry("rjk", "repeatJobKey"),
         Map.entry("repeatJobKey", "repeatJobKey"),
+        Map.entry("groupKey", "groupKey"),
+        Map.entry("gid", "groupKey"),
         Map.entry("deid", "deid"),
         Map.entry("pb", "parentKey")
     );
@@ -918,7 +920,7 @@ public class OxmqWorker<T> implements Worker<T> {
                         case "attemptsStarted" -> attemptsStartedStr = val;
                         case "timestamp" -> timestampStr = val;
                         case "parentKey" -> parentKeyStr = val;
-                        case "groupKey" -> groupKeyStr = val;
+                        case "groupKey", "gid" -> groupKeyStr = val;
                         case "checkpoint" -> checkpointStr = val;
                         case "checkpoint_step" -> checkpointStepStr = val;
                         case "rjk", "repeatJobKey" -> rjkStr = val;
@@ -1060,6 +1062,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "repeatJobKey";
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "attemptsStarted";
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 'm') return "attemptsMade";
+                if (b[0] == 'g' && b[1] == 'i' && b[2] == 'd') return "groupKey";
                 break;
             case 4:
                 if (b[0] == 'n' && b[1] == 'a' && b[2] == 'm' && b[3] == 'e') return "name";
