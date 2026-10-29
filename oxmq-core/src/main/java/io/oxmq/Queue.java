@@ -3,6 +3,7 @@ package io.oxmq;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
+import io.oxmq.model.WorkerInfo;
 import java.io.Closeable;
 import java.util.List;
 
@@ -185,6 +186,36 @@ public interface Queue<T> extends Closeable {
      */
     default long addJobLog(String jobId, String logRow, int keepLogs) {
         return 0L;
+    }
+
+    /**
+     * Gets the total number of log rows currently stored for a job.
+     *
+     * @param jobId job identifier
+     * @return count of log rows
+     */
+    default long getJobLogsCount(String jobId) {
+        return 0L;
+    }
+
+    /**
+     * Retrieves active workers connected to this queue in the cluster.
+     * Mirrors BullMQ's queue.getWorkers().
+     *
+     * @return list of active worker metadata
+     */
+    default List<WorkerInfo> getWorkers() {
+        return List.of();
+    }
+
+    /**
+     * Gets the count of active workers currently connected to this queue.
+     * Mirrors BullMQ's queue.getWorkersCount().
+     *
+     * @return active worker count
+     */
+    default int getWorkersCount() {
+        return 0;
     }
 
     /**

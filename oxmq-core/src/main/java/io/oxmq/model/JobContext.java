@@ -3,6 +3,7 @@ package io.oxmq.model;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Execution context and operations provider for a connected {@link Job}.
@@ -55,5 +56,13 @@ public interface JobContext {
 
     default Map<String, String> getIgnoredChildrenFailures(String jobId) {
         return Map.of();
+    }
+
+    default Object waitUntilFinished(String jobId, Duration timeout) throws Exception {
+        return null;
+    }
+
+    default CompletableFuture<Object> waitUntilFinishedAsync(String jobId) {
+        return null;
     }
 }

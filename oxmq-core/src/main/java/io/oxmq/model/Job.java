@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -83,6 +84,8 @@ public class Job<T> {
         Supplier<JobDependencies> dependenciesSupplier;
         Function<Integer, JobNode> flowSupplier;
         Supplier<Boolean> logCleaner;
+        BiFunction<String, Duration, Object> finishedWaiter;
+        Function<String, CompletableFuture<Object>> asyncFinishedWaiter;
     }
 
     private JobCallbacks<T> callbacks() {
@@ -406,27 +409,74 @@ public class Job<T> {
     }
 
     public boolean isCompleted() {
-        return state == JobState.COMPLETED;
+        return getState() == JobState.COMPLETED;
     }
 
     public boolean isFailed() {
-        return state == JobState.FAILED;
+        return getState() == JobState.FAILED;
     }
 
     public boolean isActive() {
-        return state == JobState.ACTIVE;
+        return getState() == JobState.ACTIVE;
     }
 
     public boolean isWaiting() {
-        return state == JobState.WAITING;
+        return getState() == JobState.WAITING;
     }
 
     public boolean isDelayed() {
-        return state == JobState.DELAYED;
+        return getState() == JobState.DELAYED;
     }
 
     public boolean isWaitingChildren() {
-        return state == JobState.WAITING_CHILDREN;
+        return getState() == JobState.WAITING_CHILDREN;
+    }
+
+    /**
+     * Waits for this job to complete or fail using its attached queue context.
+     *
+     * @param timeout maximum duration to wait
+     * @return job returnvalue
+     * @throws Exception if job fails or wait times out
+     */
+    public Object waitUntilFinished(Duration timeout) throws Exception {
+        if (isCompleted()) {
+            return returnvalue;
+        }
+        if (isFailed()) {
+            throw new RuntimeException(failedReason != null ? failedReason : "Job " + id + " failed");
+        }
+        if (context != null) {
+            return context.waitUntilFinished(this.id, timeout);
+        }
+        if (callbacks != null && callbacks.finishedWaiter != null) {
+            return callbacks.finishedWaiter.apply(this.id, timeout);
+        }
+        throw new IllegalStateException("No Queue or QueueEvents attached to Job " + id + " to wait for completion");
+    }
+
+    /**
+     * Asynchronously waits for this job to complete or fail using its attached queue context.
+     *
+     * @return future resolving to job returnvalue or exceptionally on failure
+     */
+    public CompletableFuture<Object> waitUntilFinishedAsync() {
+        if (isCompleted()) {
+            return CompletableFuture.completedFuture(returnvalue);
+        }
+        if (isFailed()) {
+            return CompletableFuture.failedFuture(new RuntimeException(failedReason != null ? failedReason : "Job " + id + " failed"));
+        }
+        if (context != null) {
+            CompletableFuture<Object> future = context.waitUntilFinishedAsync(this.id);
+            if (future != null) {
+                return future;
+            }
+        }
+        if (callbacks != null && callbacks.asyncFinishedWaiter != null) {
+            return callbacks.asyncFinishedWaiter.apply(this.id);
+        }
+        return CompletableFuture.failedFuture(new IllegalStateException("No Queue or QueueEvents attached to Job " + id + " to wait for completion"));
     }
 
     /**
@@ -794,6 +844,14 @@ public class Job<T> {
 
     public void setLogCleaner(Supplier<Boolean> logCleaner) {
         callbacks().logCleaner = logCleaner;
+    }
+
+    public void setFinishedWaiter(BiFunction<String, Duration, Object> finishedWaiter) {
+        callbacks().finishedWaiter = finishedWaiter;
+    }
+
+    public void setAsyncFinishedWaiter(Function<String, CompletableFuture<Object>> asyncFinishedWaiter) {
+        callbacks().asyncFinishedWaiter = asyncFinishedWaiter;
     }
 
     /**

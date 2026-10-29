@@ -15,6 +15,7 @@ import io.oxmq.metrics.OxmqMetrics;
 import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobState;
+import io.oxmq.model.WorkerInfo;
 import io.oxmq.serializer.JacksonJobSerializer;
 import io.oxmq.serializer.JobSerializer;
 import java.nio.charset.StandardCharsets;
@@ -29,6 +30,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,6 +119,16 @@ public class OxmqQueue<T> implements Queue<T> {
         @Override
         public void updateProgress(String jobId, int progress, Object payload) {
             OxmqQueue.this.updateJobProgress(jobId, progress);
+        }
+
+        @Override
+        public Object waitUntilFinished(String jobId, java.time.Duration timeout) throws Exception {
+            return OxmqQueue.this.waitUntilFinished(jobId, timeout);
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<Object> waitUntilFinishedAsync(String jobId) {
+            return OxmqQueue.this.waitUntilFinishedAsync(jobId);
         }
     };
 
@@ -868,6 +882,77 @@ public class OxmqQueue<T> implements Queue<T> {
     }
 
     @Override
+    public long getJobLogsCount(String jobId) {
+        if (jobId == null || jobId.isBlank()) {
+            return 0L;
+        }
+        try {
+            RedisCommands<String, String> sync = connectionManager.getCommandConnection().sync();
+            Long count = sync.llen(queueKeys.toJobLogsKey(jobId));
+            return count != null ? count : 0L;
+        } catch (Exception e) {
+            log.warn("Failed to get job logs count for job {} in queue {}: {}", jobId, name, e.getMessage());
+            return 0L;
+        }
+    }
+
+    @Override
+    public List<WorkerInfo> getWorkers() {
+        try {
+            StatefulRedisConnection<String, String> conn = connectionManager.getCommandConnection();
+            String raw = conn.sync().clientList();
+            if (raw == null || raw.isBlank()) {
+                return List.of();
+            }
+            String prefix1 = queueKeys.getPrefix() + ":" + name + ":w:";
+            String prefix2 = "{" + prefix1;
+            String prefix3 = queueKeys.getQualifiedName() + ":w:";
+
+            List<WorkerInfo> workers = new ArrayList<>();
+            String[] lines = raw.split("\r?\n");
+            for (String line : lines) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                Map<String, String> fields = new HashMap<>();
+                String[] tokens = line.split("\\s+");
+                for (String token : tokens) {
+                    int eq = token.indexOf('=');
+                    if (eq > 0) {
+                        fields.put(token.substring(0, eq), token.substring(eq + 1));
+                    }
+                }
+                String clientName = fields.get("name");
+                if (clientName != null && (clientName.startsWith(prefix1) || clientName.startsWith(prefix2) || clientName.startsWith(prefix3))) {
+                    String workerId = clientName;
+                    int idx = clientName.lastIndexOf(":w:");
+                    if (idx >= 0) {
+                        workerId = clientName.substring(idx + 3);
+                    }
+                    workers.add(new WorkerInfo(
+                            workerId,
+                            clientName,
+                            fields.get("addr"),
+                            fields.get("id"),
+                            fields.get("age"),
+                            fields.get("idle"),
+                            fields.get("flags")
+                    ));
+                }
+            }
+            return Collections.unmodifiableList(workers);
+        } catch (Exception e) {
+            log.warn("Failed to get active workers for queue {}: {}", name, e.getMessage());
+            return List.of();
+        }
+    }
+
+    @Override
+    public int getWorkersCount() {
+        return getWorkers().size();
+    }
+
+    @Override
     public void updateJobProgress(String jobId, int progress) {
         if (jobId == null || jobId.isBlank()) {
             return;
@@ -1161,22 +1246,29 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public Object waitUntilFinished(String jobId, QueueEvents events, Duration timeout) throws Exception {
-        List<Object> finishedCheck = isFinished(jobId, true);
-        if (finishedCheck != null && !finishedCheck.isEmpty()) {
-            int status = ((Number) finishedCheck.get(0)).intValue();
-            if (status == 1) {
-                Object val = finishedCheck.size() > 1 ? finishedCheck.get(1) : null;
-                if (val instanceof byte[] b) {
-                    return new String(b, StandardCharsets.UTF_8);
+        CompletableFuture<Object> future = waitUntilFinishedAsync(jobId, events);
+        try {
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException | InterruptedException | ExecutionException e) {
+            // Fallback: check if the job actually completed while waiting or if event was dropped
+            List<Object> lastCheck = isFinished(jobId, true);
+            if (lastCheck != null && !lastCheck.isEmpty()) {
+                int status = ((Number) lastCheck.get(0)).intValue();
+                if (status == 1) {
+                    Object val = lastCheck.size() > 1 ? lastCheck.get(1) : null;
+                    if (val instanceof byte[] b) {
+                        return new String(b, StandardCharsets.UTF_8);
+                    }
+                    return val;
+                } else if (status == 2) {
+                    Object err = lastCheck.size() > 1 ? lastCheck.get(1) : "Job failed";
+                    String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
+                    throw new RuntimeException(reason);
                 }
-                return val;
-            } else if (status == 2) {
-                Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
-                String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
-                throw new RuntimeException(reason);
             }
+            future.cancel(true);
+            throw e;
         }
-        return events.waitUntilFinished(jobId, timeout);
     }
 
     @Override
@@ -1186,6 +1278,7 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public CompletableFuture<Object> waitUntilFinishedAsync(String jobId, QueueEvents events) {
+        CompletableFuture<Object> future = events.waitUntilFinishedAsync(jobId);
         List<Object> finishedCheck = isFinished(jobId, true);
         if (finishedCheck != null && !finishedCheck.isEmpty()) {
             int status = ((Number) finishedCheck.get(0)).intValue();
@@ -1194,14 +1287,16 @@ public class OxmqQueue<T> implements Queue<T> {
                 if (val instanceof byte[] b) {
                     val = new String(b, StandardCharsets.UTF_8);
                 }
-                return CompletableFuture.completedFuture(val);
+                future.complete(val);
+                return future;
             } else if (status == 2) {
                 Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
                 String reason = err instanceof byte[] b ? new String(b, StandardCharsets.UTF_8) : String.valueOf(err);
-                return CompletableFuture.failedFuture(new RuntimeException(reason));
+                future.completeExceptionally(new RuntimeException(reason));
+                return future;
             }
         }
-        return events.waitUntilFinishedAsync(jobId);
+        return future;
     }
 
     @Override
