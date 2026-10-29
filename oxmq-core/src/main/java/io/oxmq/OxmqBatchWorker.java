@@ -545,7 +545,13 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                 log.info("Completed batch with partial failures on queue {}: {} succeeded, {} failed",
                         queueName, successfulJobs.size(), jobs.size() - successfulJobs.size());
             }
-
+        } catch (io.oxmq.exception.WaitingException we) {
+            for (Job<T> job : jobs) {
+                try {
+                    bullScripts.moveJobFromActiveToWait(connectionManager.getBinaryConnection(), queueKeys, job.getId(), workerId);
+                } catch (Exception ignored) {}
+            }
+            log.debug("Batch of {} jobs moved to wait state via WaitingException", jobs.size());
         } catch (InterruptedException | io.oxmq.exception.JobCancelledException ie) {
             long durationNanos = System.nanoTime() - startTime;
             Duration duration = Duration.ofNanos(durationNanos);
@@ -689,8 +695,15 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             int maxAttempts = opts != null && opts.getAttempts() > 0 ? opts.getAttempts() : 1;
             int currentAttempts = job.getAttemptsMade() + 1;
             boolean isCancelled = job.isCancelled();
+            Throwable jobErr = job.isMarkedFailed() ? job.getBatchFailureReason() : error;
+            boolean isUnrecoverable = (jobErr instanceof io.oxmq.exception.UnrecoverableError) ||
+                                      (jobErr != null && jobErr.getCause() instanceof io.oxmq.exception.UnrecoverableError) ||
+                                      (error instanceof io.oxmq.exception.UnrecoverableError) ||
+                                      (error != null && error.getCause() instanceof io.oxmq.exception.UnrecoverableError) ||
+                                      isCancelled ||
+                                      job.isDiscarded();
 
-            if (!isCancelled && currentAttempts < maxAttempts) {
+            if (!isUnrecoverable && currentAttempts < maxAttempts) {
                 BackoffStrategy backoff = opts != null ? opts.getBackoff() : null;
                 long delayMs = backoff != null ? backoff.calculateDelayMs(currentAttempts) : 0;
 
@@ -778,7 +791,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                         case "groupKey" -> groupKeyStr = val;
                         case "checkpoint" -> checkpointStr = val;
                         case "checkpoint_step" -> checkpointStepStr = val;
-                        case "repeatJobKey" -> rjkStr = val;
+                        case "rjk", "repeatJobKey" -> rjkStr = val;
                         default -> {}
                     }
                 }

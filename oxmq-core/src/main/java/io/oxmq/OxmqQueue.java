@@ -320,6 +320,10 @@ public class OxmqQueue<T> implements Queue<T> {
         Job<T> job = new Job<>(jobId, jobName, data, options);
         job.setQueueName(name);
         job.setTimestamp(now);
+        String grpId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+        if (grpId != null && !grpId.isBlank()) {
+            job.setGroupKey(grpId);
+        }
         wireJobLifecycle(job);
         return job;
     }
@@ -367,6 +371,10 @@ public class OxmqQueue<T> implements Queue<T> {
             Job<T> job = new Job<>(jobId, jobName, data, options);
             job.setQueueName(name);
             job.setTimestamp(now);
+            String grpId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+            if (grpId != null && !grpId.isBlank()) {
+                job.setGroupKey(grpId);
+            }
             wireJobLifecycle(job);
             return job;
         });
@@ -404,6 +412,9 @@ public class OxmqQueue<T> implements Queue<T> {
         }
         String timestampStr = fields.get("timestamp");
         String processedStr = fields.get("processedOn");
+        if (processedStr == null) {
+            processedStr = fields.get("pro");
+        }
         String finishedStr = fields.get("finishedOn");
         String returnStr = fields.get("returnvalue");
         String failedStr = fields.get("failedReason");
@@ -418,11 +429,60 @@ public class OxmqQueue<T> implements Queue<T> {
 
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(name);
-        if (progressStr != null) job.setProgress(Integer.parseInt(progressStr));
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
-        if (timestampStr != null) job.setTimestamp(Long.parseLong(timestampStr));
-        if (processedStr != null) job.setProcessedOn(Long.parseLong(processedStr));
-        if (finishedStr != null) job.setFinishedOn(Long.parseLong(finishedStr));
+
+        String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr == null) {
+            groupKeyStr = fields.get("gid");
+        }
+        if (groupKeyStr != null && !groupKeyStr.isBlank()) {
+            job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
+        }
+
+        String rjkStr = fields.get("repeatJobKey");
+        if (rjkStr == null) {
+            rjkStr = fields.get("rjk");
+        }
+        if (rjkStr != null && !rjkStr.isBlank()) {
+            job.setRepeatJobKey(rjkStr);
+        }
+
+        if (progressStr != null) {
+            try {
+                job.setProgress(Integer.parseInt(progressStr));
+            } catch (NumberFormatException nfe) {
+                try {
+                    double d = Double.parseDouble(progressStr);
+                    job.setProgress((int) Math.round(d));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        if (attemptsStr != null) {
+            try {
+                job.setAttemptsMade(Integer.parseInt(attemptsStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (attemptsStartedStr != null) {
+            try {
+                job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (timestampStr != null) {
+            try {
+                job.setTimestamp(Long.parseLong(timestampStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (processedStr != null) {
+            try {
+                job.setProcessedOn(Long.parseLong(processedStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        if (finishedStr != null) {
+            try {
+                job.setFinishedOn(Long.parseLong(finishedStr));
+            } catch (NumberFormatException ignored) {}
+        }
         if (returnStr != null) job.setReturnvalue(returnStr);
         if (failedStr != null) job.setFailedReason(failedStr);
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
@@ -553,14 +613,19 @@ public class OxmqQueue<T> implements Queue<T> {
         if (jobs == null || jobs.isEmpty()) {
             return List.of();
         }
-        if (jobs.size() == 1) {
+        int size = jobs.size();
+        for (int i = 0; i < size; i++) {
+            if (jobs.get(i) == null) {
+                throw new IllegalArgumentException("JobRequest at index " + i + " must not be null");
+            }
+        }
+        if (size == 1) {
             io.oxmq.model.JobRequest<T> req = jobs.get(0);
             return List.of(add(req.name(), req.data(), req.options()));
         }
 
         StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
         long now = System.currentTimeMillis();
-        int size = jobs.size();
         List<CompletableFuture<String>> futures = new java.util.ArrayList<>(size);
         JobOptions[] resolvedOptions = new JobOptions[size];
 
@@ -601,8 +666,12 @@ public class OxmqQueue<T> implements Queue<T> {
 
         try {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).get(30, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Thread interrupted while awaiting pipelined addBulk futures on queue " + name, ie);
         } catch (Exception e) {
-            log.warn("Error awaiting pipelined addBulk futures on queue {}", name, e);
+            log.error("Error awaiting pipelined addBulk futures on queue {}", name, e);
+            throw new RuntimeException("Failed to enqueue bulk jobs on queue " + name + ": " + e.getMessage(), e);
         }
 
         List<Job<T>> createdJobs = new java.util.ArrayList<>(size);
@@ -614,17 +683,21 @@ public class OxmqQueue<T> implements Queue<T> {
             try {
                 jobId = fut.get();
                 if (jobId == null) {
-                    jobId = "unknown";
+                    throw new IllegalStateException("Redis returned null jobId for bulk job at index " + i);
                 }
             } catch (Exception ex) {
-                log.warn("Failed to retrieve jobId for bulk job #{} on queue {}: {}", i, name, ex.getMessage());
-                jobId = "unknown";
+                log.error("Failed to retrieve jobId for bulk job #{} on queue {}: {}", i, name, ex.getMessage());
+                throw new RuntimeException("Failed to retrieve jobId for bulk job at index " + i + " on queue " + name, ex);
             }
 
             String jobName = req.name() != null ? req.name() : "default";
             Job<T> job = new Job<>(jobId, jobName, req.data(), options);
             job.setQueueName(name);
             job.setTimestamp(now);
+            String grpId = options.getGroup() != null ? options.getGroup().getId() : options.getGroupKey();
+            if (grpId != null && !grpId.isBlank()) {
+                job.setGroupKey(grpId);
+            }
             wireJobLifecycle(job);
             createdJobs.add(job);
             metrics.recordJobEnqueued(name);
@@ -848,36 +921,36 @@ public class OxmqQueue<T> implements Queue<T> {
 
     @Override
     public long retryJobs(JobState state, int count, Long timestamp) {
-        String stateStr = state != null ? state.name().toLowerCase() : "failed";
+        String stateStr = state != null ? (state == JobState.WAITING ? "wait" : state.name().toLowerCase()) : "failed";
         long ts = timestamp != null ? timestamp : System.currentTimeMillis();
+        var sync = connectionManager.getCommandConnection().sync();
+        long countBefore = sync.zcard(queueKeys.toKey(stateStr));
         if (count > 0) {
             bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, count, ts);
-            return count;
         } else {
-            long iterations = 0;
             Long cursor;
             do {
                 cursor = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, 1000, ts);
-                iterations++;
             } while (cursor != null && cursor == 1L);
-            return iterations;
         }
+        long countAfter = sync.zcard(queueKeys.toKey(stateStr));
+        return Math.max(0, countBefore - countAfter);
     }
 
     @Override
     public long promoteJobs(int count) {
+        var sync = connectionManager.getCommandConnection().sync();
+        long countBefore = sync.zcard(queueKeys.toKey("delayed"));
         if (count > 0) {
             bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", count, Long.MAX_VALUE);
-            return count;
         } else {
-            long iterations = 0;
             Long res;
             do {
                 res = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", 1000, Long.MAX_VALUE);
-                iterations++;
             } while (res != null && res == 1L);
-            return iterations;
         }
+        long countAfter = sync.zcard(queueKeys.toKey("delayed"));
+        return Math.max(0, countBefore - countAfter);
     }
 
     @Override

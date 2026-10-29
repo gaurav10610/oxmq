@@ -937,14 +937,22 @@ public class OxmqWorker<T> implements Worker<T> {
         job.setQueueName(queueName);
         if (groupKeyStr != null && !groupKeyStr.isBlank()) {
             job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
         }
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
-        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (attemptsStr != null) {
+            try { job.setAttemptsMade(Integer.parseInt(attemptsStr)); } catch (NumberFormatException ignored) {}
+        }
+        if (attemptsStartedStr != null) {
+            try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
+        }
         if (timestampStr != null) {
-            long ts = Long.parseLong(timestampStr);
-            job.setTimestamp(ts);
-            long waitTimeMs = System.currentTimeMillis() - ts;
-            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            try {
+                long ts = Long.parseLong(timestampStr);
+                job.setTimestamp(ts);
+                long waitTimeMs = System.currentTimeMillis() - ts;
+                metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            } catch (NumberFormatException ignored) {}
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
@@ -980,23 +988,37 @@ public class OxmqWorker<T> implements Worker<T> {
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
         String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr == null) {
+            groupKeyStr = fields.get("gid");
+        }
         if (groupKeyStr != null && !groupKeyStr.isBlank()) {
             job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
         }
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
-        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (attemptsStr != null) {
+            try { job.setAttemptsMade(Integer.parseInt(attemptsStr)); } catch (NumberFormatException ignored) {}
+        }
+        if (attemptsStartedStr != null) {
+            try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
+        }
         if (timestampStr != null) {
-            long ts = Long.parseLong(timestampStr);
-            job.setTimestamp(ts);
-            long waitTimeMs = System.currentTimeMillis() - ts;
-            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            try {
+                long ts = Long.parseLong(timestampStr);
+                job.setTimestamp(ts);
+                long waitTimeMs = System.currentTimeMillis() - ts;
+                metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            } catch (NumberFormatException ignored) {}
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
         String checkpointStr = fields.get("checkpoint");
         String checkpointStepStr = fields.get("checkpoint_step");
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
         if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
-        String rjkStr = fields.get("rjk");
+        String rjkStr = fields.get("repeatJobKey");
+        if (rjkStr == null) {
+            rjkStr = fields.get("rjk");
+        }
         if (rjkStr != null && !rjkStr.isBlank()) {
             job.setRepeatJobKey(rjkStr);
         }

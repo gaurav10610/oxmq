@@ -351,7 +351,16 @@ public class FlowProducer implements Closeable {
         if (attemptsStr == null) {
             attemptsStr = fields.get("atm");
         }
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStr != null) {
+            try { job.setAttemptsMade(Integer.parseInt(attemptsStr)); } catch (NumberFormatException ignored) {}
+        }
+        String attemptsStartedStr = fields.get("attemptsStarted");
+        if (attemptsStartedStr == null) {
+            attemptsStartedStr = fields.get("ats");
+        }
+        if (attemptsStartedStr != null) {
+            try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
+        }
         String progressStr = fields.get("progress");
         if (progressStr != null) {
             try {
