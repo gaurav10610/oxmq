@@ -120,7 +120,9 @@ public class OxmqWorker<T> implements Worker<T> {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
         this.queueKeys = new QueueKeys(builder.prefix, queueName);
         this.prefix = this.queueKeys.getQualifiedName();
-        this.workerId = "worker:" + UUID.randomUUID();
+        this.workerId = (builder.workerId != null && !builder.workerId.isBlank())
+                ? builder.workerId
+                : "worker:" + UUID.randomUUID();
         if (builder.processor != null) {
             this.processor = builder.processor;
         } else if (builder.reactiveProcessor != null) {
@@ -418,6 +420,12 @@ public class OxmqWorker<T> implements Worker<T> {
     private void pollLoop() {
         StatefulRedisConnection<String, byte[]> pollerConn = connectionManager.createDedicatedBinaryConnection();
         try {
+            try {
+                String clientName = queueKeys.getPrefix() + ":" + queueName + ":w:" + workerId;
+                pollerConn.sync().clientSetname(clientName);
+            } catch (Exception e) {
+                log.debug("Could not set Redis client name on worker {}: {}", workerId, e.getMessage());
+            }
             while (running.get()) {
             try {
                 if (paused.get()) {
@@ -1251,6 +1259,10 @@ public class OxmqWorker<T> implements Worker<T> {
         return paused.get();
     }
 
+    public String getWorkerId() {
+        return workerId;
+    }
+
     /**
      * Dynamically throttles a virtual group across the cluster for the specified duration.
      *
@@ -1480,6 +1492,7 @@ public class OxmqWorker<T> implements Worker<T> {
     public static class Builder<T> {
         private String queueName;
         private String prefix;
+        private String workerId;
         private RedisConnectionManager connectionManager;
         private RedisClient redisClient;
         private String redisUri;
@@ -1509,6 +1522,11 @@ public class OxmqWorker<T> implements Worker<T> {
 
         public Builder<T> prefix(String prefix) {
             this.prefix = prefix;
+            return this;
+        }
+
+        public Builder<T> workerId(String workerId) {
+            this.workerId = workerId;
             return this;
         }
 

@@ -92,6 +92,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private final List<BiConsumer<List<Job<T>>, Throwable>> batchFailedListeners = new CopyOnWriteArrayList<>();
     private final List<BiConsumer<Job<T>, Object>> jobCompletedListeners = new CopyOnWriteArrayList<>();
     private final List<BiConsumer<Job<T>, Throwable>> jobFailedListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<Job<T>>> activeListeners = new CopyOnWriteArrayList<>();
+    private final List<BiConsumer<Job<T>, Object>> progressListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> drainedListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> pausedListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> resumedListeners = new CopyOnWriteArrayList<>();
+    private final List<Consumer<Throwable>> errorListeners = new CopyOnWriteArrayList<>();
 
     public OxmqBatchWorker<T> onBatchActive(Consumer<List<Job<T>>> listener) {
         batchActiveListeners.add(listener);
@@ -118,11 +124,61 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         return this;
     }
 
+    @Override
+    public OxmqBatchWorker<T> onActive(Consumer<Job<T>> listener) {
+        activeListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onCompleted(BiConsumer<Job<T>, Object> listener) {
+        jobCompletedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onFailed(BiConsumer<Job<T>, Throwable> listener) {
+        jobFailedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onProgress(BiConsumer<Job<T>, Object> listener) {
+        progressListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onDrained(Runnable listener) {
+        drainedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onPaused(Runnable listener) {
+        pausedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onResumed(Runnable listener) {
+        resumedListeners.add(listener);
+        return this;
+    }
+
+    @Override
+    public OxmqBatchWorker<T> onError(Consumer<Throwable> listener) {
+        errorListeners.add(listener);
+        return this;
+    }
+
     private OxmqBatchWorker(Builder<T> builder) {
         this.queueName = Objects.requireNonNull(builder.queueName, "queueName must not be null");
         this.queueKeys = new QueueKeys(builder.prefix, queueName);
         this.prefix = this.queueKeys.getQualifiedName();
-        this.workerId = "batch-worker:" + UUID.randomUUID();
+        this.workerId = (builder.workerId != null && !builder.workerId.isBlank())
+                ? builder.workerId
+                : "batch-worker:" + UUID.randomUUID();
         this.processor = Objects.requireNonNull(builder.processor, "processor must not be null");
         this.payloadClass = builder.payloadClass;
         this.batchSize = Math.max(1, builder.batchSize);
@@ -153,6 +209,15 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             public void updateProgress(String jobId, int percentage, Object payload) {
                 try {
                     bullScripts.updateProgress(connectionManager.getBinaryConnection(), queueKeys, jobId, String.valueOf(percentage));
+                    ActiveBatchExecution<T> exec = activeJobExecutions.get(jobId);
+                    if (exec != null) {
+                        for (Job<T> j : exec.jobs()) {
+                            if (jobId.equals(j.getId())) {
+                                emitProgress(j, payload != null ? payload : percentage);
+                                break;
+                            }
+                        }
+                    }
                 } catch (Exception e) {
                     log.warn("Failed to update progress for job {}", jobId, e);
                 }
@@ -339,6 +404,12 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     private void pollLoop() {
         StatefulRedisConnection<String, byte[]> pollerConn = connectionManager.createDedicatedBinaryConnection();
         try {
+            try {
+                String clientName = queueKeys.getPrefix() + ":" + queueName + ":w:" + workerId;
+                pollerConn.sync().clientSetname(clientName);
+            } catch (Exception e) {
+                log.debug("Could not set Redis client name on batch worker {}: {}", workerId, e.getMessage());
+            }
             while (running.get()) {
             try {
                 if (paused.get()) {
@@ -480,6 +551,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     }
 
                     if (jobs.isEmpty()) {
+                        emitDrained();
                         waitForMarkerOrSleep(pollerConn);
                         continue;
                     }
@@ -512,6 +584,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     Thread.currentThread().interrupt();
                     break;
                 }
+                emitError(e);
                 log.warn("Error in OxMQ batch poller loop for queue {}", queueName, e);
                 try {
                     TimeUnit.MILLISECONDS.sleep(pollIntervalMs);
@@ -535,6 +608,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         for (Job<T> job : jobs) {
             job.setBatch(jobs);
             activeJobExecutions.put(job.getId(), batchExecution);
+            emitActive(job);
         }
         for (var l : batchActiveListeners) {
             try { l.accept(jobs); } catch (Exception ignored) {}
@@ -1127,14 +1201,18 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
     @Override
     public void pause() {
-        paused.set(true);
-        log.info("Paused batch worker [{}] for queue {}", workerId, queueName);
+        if (paused.compareAndSet(false, true)) {
+            emitPaused();
+            log.info("Paused batch worker [{}] for queue {}", workerId, queueName);
+        }
     }
 
     @Override
     public void resume() {
-        paused.set(false);
-        log.info("Resumed batch worker [{}] for queue {}", workerId, queueName);
+        if (paused.compareAndSet(true, false)) {
+            emitResumed();
+            log.info("Resumed batch worker [{}] for queue {}", workerId, queueName);
+        }
     }
 
     @Override
@@ -1145,6 +1223,46 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     @Override
     public boolean isPaused() {
         return paused.get();
+    }
+
+    public String getWorkerId() {
+        return workerId;
+    }
+
+    private void emitActive(Job<T> job) {
+        for (var l : activeListeners) {
+            try { l.accept(job); } catch (Throwable e) { log.warn("Error in batch worker onActive listener", e); }
+        }
+    }
+
+    private void emitProgress(Job<T> job, Object progress) {
+        for (var l : progressListeners) {
+            try { l.accept(job, progress); } catch (Throwable e) { log.warn("Error in batch worker onProgress listener", e); }
+        }
+    }
+
+    private void emitDrained() {
+        for (var l : drainedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in batch worker onDrained listener", e); }
+        }
+    }
+
+    private void emitPaused() {
+        for (var l : pausedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in batch worker onPaused listener", e); }
+        }
+    }
+
+    private void emitResumed() {
+        for (var l : resumedListeners) {
+            try { l.run(); } catch (Throwable e) { log.warn("Error in batch worker onResumed listener", e); }
+        }
+    }
+
+    private void emitError(Throwable error) {
+        for (var l : errorListeners) {
+            try { l.accept(error); } catch (Throwable e) { log.warn("Error in batch worker onError listener", e); }
+        }
     }
 
     @Override
@@ -1264,6 +1382,7 @@ public class OxmqBatchWorker<T> implements Worker<T> {
     public static class Builder<T> {
         private String queueName;
         private String prefix;
+        private String workerId;
         private BatchJobProcessor<T, ?> processor;
         private Class<T> payloadClass;
         private int batchSize = 10;
@@ -1287,6 +1406,11 @@ public class OxmqBatchWorker<T> implements Worker<T> {
 
         public Builder<T> prefix(String prefix) {
             this.prefix = prefix;
+            return this;
+        }
+
+        public Builder<T> workerId(String workerId) {
+            this.workerId = workerId;
             return this;
         }
 

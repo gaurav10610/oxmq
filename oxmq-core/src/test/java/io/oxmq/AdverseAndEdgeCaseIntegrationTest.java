@@ -11,6 +11,7 @@ import io.oxmq.model.Job;
 import io.oxmq.model.JobOptions;
 import io.oxmq.model.JobRequest;
 import io.oxmq.model.JobState;
+import io.oxmq.model.WorkerInfo;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -942,5 +943,207 @@ public class AdverseAndEdgeCaseIntegrationTest {
         Map<String, Object> map = opts.toMap();
         assertTrue(map.containsKey("stackTraceLimit"));
         assertEquals(10, map.get("stackTraceLimit"));
+    }
+
+    @Test
+    @DisplayName("Queue & Worker: getWorkers() and getWorkersCount() discover active workers via CLIENT LIST")
+    void testQueueGetWorkersAndClientSetname() throws Exception {
+        String queueName = "workers-discovery-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        String customWorkerId = "custom-worker-" + UUID.randomUUID();
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .workerId(customWorkerId)
+                .connectionManager(connectionManager)
+                .processor(job -> "ok")
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        String customBatchWorkerId = "custom-batch-" + UUID.randomUUID();
+        OxmqBatchWorker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .workerId(customBatchWorkerId)
+                .connectionManager(connectionManager)
+                .processor(jobs -> "batch-ok")
+                .build();
+        workersToStop.add(batchWorker);
+        batchWorker.start();
+
+        // Wait for workers to connect and set client name
+        boolean foundBoth = false;
+        List<WorkerInfo> workers = List.of();
+        for (int i = 0; i < 20; i++) {
+            workers = queue.getWorkers();
+            boolean hasWorker = workers.stream().anyMatch(w -> w.id().equals(customWorkerId));
+            boolean hasBatchWorker = workers.stream().anyMatch(w -> w.id().equals(customBatchWorkerId));
+            if (hasWorker && hasBatchWorker) {
+                foundBoth = true;
+                break;
+            }
+            Thread.sleep(100);
+        }
+
+        assertTrue(foundBoth, "Expected both custom worker and custom batch worker to be registered in CLIENT LIST");
+        assertTrue(queue.getWorkersCount() >= 2);
+
+        WorkerInfo w1 = workers.stream().filter(w -> w.id().equals(customWorkerId)).findFirst().orElseThrow();
+        assertNotNull(w1.name());
+        assertTrue(w1.name().contains(queueName));
+        assertTrue(w1.name().contains(customWorkerId));
+        assertNotNull(w1.address());
+        assertNotNull(w1.clientId());
+    }
+
+    @Test
+    @DisplayName("Job Logs: addJobLog, getJobLogsCount, and clearLogs work accurately")
+    void testJobLogsCountAndClear() {
+        String queueName = "job-logs-count-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        Job<String> job = queue.add("test-log-job", "log-data");
+        assertNotNull(job);
+        assertEquals(0L, queue.getJobLogsCount(job.getId()));
+
+        queue.addJobLog(job.getId(), "first-log-row");
+        queue.addJobLog(job.getId(), "second-log-row");
+        queue.addJobLog(job.getId(), "third-log-row");
+
+        assertEquals(3L, queue.getJobLogsCount(job.getId()));
+
+        boolean cleared = job.clearLogs();
+        assertTrue(cleared);
+        assertEquals(0L, queue.getJobLogsCount(job.getId()));
+    }
+
+    @Test
+    @DisplayName("Job State: isCompleted() and isFailed() evaluate lazy state supplier correctly")
+    void testJobStateLazyResolutionInIsHelpers() throws Exception {
+        String queueName = "lazy-state-helpers-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        Job<String> jobToComplete = queue.add("job-c", "data-c");
+        Job<String> jobToFail = queue.add("job-f", "data-f");
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(job -> {
+                    if ("job-f".equals(job.getName())) {
+                        throw new UnrecoverableError("Permanent failure");
+                    }
+                    return "completed-payload";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        Thread.sleep(600);
+
+        // Fetch fresh copies from Redis via queue.getJob (state is lazy supplier)
+        Job<String> fetchedCompleted = queue.getJob(jobToComplete.getId());
+        assertNotNull(fetchedCompleted);
+        // Direct call to isCompleted() without calling getState() first
+        assertTrue(fetchedCompleted.isCompleted(), "isCompleted() must resolve lazy state supplier");
+        assertFalse(fetchedCompleted.isFailed());
+
+        Job<String> fetchedFailed = queue.getJob(jobToFail.getId());
+        assertNotNull(fetchedFailed);
+        // Direct call to isFailed() without calling getState() first
+        assertTrue(fetchedFailed.isFailed(), "isFailed() must resolve lazy state supplier");
+        assertFalse(fetchedFailed.isCompleted());
+    }
+
+    @Test
+    @DisplayName("Job: waitUntilFinished(timeout) and waitUntilFinishedAsync() work directly on Job without QueueEvents param")
+    void testJobDirectWaitUntilFinished() throws Exception {
+        String queueName = "job-direct-wait-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .processor(job -> "finished:" + job.getName())
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        Job<String> jobSync = queue.add("job-sync", "data-sync");
+        Object resultSync = jobSync.waitUntilFinished(Duration.ofSeconds(5));
+        assertEquals("finished:job-sync", resultSync);
+
+        Job<String> jobAsync = queue.add("job-async", "data-async");
+        Object resultAsync = jobAsync.waitUntilFinishedAsync().get(5, TimeUnit.SECONDS);
+        assertEquals("finished:job-async", resultAsync);
+    }
+
+    @Test
+    @DisplayName("BatchWorker: implements all Worker polymorphic listeners (onActive, onCompleted, onProgress, onPaused, onResumed)")
+    void testOxmqBatchWorkerPolymorphicListeners() throws Exception {
+        String queueName = "batch-polymorphic-listeners-" + UUID.randomUUID();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        CountDownLatch activeLatch = new CountDownLatch(2);
+        CountDownLatch progressLatch = new CountDownLatch(2);
+        CountDownLatch completedLatch = new CountDownLatch(2);
+        CountDownLatch pausedLatch = new CountDownLatch(1);
+        CountDownLatch resumedLatch = new CountDownLatch(1);
+
+        Worker<String> batchWorker = OxmqBatchWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .batchSize(5)
+                .processor(jobs -> {
+                    for (Job<String> j : jobs) {
+                        j.updateProgress(50);
+                    }
+                    return "batch-done";
+                })
+                .build();
+        workersToStop.add(batchWorker);
+
+        // Register polymorphic Worker<T> listeners
+        batchWorker.onActive(job -> activeLatch.countDown())
+                .onProgress((job, p) -> progressLatch.countDown())
+                .onCompleted((job, res) -> completedLatch.countDown())
+                .onPaused(pausedLatch::countDown)
+                .onResumed(resumedLatch::countDown);
+
+        batchWorker.start();
+
+        // Verify pause/resume listeners
+        batchWorker.pause();
+        assertTrue(pausedLatch.await(3, TimeUnit.SECONDS));
+        batchWorker.resume();
+        assertTrue(resumedLatch.await(3, TimeUnit.SECONDS));
+
+        // Enqueue 2 jobs
+        queue.add("b-1", "d-1");
+        queue.add("b-2", "d-2");
+
+        assertTrue(activeLatch.await(5, TimeUnit.SECONDS), "Expected onActive to fire for each job in batch");
+        assertTrue(progressLatch.await(5, TimeUnit.SECONDS), "Expected onProgress to fire for each job");
+        assertTrue(completedLatch.await(5, TimeUnit.SECONDS), "Expected onCompleted to fire for each job");
     }
 }
