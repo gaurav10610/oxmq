@@ -411,4 +411,63 @@ public class BullMqV6ParityIntegrationTest {
 
         assertDoesNotThrow(() -> queue.trimEvents(5));
     }
+
+    @Test
+    @DisplayName("clean: allows cleaning wait, paused, and active queues per cleanJobsInSet-3 contract")
+    void testCleanWaitAndPaused() {
+        String queueName = "v6-clean-wait-" + System.currentTimeMillis();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        for (int i = 0; i < 5; i++) {
+            queue.add("wait-job", "val-" + i);
+        }
+        assertEquals(5, queue.count(JobState.WAITING));
+
+        // Clean jobs in wait state with 0 grace period
+        long cleaned = queue.clean(0, 10, JobState.WAITING);
+        assertEquals(5, cleaned, "Should clean all 5 waiting jobs");
+        assertEquals(0, queue.count(JobState.WAITING));
+    }
+
+    @Test
+    @DisplayName("WaitingException: dynamically returns active job to wait queue")
+    void testWaitingExceptionMovesJobToWait() throws InterruptedException {
+        String queueName = "v6-waiting-ex-" + System.currentTimeMillis();
+        OxmqQueue<String> queue = OxmqQueue.<String>builder()
+                .name(queueName)
+                .connectionManager(connectionManager)
+                .build();
+        queuesToClean.add(queue);
+
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger(0);
+        CountDownLatch waitExceptionLatch = new CountDownLatch(1);
+        CountDownLatch completedLatch = new CountDownLatch(1);
+
+        OxmqWorker<String> worker = OxmqWorker.<String>builder()
+                .queueName(queueName)
+                .connectionManager(connectionManager)
+                .concurrency(1)
+                .processor(job -> {
+                    if (attempts.incrementAndGet() == 1) {
+                        waitExceptionLatch.countDown();
+                        throw new io.oxmq.exception.WaitingException("Not ready yet; move back to wait");
+                    }
+                    completedLatch.countDown();
+                    return "done";
+                })
+                .build();
+        workersToStop.add(worker);
+        worker.start();
+
+        queue.add("defer-job", "test-data");
+        assertTrue(waitExceptionLatch.await(5, TimeUnit.SECONDS), "First execution must throw WaitingException");
+
+        // The job is moved back to wait, so the worker picks it up again on next poll
+        assertTrue(completedLatch.await(5, TimeUnit.SECONDS), "Job returned to wait must execute second time and complete");
+        assertEquals(2, attempts.get());
+    }
 }

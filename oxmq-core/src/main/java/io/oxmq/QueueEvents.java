@@ -39,6 +39,8 @@ public class QueueEvents implements Closeable {
     private final String prefix;
     private final String queueName;
     private final String channelName;
+    private final QueueKeys queueKeys;
+    private final io.oxmq.lua.BullScripts bullScripts;
     private final RedisConnectionManager connectionManager;
     private final boolean ownsConnectionManager;
     private final JobSerializer serializer;
@@ -54,7 +56,9 @@ public class QueueEvents implements Closeable {
     public QueueEvents(String prefix, String queueName, RedisConnectionManager connectionManager, JobSerializer serializer, boolean ownsConnectionManager) {
         this.queueName = Objects.requireNonNull(queueName, "queueName must not be null");
         this.prefix = QueueKeys.resolvePrefix(prefix);
-        this.channelName = new QueueKeys(prefix, queueName).getKey("events");
+        this.queueKeys = new QueueKeys(prefix, queueName);
+        this.channelName = this.queueKeys.getKey("events");
+        this.bullScripts = new io.oxmq.lua.BullScripts();
         this.connectionManager = Objects.requireNonNull(connectionManager, "connectionManager must not be null");
         this.serializer = serializer != null ? serializer : new JacksonJobSerializer();
         this.ownsConnectionManager = ownsConnectionManager;
@@ -265,6 +269,29 @@ public class QueueEvents implements Closeable {
                 }
             }
         });
+
+        // Fast-path: Check if the job has already finished in Redis (BullMQ parity)
+        try {
+            List<Object> finishedCheck = bullScripts.isFinished(
+                    connectionManager.getBinaryConnection(), queueKeys, jobId, true);
+            if (finishedCheck != null && !finishedCheck.isEmpty()) {
+                int status = ((Number) finishedCheck.get(0)).intValue();
+                if (status == 1) {
+                    Object val = finishedCheck.size() > 1 ? finishedCheck.get(1) : null;
+                    if (val instanceof byte[] b) {
+                        future.complete(new String(b, java.nio.charset.StandardCharsets.UTF_8));
+                    } else {
+                        future.complete(val);
+                    }
+                } else if (status == 2) {
+                    Object err = finishedCheck.size() > 1 ? finishedCheck.get(1) : "Job failed";
+                    String reason = err instanceof byte[] b ? new String(b, java.nio.charset.StandardCharsets.UTF_8) : String.valueOf(err);
+                    future.completeExceptionally(new RuntimeException(reason));
+                }
+            }
+        } catch (Exception e) {
+            log.trace("Initial isFinished check failed on queue {}, relying on stream listener: {}", queueName, e.getMessage());
+        }
 
         return future;
     }

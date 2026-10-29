@@ -65,10 +65,39 @@ public final class CronEvaluator {
         CronField minField = CronField.parse(parts[idx++], 0, 59);
         CronField hourField = CronField.parse(parts[idx++], 0, 23);
         CronField domField = CronField.parse(parts[idx++], 1, 31);
-        CronField monField = CronField.parse(parts[idx++], 1, 12);
-        CronField dowField = CronField.parseDow(parts[idx++]);
+        CronField monField = CronField.parse(normalizeMonth(parts[idx++]), 1, 12);
+        CronField dowField = CronField.parseDow(normalizeDow(parts[idx++]));
 
         return new CronEvaluator(secField, minField, hourField, domField, monField, dowField, parts.length == 6);
+    }
+
+    private static String normalizeMonth(String part) {
+        if (part == null || part.isBlank()) return part;
+        return part.toUpperCase(java.util.Locale.ROOT)
+                .replace("JAN", "1")
+                .replace("FEB", "2")
+                .replace("MAR", "3")
+                .replace("APR", "4")
+                .replace("MAY", "5")
+                .replace("JUN", "6")
+                .replace("JUL", "7")
+                .replace("AUG", "8")
+                .replace("SEP", "9")
+                .replace("OCT", "10")
+                .replace("NOV", "11")
+                .replace("DEC", "12");
+    }
+
+    private static String normalizeDow(String part) {
+        if (part == null || part.isBlank()) return part;
+        return part.toUpperCase(java.util.Locale.ROOT)
+                .replace("SUN", "0")
+                .replace("MON", "1")
+                .replace("TUE", "2")
+                .replace("WED", "3")
+                .replace("THU", "4")
+                .replace("FRI", "5")
+                .replace("SAT", "6");
     }
 
     public long nextExecution(long fromMillis, String timezone) {
@@ -138,10 +167,19 @@ public final class CronEvaluator {
                     String[] rangeParts = sub.split("-");
                     int from = Integer.parseInt(rangeParts[0]);
                     int to = Integer.parseInt(rangeParts[1]);
-                    for (int i = from; i <= to; i++) values.add(i);
+                    if (from <= to) {
+                        for (int i = from; i <= to; i++) values.add(i);
+                    } else {
+                        // Wrap-around range e.g. 11-2 (NOV-FEB)
+                        for (int i = from; i <= max; i++) values.add(i);
+                        for (int i = min; i <= to; i++) values.add(i);
+                    }
                 } else {
                     values.add(Integer.parseInt(sub));
                 }
+            }
+            if (values.isEmpty()) {
+                throw new IllegalArgumentException("Invalid cron field: " + part);
             }
             return new CronField(values);
         }
@@ -160,11 +198,20 @@ public final class CronEvaluator {
                     String[] rangeParts = sub.split("-");
                     int from = Integer.parseInt(rangeParts[0]);
                     int to = Integer.parseInt(rangeParts[1]);
-                    for (int i = from; i <= to; i++) values.add(i % 7);
+                    if (from <= to) {
+                        for (int i = from; i <= to; i++) values.add(i % 7);
+                    } else {
+                        // Wrap-around range e.g. 5-0 (FRI-SUN) or 5-1 (FRI-MON)
+                        for (int i = from; i <= 6; i++) values.add(i % 7);
+                        for (int i = 0; i <= to; i++) values.add(i % 7);
+                    }
                 } else {
                     int val = Integer.parseInt(sub);
                     values.add(val % 7); // 7 is Sunday, same as 0
                 }
+            }
+            if (values.isEmpty()) {
+                throw new IllegalArgumentException("Invalid cron day-of-week field: " + part);
             }
             return new CronField(values);
         }

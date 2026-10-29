@@ -250,13 +250,20 @@ public class OxmqWorker<T> implements Worker<T> {
                 try {
                     StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
                     String parentKey = queueKeys.toJobKey(jobId);
-                    Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
 
                     for (io.oxmq.model.FlowJob child : children) {
                         JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
                         Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
                         childOptsMap.put("parentKey", parentKey);
-                        childOptsMap.put("parent", parentObj);
+
+                        Map<String, Object> childParentObj = new HashMap<>();
+                        childParentObj.put("id", jobId);
+                        childParentObj.put("queueKey", queueKeys.getQualifiedName());
+                        if (childOpts.isFailParentOnFailure()) childParentObj.put("fpof", true);
+                        if (childOpts.isContinueParentOnFailure()) childParentObj.put("cpof", true);
+                        if (childOpts.isIgnoreDependencyOnFailure()) childParentObj.put("idof", true);
+                        if (childOpts.isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
+                        childOptsMap.put("parent", childParentObj);
 
                         String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
                         io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
@@ -421,60 +428,74 @@ public class OxmqWorker<T> implements Worker<T> {
                     continue;
                 }
 
-                long now = System.currentTimeMillis();
-                List<Object> rawResult;
-                if (groupConcurrency > 0) {
-                    rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
-                            lockDurationMs, groupConcurrency, now);
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
-                    }
-                } else {
-                    rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                        List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                boolean submitted = false;
+                String activeJobId = null;
+                try {
+                    long now = System.currentTimeMillis();
+                    List<Object> rawResult;
+                    if (groupConcurrency > 0) {
+                        rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
                                 lockDurationMs, groupConcurrency, now);
-                        if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
-                                && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
-                            rawResult = groupResult;
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                                || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                            rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                        }
+                    } else {
+                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                                || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                            List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                                    lockDurationMs, groupConcurrency, now);
+                            if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                                    && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                                rawResult = groupResult;
+                            }
+                        }
+                    }
+
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
+                        emitDrained();
+                        waitForMarkerOrSleep(pollerConn);
+                        continue;
+                    }
+
+                    Object idObj = rawResult.get(1);
+                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+
+                    if (jobId == null || jobId.isEmpty() || "0".equals(jobId)) {
+                        long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
+                        emitDrained();
+                        if (expireTime > 0) {
+                            TimeUnit.MILLISECONDS.sleep(Math.min(expireTime, pollIntervalMs));
+                        } else {
+                            waitForMarkerOrSleep(pollerConn);
+                        }
+                        continue;
+                    }
+
+                    activeJobId = jobId;
+                    @SuppressWarnings("unchecked")
+                    List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
+                    Job<T> job = buildJobFromFlatList(jobId, hashFlat);
+                    lockExtender.registerJob(jobId);
+
+                    if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
+                        rescheduleJobScheduler(job.getRepeatJobKey(), job);
+                    }
+
+                    dispatcherExecutor.submit(() -> executeJob(job));
+                    submitted = true;
+                } finally {
+                    if (!submitted) {
+                        concurrencySemaphore.release();
+                        if (activeJobId != null) {
+                            lockExtender.unregisterJob(activeJobId);
+                            try {
+                                bullScripts.moveJobFromActiveToWait(pollerConn, queueKeys, activeJobId, workerId);
+                            } catch (Exception ignored) {}
                         }
                     }
                 }
-
-                if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
-                    concurrencySemaphore.release();
-                    emitDrained();
-                    waitForMarkerOrSleep(pollerConn);
-                    continue;
-                }
-
-                Object idObj = rawResult.get(1);
-                String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-
-                if (jobId == null || jobId.isEmpty() || "0".equals(jobId)) {
-                    long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
-                    concurrencySemaphore.release();
-                    emitDrained();
-                    if (expireTime > 0) {
-                        TimeUnit.MILLISECONDS.sleep(Math.min(expireTime, pollIntervalMs));
-                    } else {
-                        waitForMarkerOrSleep(pollerConn);
-                    }
-                    continue;
-                }
-
-                @SuppressWarnings("unchecked")
-                List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                Job<T> job = buildJobFromFlatList(jobId, hashFlat);
-                lockExtender.registerJob(jobId);
-
-                if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
-                    rescheduleJobScheduler(job.getRepeatJobKey(), job);
-                }
-
-                dispatcherExecutor.submit(() -> executeJob(job));
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -605,6 +626,7 @@ public class OxmqWorker<T> implements Worker<T> {
             log.debug("Job {} [id: {}] moved to delayed state via DelayedException (delay: {} ms, skipAttempt: true)",
                     job.getName(), job.getId(), de.getDelayMs());
         } catch (io.oxmq.exception.WaitingException we) {
+            bullScripts.moveJobFromActiveToWait(connectionManager.getBinaryConnection(), queueKeys, job.getId(), workerId);
             log.debug("Job {} [id: {}] moved to wait state via WaitingException", job.getName(), job.getId());
         } catch (io.oxmq.exception.WaitingChildrenException wce) {
             log.debug("Job {} [id: {}] moved to waiting-children state via WaitingChildrenException", job.getName(), job.getId());
@@ -787,6 +809,8 @@ public class OxmqWorker<T> implements Worker<T> {
         Map.entry("progress", "progress"),
         Map.entry("rjk", "repeatJobKey"),
         Map.entry("repeatJobKey", "repeatJobKey"),
+        Map.entry("groupKey", "groupKey"),
+        Map.entry("gid", "groupKey"),
         Map.entry("deid", "deid"),
         Map.entry("pb", "parentKey")
     );
@@ -896,7 +920,7 @@ public class OxmqWorker<T> implements Worker<T> {
                         case "attemptsStarted" -> attemptsStartedStr = val;
                         case "timestamp" -> timestampStr = val;
                         case "parentKey" -> parentKeyStr = val;
-                        case "groupKey" -> groupKeyStr = val;
+                        case "groupKey", "gid" -> groupKeyStr = val;
                         case "checkpoint" -> checkpointStr = val;
                         case "checkpoint_step" -> checkpointStepStr = val;
                         case "rjk", "repeatJobKey" -> rjkStr = val;
@@ -915,14 +939,22 @@ public class OxmqWorker<T> implements Worker<T> {
         job.setQueueName(queueName);
         if (groupKeyStr != null && !groupKeyStr.isBlank()) {
             job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
         }
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
-        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (attemptsStr != null) {
+            try { job.setAttemptsMade(Integer.parseInt(attemptsStr)); } catch (NumberFormatException ignored) {}
+        }
+        if (attemptsStartedStr != null) {
+            try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
+        }
         if (timestampStr != null) {
-            long ts = Long.parseLong(timestampStr);
-            job.setTimestamp(ts);
-            long waitTimeMs = System.currentTimeMillis() - ts;
-            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            try {
+                long ts = Long.parseLong(timestampStr);
+                job.setTimestamp(ts);
+                long waitTimeMs = System.currentTimeMillis() - ts;
+                metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            } catch (NumberFormatException ignored) {}
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
@@ -958,23 +990,37 @@ public class OxmqWorker<T> implements Worker<T> {
         Job<T> job = new Job<>(jobId, jobName, data, opts);
         job.setQueueName(queueName);
         String groupKeyStr = fields.get("groupKey");
+        if (groupKeyStr == null) {
+            groupKeyStr = fields.get("gid");
+        }
         if (groupKeyStr != null && !groupKeyStr.isBlank()) {
             job.setGroupKey(groupKeyStr);
+        } else if (opts != null && opts.getGroup() != null && opts.getGroup().getId() != null) {
+            job.setGroupKey(opts.getGroup().getId());
         }
-        if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
-        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (attemptsStr != null) {
+            try { job.setAttemptsMade(Integer.parseInt(attemptsStr)); } catch (NumberFormatException ignored) {}
+        }
+        if (attemptsStartedStr != null) {
+            try { job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr)); } catch (NumberFormatException ignored) {}
+        }
         if (timestampStr != null) {
-            long ts = Long.parseLong(timestampStr);
-            job.setTimestamp(ts);
-            long waitTimeMs = System.currentTimeMillis() - ts;
-            metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            try {
+                long ts = Long.parseLong(timestampStr);
+                job.setTimestamp(ts);
+                long waitTimeMs = System.currentTimeMillis() - ts;
+                metrics.recordJobWaitTime(queueName, Duration.ofMillis(Math.max(0, waitTimeMs)));
+            } catch (NumberFormatException ignored) {}
         }
         if (parentKeyStr != null) job.setParentKey(parentKeyStr);
         String checkpointStr = fields.get("checkpoint");
         String checkpointStepStr = fields.get("checkpoint_step");
         if (checkpointStr != null) job.setCheckpointJson(checkpointStr);
         if (checkpointStepStr != null) job.setCheckpointStep(checkpointStepStr);
-        String rjkStr = fields.get("rjk");
+        String rjkStr = fields.get("repeatJobKey");
+        if (rjkStr == null) {
+            rjkStr = fields.get("rjk");
+        }
         if (rjkStr != null && !rjkStr.isBlank()) {
             job.setRepeatJobKey(rjkStr);
         }
@@ -1016,6 +1062,7 @@ public class OxmqWorker<T> implements Worker<T> {
                 if (b[0] == 'r' && b[1] == 'j' && b[2] == 'k') return "repeatJobKey";
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 's') return "attemptsStarted";
                 if (b[0] == 'a' && b[1] == 't' && b[2] == 'm') return "attemptsMade";
+                if (b[0] == 'g' && b[1] == 'i' && b[2] == 'd') return "groupKey";
                 break;
             case 4:
                 if (b[0] == 'n' && b[1] == 'a' && b[2] == 'm' && b[3] == 'e') return "name";

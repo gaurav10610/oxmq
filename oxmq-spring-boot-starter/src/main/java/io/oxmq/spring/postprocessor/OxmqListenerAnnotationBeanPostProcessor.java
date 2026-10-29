@@ -714,18 +714,14 @@ public class OxmqListenerAnnotationBeanPostProcessor implements
                 if (expectsJobs) {
                     if (targetPayloadClass != null) {
                         return jobs -> {
-                            List<Job<Object>> typedJobs = new ArrayList<>(jobs.size());
                             for (Job<?> j : jobs) {
-                                Object converted = convertPayload(j.getData(), targetPayloadClass);
-                                Job<Object> tj = new Job<>(j.getId(), j.getName(), converted, j.getOpts());
-                                tj.setTimestamp(j.getTimestamp());
-                                tj.setAttemptsMade(j.getAttemptsMade());
-                                tj.setParentKey(j.getParentKey());
-                                tj.setQueueName(j.getQueueName());
-                                typedJobs.add(tj);
+                                if (j.getData() != null && !targetPayloadClass.isInstance(j.getData())) {
+                                    Object converted = convertPayload(j.getData(), targetPayloadClass);
+                                    ((Job<Object>) j).setData(converted);
+                                }
                             }
                             try {
-                                return method.invoke(bean, typedJobs);
+                                return method.invoke(bean, jobs);
                             } catch (java.lang.reflect.InvocationTargetException ite) {
                                 Throwable target = ite.getTargetException();
                                 if (target instanceof Exception ex) throw ex;
