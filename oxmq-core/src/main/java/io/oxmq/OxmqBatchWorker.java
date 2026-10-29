@@ -299,48 +299,15 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                     continue;
                 }
 
+                boolean submitted = false;
                 List<Job<T>> jobs = new ArrayList<>();
-                long currentBatchBytes = 0;
-                long pollStartTime = System.currentTimeMillis();
+                try {
+                    long currentBatchBytes = 0;
+                    long pollStartTime = System.currentTimeMillis();
 
-                if (maxBatchBytes <= 0) {
-                    if (groupAffinity) {
-                        long now = System.currentTimeMillis();
-                        List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
-                                lockDurationMs, batchSize, groupConcurrency, now);
-                        if (groupBatch != null && !groupBatch.isEmpty()) {
-                            for (Object item : groupBatch) {
-                                if (item instanceof List<?> tuple && tuple.size() >= 2) {
-                                    Object idObj = tuple.get(1);
-                                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-                                    if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
-                                        List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                        Job<T> job = buildJobFromFlatList(jobId, hashFlat);
-                                        jobs.add(job);
-                                        lockExtender.registerJob(jobId);
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        long now = System.currentTimeMillis();
-                        List<Object> batchResult = extensionScripts.moveToActiveBatch(pollerConn, queueKeys, workerId,
-                                lockDurationMs, batchSize - jobs.size(), now);
-                        if (batchResult != null && !batchResult.isEmpty()) {
-                            for (Object item : batchResult) {
-                                if (item instanceof List<?> tuple && tuple.size() >= 2) {
-                                    Object idObj = tuple.get(1);
-                                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-                                    if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
-                                        List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
-                                        Job<T> job = buildJobFromFlatList(jobId, hashFlat);
-                                        jobs.add(job);
-                                        lockExtender.registerJob(jobId);
-                                    }
-                                }
-                            }
-                        }
-                        if (jobs.isEmpty()) {
+                    if (maxBatchBytes <= 0) {
+                        if (groupAffinity) {
+                            long now = System.currentTimeMillis();
                             List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
                                     lockDurationMs, batchSize, groupConcurrency, now);
                             if (groupBatch != null && !groupBatch.isEmpty()) {
@@ -357,87 +324,133 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                                     }
                                 }
                             }
+                        } else {
+                            long now = System.currentTimeMillis();
+                            List<Object> batchResult = extensionScripts.moveToActiveBatch(pollerConn, queueKeys, workerId,
+                                    lockDurationMs, batchSize - jobs.size(), now);
+                            if (batchResult != null && !batchResult.isEmpty()) {
+                                for (Object item : batchResult) {
+                                    if (item instanceof List<?> tuple && tuple.size() >= 2) {
+                                        Object idObj = tuple.get(1);
+                                        String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                                        if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
+                                            List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
+                                            Job<T> job = buildJobFromFlatList(jobId, hashFlat);
+                                            jobs.add(job);
+                                            lockExtender.registerJob(jobId);
+                                        }
+                                    }
+                                }
+                            }
+                            if (jobs.isEmpty()) {
+                                List<Object> groupBatch = extensionScripts.moveToActiveBatchGroup(pollerConn, queueKeys, workerId,
+                                        lockDurationMs, batchSize, groupConcurrency, now);
+                                if (groupBatch != null && !groupBatch.isEmpty()) {
+                                    for (Object item : groupBatch) {
+                                        if (item instanceof List<?> tuple && tuple.size() >= 2) {
+                                            Object idObj = tuple.get(1);
+                                            String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                                            if (jobId != null && !jobId.isEmpty() && !"0".equals(jobId)) {
+                                                List<?> hashFlat = tuple.get(0) instanceof List<?> list ? list : List.of();
+                                                Job<T> job = buildJobFromFlatList(jobId, hashFlat);
+                                                jobs.add(job);
+                                                lockExtender.registerJob(jobId);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
-                }
 
-                while (jobs.size() < batchSize) {
-                    long now = System.currentTimeMillis();
-                    List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
-                            (int) lockDurationMs, null, workerId, now);
+                    while (jobs.size() < batchSize) {
+                        long now = System.currentTimeMillis();
+                        List<Object> rawResult = bullScripts.moveToActive(pollerConn, queueKeys, workerId,
+                                (int) lockDurationMs, null, workerId, now);
 
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                        List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
-                                lockDurationMs, groupConcurrency, now);
-                        if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
-                                && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
-                            rawResult = groupResult;
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                                || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                            List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                                    lockDurationMs, groupConcurrency, now);
+                            if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                                    && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                                rawResult = groupResult;
+                            }
+                        }
+
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
+                            if (jobs.size() >= minBatchSize || batchTimeoutMs <= 0 || jobs.isEmpty()) {
+                                break;
+                            }
+                            long elapsed = System.currentTimeMillis() - pollStartTime;
+                            if (elapsed >= batchTimeoutMs) {
+                                break;
+                            }
+                            long waitTime = Math.min(pollIntervalMs, batchTimeoutMs - elapsed);
+                            if (waitTime > 0) {
+                                TimeUnit.MILLISECONDS.sleep(waitTime);
+                            }
+                            continue;
+                        }
+
+                        Object idObj = rawResult.get(1);
+                        String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+                        if (jobId.isEmpty() || "0".equals(jobId)) {
+                            if (jobs.size() >= minBatchSize || batchTimeoutMs <= 0 || jobs.isEmpty()) {
+                                break;
+                            }
+                            long elapsed = System.currentTimeMillis() - pollStartTime;
+                            if (elapsed >= batchTimeoutMs) {
+                                break;
+                            }
+                            long waitTime = Math.min(pollIntervalMs, batchTimeoutMs - elapsed);
+                            if (waitTime > 0) {
+                                TimeUnit.MILLISECONDS.sleep(waitTime);
+                            }
+                            continue;
+                        }
+
+                        @SuppressWarnings("unchecked")
+                        List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
+                        Job<T> job = buildJobFromFlatList(jobId, hashFlat);
+                        jobs.add(job);
+                        lockExtender.registerJob(jobId);
+
+                        if (maxBatchBytes > 0) {
+                            int bytesLen = job.getData() != null ? job.getData().toString().getBytes(StandardCharsets.UTF_8).length : 0;
+                            currentBatchBytes += bytesLen;
+                            if (currentBatchBytes >= maxBatchBytes && !jobs.isEmpty()) {
+                                log.debug("Batch byte budget exceeded ({} >= {} bytes), dispatching {} jobs early",
+                                        currentBatchBytes, maxBatchBytes, jobs.size());
+                                break;
+                            }
                         }
                     }
 
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
-                        if (jobs.size() >= minBatchSize || batchTimeoutMs <= 0 || jobs.isEmpty()) {
-                            break;
-                        }
-                        long elapsed = System.currentTimeMillis() - pollStartTime;
-                        if (elapsed >= batchTimeoutMs) {
-                            break;
-                        }
-                        long waitTime = Math.min(pollIntervalMs, batchTimeoutMs - elapsed);
-                        if (waitTime > 0) {
-                            TimeUnit.MILLISECONDS.sleep(waitTime);
-                        }
+                    if (jobs.isEmpty()) {
+                        waitForMarkerOrSleep(pollerConn);
                         continue;
                     }
 
-                    Object idObj = rawResult.get(1);
-                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-                    if (jobId.isEmpty() || "0".equals(jobId)) {
-                        if (jobs.size() >= minBatchSize || batchTimeoutMs <= 0 || jobs.isEmpty()) {
-                            break;
+                    for (Job<T> job : jobs) {
+                        if (job.getRepeatJobKey() != null) {
+                            rescheduleJobScheduler(job.getRepeatJobKey(), job);
                         }
-                        long elapsed = System.currentTimeMillis() - pollStartTime;
-                        if (elapsed >= batchTimeoutMs) {
-                            break;
-                        }
-                        long waitTime = Math.min(pollIntervalMs, batchTimeoutMs - elapsed);
-                        if (waitTime > 0) {
-                            TimeUnit.MILLISECONDS.sleep(waitTime);
-                        }
-                        continue;
                     }
 
-                    @SuppressWarnings("unchecked")
-                    List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                    Job<T> job = buildJobFromFlatList(jobId, hashFlat);
-                    jobs.add(job);
-                    lockExtender.registerJob(jobId);
-
-                    if (maxBatchBytes > 0) {
-                        int bytesLen = job.getData() != null ? job.getData().toString().getBytes(StandardCharsets.UTF_8).length : 0;
-                        currentBatchBytes += bytesLen;
-                        if (currentBatchBytes >= maxBatchBytes && !jobs.isEmpty()) {
-                            log.debug("Batch byte budget exceeded ({} >= {} bytes), dispatching {} jobs early",
-                                    currentBatchBytes, maxBatchBytes, jobs.size());
-                            break;
+                    dispatcherExecutor.submit(() -> executeBatch(jobs));
+                    submitted = true;
+                } finally {
+                    if (!submitted) {
+                        concurrencySemaphore.release();
+                        for (Job<T> job : jobs) {
+                            lockExtender.unregisterJob(job.getId());
+                            try {
+                                bullScripts.moveJobFromActiveToWait(pollerConn, queueKeys, job.getId(), workerId);
+                            } catch (Exception ignored) {}
                         }
                     }
                 }
-
-                if (jobs.isEmpty()) {
-                    concurrencySemaphore.release();
-                    waitForMarkerOrSleep(pollerConn);
-                    continue;
-                }
-
-                for (Job<T> job : jobs) {
-                    if (job.getRepeatJobKey() != null) {
-                        rescheduleJobScheduler(job.getRepeatJobKey(), job);
-                    }
-                }
-
-                dispatcherExecutor.submit(() -> executeBatch(jobs));
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -739,6 +752,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         String dataStr = null;
         String optsStr = null;
         String attemptsStr = null;
+        String attemptsStartedStr = null;
+        String processedOnStr = null;
         String timestampStr = null;
         String parentKeyStr = null;
         String groupKeyStr = null;
@@ -756,6 +771,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
                         case "data" -> dataStr = val;
                         case "opts" -> optsStr = val;
                         case "attemptsMade" -> attemptsStr = val;
+                        case "attemptsStarted" -> attemptsStartedStr = val;
+                        case "processedOn" -> processedOnStr = val;
                         case "timestamp" -> timestampStr = val;
                         case "parentKey" -> parentKeyStr = val;
                         case "groupKey" -> groupKeyStr = val;
@@ -781,6 +798,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             job.setGroupKey(opts.getGroup().getId());
         }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (processedOnStr != null) job.setProcessedOn(Long.parseLong(processedOnStr));
         if (timestampStr != null) {
             long ts = Long.parseLong(timestampStr);
             job.setTimestamp(ts);
@@ -821,6 +840,10 @@ public class OxmqBatchWorker<T> implements Worker<T> {
         if (attemptsStartedStr == null) {
             attemptsStartedStr = fields.get("ats");
         }
+        String processedOnStr = fields.get("processedOn");
+        if (processedOnStr == null) {
+            processedOnStr = fields.get("pro");
+        }
         String timestampStr = fields.get("timestamp");
         String parentKeyStr = fields.get("parentKey");
 
@@ -838,6 +861,8 @@ public class OxmqBatchWorker<T> implements Worker<T> {
             job.setGroupKey(opts.getGroup().getId());
         }
         if (attemptsStr != null) job.setAttemptsMade(Integer.parseInt(attemptsStr));
+        if (attemptsStartedStr != null) job.setAttemptsStarted(Integer.parseInt(attemptsStartedStr));
+        if (processedOnStr != null) job.setProcessedOn(Long.parseLong(processedOnStr));
         if (timestampStr != null) {
             long ts = Long.parseLong(timestampStr);
             job.setTimestamp(ts);

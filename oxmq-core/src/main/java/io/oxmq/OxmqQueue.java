@@ -525,6 +525,9 @@ public class OxmqQueue<T> implements Queue<T> {
             case COMPLETED -> "completed";
             case FAILED -> "failed";
             case DELAYED -> "delayed";
+            case WAITING -> "wait";
+            case ACTIVE -> "active";
+            case PAUSED -> "paused";
             default -> throw new IllegalArgumentException("Cannot clean state: " + state);
         };
         Long cleaned = bullScripts.cleanJobsInSet(connectionManager.getBinaryConnection(), queueKeys, set, graceMs, limit);
@@ -846,27 +849,35 @@ public class OxmqQueue<T> implements Queue<T> {
     @Override
     public long retryJobs(JobState state, int count, Long timestamp) {
         String stateStr = state != null ? state.name().toLowerCase() : "failed";
-        int batchCount = count > 0 ? count : 1000;
         long ts = timestamp != null ? timestamp : System.currentTimeMillis();
-        long iterations = 0;
-        Long cursor;
-        do {
-            cursor = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, batchCount, ts);
-            iterations++;
-        } while (cursor != null && cursor == 1L);
-        return iterations;
+        if (count > 0) {
+            bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, count, ts);
+            return count;
+        } else {
+            long iterations = 0;
+            Long cursor;
+            do {
+                cursor = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, stateStr, 1000, ts);
+                iterations++;
+            } while (cursor != null && cursor == 1L);
+            return iterations;
+        }
     }
 
     @Override
     public long promoteJobs(int count) {
-        int batchCount = count > 0 ? count : 1000;
-        long iterations = 0;
-        Long res;
-        do {
-            res = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", batchCount, Long.MAX_VALUE);
-            iterations++;
-        } while (res != null && res == 1L);
-        return iterations;
+        if (count > 0) {
+            bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", count, Long.MAX_VALUE);
+            return count;
+        } else {
+            long iterations = 0;
+            Long res;
+            do {
+                res = bullScripts.moveJobsToWait(connectionManager.getBinaryConnection(), queueKeys, "delayed", 1000, Long.MAX_VALUE);
+                iterations++;
+            } while (res != null && res == 1L);
+            return iterations;
+        }
     }
 
     @Override

@@ -297,7 +297,8 @@ public class FlowProducer implements Closeable {
         try {
             java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0])).get(10, java.util.concurrent.TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.warn("Error awaiting pipelined leaf flow jobs: {}", e.getMessage(), e);
+            log.error("Error awaiting pipelined leaf flow jobs: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to enqueue pipelined leaf flow jobs: " + e.getMessage(), e);
         }
     }
 

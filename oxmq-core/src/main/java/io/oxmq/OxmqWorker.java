@@ -250,13 +250,20 @@ public class OxmqWorker<T> implements Worker<T> {
                 try {
                     StatefulRedisConnection<String, byte[]> binConn = connectionManager.getBinaryConnection();
                     String parentKey = queueKeys.toJobKey(jobId);
-                    Map<String, Object> parentObj = Map.of("id", jobId, "queueKey", queueKeys.getQualifiedName());
 
                     for (io.oxmq.model.FlowJob child : children) {
                         JobOptions childOpts = child.getOpts() != null ? child.getOpts() : new JobOptions();
                         Map<String, Object> childOptsMap = new HashMap<>(childOpts.toMap());
                         childOptsMap.put("parentKey", parentKey);
-                        childOptsMap.put("parent", parentObj);
+
+                        Map<String, Object> childParentObj = new HashMap<>();
+                        childParentObj.put("id", jobId);
+                        childParentObj.put("queueKey", queueKeys.getQualifiedName());
+                        if (childOpts.isFailParentOnFailure()) childParentObj.put("fpof", true);
+                        if (childOpts.isContinueParentOnFailure()) childParentObj.put("cpof", true);
+                        if (childOpts.isIgnoreDependencyOnFailure()) childParentObj.put("idof", true);
+                        if (childOpts.isRemoveDependencyOnFailure()) childParentObj.put("rdof", true);
+                        childOptsMap.put("parent", childParentObj);
 
                         String childQueueName = child.getQueueName() != null ? child.getQueueName() : queueName;
                         io.oxmq.client.QueueKeys childKeys = childQueueName.equals(queueName)
@@ -421,60 +428,74 @@ public class OxmqWorker<T> implements Worker<T> {
                     continue;
                 }
 
-                long now = System.currentTimeMillis();
-                List<Object> rawResult;
-                if (groupConcurrency > 0) {
-                    rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
-                            lockDurationMs, groupConcurrency, now);
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
-                    }
-                } else {
-                    rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
-                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
-                            || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
-                        List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                boolean submitted = false;
+                String activeJobId = null;
+                try {
+                    long now = System.currentTimeMillis();
+                    List<Object> rawResult;
+                    if (groupConcurrency > 0) {
+                        rawResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
                                 lockDurationMs, groupConcurrency, now);
-                        if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
-                                && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
-                            rawResult = groupResult;
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                                || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                            rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                        }
+                    } else {
+                        rawResult = bullScripts.moveToActive(pollerConn, queueKeys, defaultWorkerOptsBytes, now);
+                        if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null
+                                || "0".equals(rawResult.get(1).toString()) || "".equals(rawResult.get(1).toString())) {
+                            List<Object> groupResult = extensionScripts.moveToActiveGroup(pollerConn, queueKeys, workerId,
+                                    lockDurationMs, groupConcurrency, now);
+                            if (groupResult != null && groupResult.size() >= 2 && groupResult.get(1) != null
+                                    && !"0".equals(groupResult.get(1).toString()) && !"".equals(groupResult.get(1).toString())) {
+                                rawResult = groupResult;
+                            }
+                        }
+                    }
+
+                    if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
+                        emitDrained();
+                        waitForMarkerOrSleep(pollerConn);
+                        continue;
+                    }
+
+                    Object idObj = rawResult.get(1);
+                    String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
+
+                    if (jobId == null || jobId.isEmpty() || "0".equals(jobId)) {
+                        long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
+                        emitDrained();
+                        if (expireTime > 0) {
+                            TimeUnit.MILLISECONDS.sleep(Math.min(expireTime, pollIntervalMs));
+                        } else {
+                            waitForMarkerOrSleep(pollerConn);
+                        }
+                        continue;
+                    }
+
+                    activeJobId = jobId;
+                    @SuppressWarnings("unchecked")
+                    List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
+                    Job<T> job = buildJobFromFlatList(jobId, hashFlat);
+                    lockExtender.registerJob(jobId);
+
+                    if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
+                        rescheduleJobScheduler(job.getRepeatJobKey(), job);
+                    }
+
+                    dispatcherExecutor.submit(() -> executeJob(job));
+                    submitted = true;
+                } finally {
+                    if (!submitted) {
+                        concurrencySemaphore.release();
+                        if (activeJobId != null) {
+                            lockExtender.unregisterJob(activeJobId);
+                            try {
+                                bullScripts.moveJobFromActiveToWait(pollerConn, queueKeys, activeJobId, workerId);
+                            } catch (Exception ignored) {}
                         }
                     }
                 }
-
-                if (rawResult == null || rawResult.size() < 2 || rawResult.get(1) == null) {
-                    concurrencySemaphore.release();
-                    emitDrained();
-                    waitForMarkerOrSleep(pollerConn);
-                    continue;
-                }
-
-                Object idObj = rawResult.get(1);
-                String jobId = idObj instanceof byte[] bytes ? new String(bytes, StandardCharsets.UTF_8) : idObj.toString();
-
-                if (jobId == null || jobId.isEmpty() || "0".equals(jobId)) {
-                    long expireTime = rawResult.size() > 2 && rawResult.get(2) instanceof Number n ? n.longValue() : 0L;
-                    concurrencySemaphore.release();
-                    emitDrained();
-                    if (expireTime > 0) {
-                        TimeUnit.MILLISECONDS.sleep(Math.min(expireTime, pollIntervalMs));
-                    } else {
-                        waitForMarkerOrSleep(pollerConn);
-                    }
-                    continue;
-                }
-
-                @SuppressWarnings("unchecked")
-                List<?> hashFlat = rawResult.get(0) instanceof List<?> list ? list : List.of();
-                Job<T> job = buildJobFromFlatList(jobId, hashFlat);
-                lockExtender.registerJob(jobId);
-
-                if (job.getRepeatJobKey() != null && !job.getRepeatJobKey().isBlank()) {
-                    rescheduleJobScheduler(job.getRepeatJobKey(), job);
-                }
-
-                dispatcherExecutor.submit(() -> executeJob(job));
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -605,6 +626,7 @@ public class OxmqWorker<T> implements Worker<T> {
             log.debug("Job {} [id: {}] moved to delayed state via DelayedException (delay: {} ms, skipAttempt: true)",
                     job.getName(), job.getId(), de.getDelayMs());
         } catch (io.oxmq.exception.WaitingException we) {
+            bullScripts.moveJobFromActiveToWait(connectionManager.getBinaryConnection(), queueKeys, job.getId(), workerId);
             log.debug("Job {} [id: {}] moved to wait state via WaitingException", job.getName(), job.getId());
         } catch (io.oxmq.exception.WaitingChildrenException wce) {
             log.debug("Job {} [id: {}] moved to waiting-children state via WaitingChildrenException", job.getName(), job.getId());

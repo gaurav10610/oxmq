@@ -76,6 +76,29 @@ class CronEvaluatorTest {
     }
 
     @Test
+    @DisplayName("parse: supports named days and months case-insensitively")
+    void testNamedDaysAndMonths() {
+        CronEvaluator evaluator = CronEvaluator.parse("0 9 * * MON-FRI");
+        assertNotNull(evaluator);
+
+        // Saturday Oct 24, 2026 at 10:00 -> next execution must be Monday Oct 26 at 09:00
+        ZonedDateTime saturday = ZonedDateTime.of(2026, 10, 24, 10, 0, 0, 0, ZoneId.of("UTC"));
+        long next = evaluator.nextExecution(saturday.toInstant().toEpochMilli(), "UTC");
+        ZonedDateTime nextDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(next), ZoneId.of("UTC"));
+        assertEquals(26, nextDt.getDayOfMonth()); // Monday
+        assertEquals(9, nextDt.getHour());
+        assertEquals(0, nextDt.getMinute());
+
+        // Month name: "0 0 1 JAN *" -> next Jan 1
+        CronEvaluator janEvaluator = CronEvaluator.parse("0 0 1 JAN *");
+        long nextJan = janEvaluator.nextExecution(saturday.toInstant().toEpochMilli(), "UTC");
+        ZonedDateTime nextJanDt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(nextJan), ZoneId.of("UTC"));
+        assertEquals(2027, nextJanDt.getYear());
+        assertEquals(1, nextJanDt.getMonthValue());
+        assertEquals(1, nextJanDt.getDayOfMonth());
+    }
+
+    @Test
     @DisplayName("parse: rejects invalid cron patterns")
     void testInvalidCron() {
         assertThrows(IllegalArgumentException.class, () -> CronEvaluator.parse(null));

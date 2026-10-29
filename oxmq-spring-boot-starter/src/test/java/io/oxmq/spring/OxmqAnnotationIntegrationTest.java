@@ -83,6 +83,10 @@ public class OxmqAnnotationIntegrationTest {
         boolean processed = batchListener.latch.await(5, TimeUnit.SECONDS);
         assertThat(processed).isTrue();
         assertThat(batchListener.receivedBatches).isNotEmpty();
+        Job<TelemetryDto> firstJob = batchListener.receivedBatches.get(0).get(0);
+        assertThat(firstJob.getData()).isInstanceOf(TelemetryDto.class);
+        assertThat(firstJob.getQueueName()).isEqualTo("test-spring-annotation-batch");
+        assertThat(firstJob.getAttemptsStarted()).isGreaterThanOrEqualTo(1);
     }
 
     @Test
