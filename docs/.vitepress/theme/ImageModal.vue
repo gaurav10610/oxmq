@@ -13,7 +13,9 @@
         <!-- Modal Top Bar -->
         <header class="oxmq-modal-header" @click.stop>
           <div class="oxmq-modal-title">
-            <span class="oxmq-badge">{{ isSvg ? 'Architecture Diagram' : 'Asset Preview' }}</span>
+            <span class="oxmq-badge" :class="{ 'is-video': isVideo, 'is-svg': isSvg }">
+              {{ isVideo ? '🎬 Motion Diagram' : (isSvg ? 'Architecture Diagram' : 'Asset Preview') }}
+            </span>
             <span class="oxmq-title-text" :title="title">{{ title || 'Visual Preview' }}</span>
           </div>
 
@@ -64,6 +66,21 @@
 
             <button
               type="button"
+              class="oxmq-tool-btn"
+              :title="isFullscreen ? 'Exit Fullscreen (F)' : 'Toggle Fullscreen (F)'"
+              aria-label="Toggle Fullscreen"
+              @click="toggleFullscreen"
+            >
+              <svg v-if="!isFullscreen" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+              </svg>
+              <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 14h6m0 0v6m0-6L3 21m17-7h-6m0 0v6m0-6l7 7M4 10h6m0 0V4m0 6L3 3m17 7h-6m0 0V4m0 6l7-7"></path>
+              </svg>
+            </button>
+
+            <button
+              type="button"
               class="oxmq-close-btn"
               title="Close (Esc)"
               aria-label="Close Modal"
@@ -100,6 +117,22 @@
               v-html="svgContent"
             />
 
+            <!-- Motion Video Rendering -->
+            <div
+              v-else-if="isVideo"
+              class="oxmq-video-container"
+            >
+              <video
+                ref="modalVideoEl"
+                :src="videoSrc"
+                autoplay
+                loop
+                controls
+                playsinline
+                class="oxmq-video-view"
+              />
+            </div>
+
             <!-- Standard Image Rendering -->
             <img
               v-else
@@ -113,7 +146,7 @@
 
         <!-- Footer Hint -->
         <footer class="oxmq-modal-footer" @click.stop>
-          <span>Tip: Scroll to zoom &bull; Click &amp; drag to pan &bull; Press <kbd>Esc</kbd> to close</span>
+          <span>Tip: Scroll to zoom ({{ Math.round(scale * 100) }}%) &bull; Click &amp; drag to pan &bull; Press <kbd>F</kbd> for fullscreen &bull; Press <kbd>Esc</kbd> to close</span>
         </footer>
       </div>
     </Transition>
@@ -125,9 +158,13 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const isOpen = ref(false)
 const isSvg = ref(false)
+const isVideo = ref(false)
 const svgContent = ref('')
 const imageSrc = ref('')
+const videoSrc = ref('')
 const title = ref('')
+const isFullscreen = ref(false)
+const modalVideoEl = ref<HTMLVideoElement | null>(null)
 
 const scale = ref(1.0)
 const translateX = ref(0)
@@ -155,6 +192,19 @@ function resetZoom() {
   translateY.value = 0
 }
 
+function toggleFullscreen() {
+  if (typeof document === 'undefined') return
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.().then(() => {
+      isFullscreen.value = true
+    }).catch(() => {})
+  } else {
+    document.exitFullscreen?.().then(() => {
+      isFullscreen.value = false
+    }).catch(() => {})
+  }
+}
+
 function handleWheel(e: WheelEvent) {
   if (e.deltaY < 0) {
     zoomIn()
@@ -164,7 +214,14 @@ function handleWheel(e: WheelEvent) {
 }
 
 function startDrag(e: MouseEvent) {
+  // Allow dragging if zoomed in or if target is not interactive controls
   if (scale.value <= 1.0) return
+  const target = e.target as HTMLElement
+  if (target && target.tagName.toLowerCase() === 'video' && target.hasAttribute('controls')) {
+    // If clicking video controls, don't drag
+    const rect = target.getBoundingClientRect()
+    if (e.clientY > rect.bottom - 50) return
+  }
   isDragging.value = true
   startX = e.clientX - translateX.value
   startY = e.clientY - translateY.value
@@ -202,20 +259,19 @@ function findNearestHeading(el: HTMLElement): string {
 
 function openModalWithSvg(svg: SVGSVGElement, containerEl: HTMLElement) {
   isSvg.value = true
+  isVideo.value = false
   imageSrc.value = ''
+  videoSrc.value = ''
   
   const heading = findNearestHeading(containerEl)
   title.value = heading || 'Architecture Diagram'
 
-  // Clone SVG element to preserve styles, defs, and markers
   const cloned = svg.cloneNode(true) as SVGSVGElement
 
-  // 1. CRITICAL: Preserve the original ID so that scoped <style> rules `#${id}` match
   if (svg.id) {
     cloned.id = svg.id
   }
 
-  // 2. Extract natural coordinate dimensions from viewBox or width/height attributes
   let nativeWidth = 960
   let nativeHeight = 600
   const viewBox = svg.getAttribute('viewBox') || cloned.getAttribute('viewBox')
@@ -236,7 +292,6 @@ function openModalWithSvg(svg: SVGSVGElement, containerEl: HTMLElement) {
     }
   }
 
-  // 3. Set explicit responsive vector dimensions on cloned SVG
   cloned.setAttribute('width', '100%')
   cloned.setAttribute('height', 'auto')
   cloned.style.display = 'block'
@@ -254,9 +309,30 @@ function openModalWithSvg(svg: SVGSVGElement, containerEl: HTMLElement) {
   }
 }
 
-function openModalWithImage(img: HTMLImageElement) {
+function openModalWithVideo(video: HTMLVideoElement) {
+  isVideo.value = true
   isSvg.value = false
   svgContent.value = ''
+  imageSrc.value = ''
+
+  const source = video.querySelector('source')
+  videoSrc.value = source?.src || video.currentSrc || video.src
+
+  const heading = findNearestHeading(video)
+  title.value = video.getAttribute('aria-label') || video.getAttribute('title') || heading || 'Motion Diagram'
+
+  resetZoom()
+  isOpen.value = true
+  if (typeof document !== 'undefined') {
+    document.body.style.overflow = 'hidden'
+  }
+}
+
+function openModalWithImage(img: HTMLImageElement) {
+  isSvg.value = false
+  isVideo.value = false
+  svgContent.value = ''
+  videoSrc.value = ''
   imageSrc.value = img.currentSrc || img.src
 
   const heading = findNearestHeading(img)
@@ -271,11 +347,18 @@ function openModalWithImage(img: HTMLImageElement) {
 
 function closeModal() {
   isOpen.value = false
+  isSvg.value = false
+  isVideo.value = false
   svgContent.value = ''
   imageSrc.value = ''
+  videoSrc.value = ''
   resetZoom()
   if (typeof document !== 'undefined') {
     document.body.style.overflow = ''
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {})
+      isFullscreen.value = false
+    }
   }
 }
 
@@ -285,17 +368,20 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === '+' || e.key === '=') zoomIn()
   if (e.key === '-' || e.key === '_') zoomOut()
   if (e.key === '0') resetZoom()
+  if (e.key === 'f' || e.key === 'F') toggleFullscreen()
 }
 
 function handleGlobalClick(e: MouseEvent) {
   const target = e.target as HTMLElement | null
   if (!target) return
 
-  // Safeguard against non-Element nodes (e.g. text nodes)
   const el = (target instanceof Element ? target : target.parentElement) as HTMLElement | null
   if (!el) return
 
-  // 1. Mermaid diagram check
+  // 1. Check if clicked inside modal itself
+  if (el.closest('.oxmq-media-modal')) return
+
+  // 2. Mermaid diagram check
   const mermaidContainer = el.closest('.mermaid') as HTMLElement | null
   if (mermaidContainer) {
     const svg = (el.tagName.toLowerCase() === 'svg' ? el : el.closest('svg')) || mermaidContainer.querySelector('svg')
@@ -307,9 +393,40 @@ function handleGlobalClick(e: MouseEvent) {
     }
   }
 
-  // 2. Image check inside documentation content
+  // 3. Motion Video check inside documentation content
+  const video = el.closest('.vp-doc video, .oxmq-motion-wrapper video') as HTMLVideoElement | null
+  if (video) {
+    e.preventDefault()
+    e.stopPropagation()
+    openModalWithVideo(video)
+    return
+  }
+
+  // 4. Motion wrapper container check (even if clicked on wrapper padding/overlay)
+  const motionWrapper = el.closest('.oxmq-motion-wrapper') as HTMLElement | null
+  if (motionWrapper) {
+    const innerVideo = motionWrapper.querySelector('video')
+    if (innerVideo) {
+      e.preventDefault()
+      e.stopPropagation()
+      openModalWithVideo(innerVideo)
+      return
+    }
+  }
+
+  // 5. Image check inside documentation content
   const img = el.closest('.vp-doc img:not(.logo):not(.vp-icon)') as HTMLImageElement | null
   if (img) {
+    // If inside a motion video container that has a video element, prefer the video
+    const parentContainer = img.closest('div')
+    const siblingVideo = parentContainer?.querySelector('video')
+    if (siblingVideo) {
+      e.preventDefault()
+      e.stopPropagation()
+      openModalWithVideo(siblingVideo)
+      return
+    }
+
     e.preventDefault()
     e.stopPropagation()
     openModalWithImage(img)
@@ -317,10 +434,17 @@ function handleGlobalClick(e: MouseEvent) {
   }
 }
 
+function onFullscreenChange() {
+  if (typeof document !== 'undefined') {
+    isFullscreen.value = !!document.fullscreenElement
+  }
+}
+
 onMounted(() => {
   if (typeof window !== 'undefined') {
     document.addEventListener('click', handleGlobalClick, true)
     window.addEventListener('keydown', onKeydown)
+    document.addEventListener('fullscreenchange', onFullscreenChange)
   }
 })
 
@@ -328,6 +452,7 @@ onUnmounted(() => {
   if (typeof window !== 'undefined') {
     document.removeEventListener('click', handleGlobalClick, true)
     window.removeEventListener('keydown', onKeydown)
+    document.removeEventListener('fullscreenchange', onFullscreenChange)
     document.body.style.overflow = ''
   }
 })
@@ -340,9 +465,9 @@ onUnmounted(() => {
   z-index: 99999;
   display: flex;
   flex-direction: column;
-  background-color: rgba(10, 12, 16, 0.90);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background-color: rgba(10, 12, 16, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   user-select: none;
 }
 
@@ -351,10 +476,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 24px;
+  padding: 14px 24px;
   background: rgba(22, 27, 34, 0.85);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  color: #f0f6fc;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
   z-index: 10;
 }
 
@@ -362,12 +487,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 14px;
-  font-weight: 500;
-  max-width: 60%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: 60%;
 }
 
 .oxmq-badge {
@@ -375,18 +496,33 @@ onUnmounted(() => {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  background: var(--vp-c-brand-1, #3b82f6);
-  color: #ffffff;
   padding: 3px 10px;
-  border-radius: 6px;
-  flex-shrink: 0;
+  border-radius: 20px;
+  background: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  white-space: nowrap;
+}
+
+.oxmq-badge.is-video {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.oxmq-badge.is-svg {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.35);
 }
 
 .oxmq-title-text {
-  color: #e6edf3;
+  font-size: 15px;
+  font-weight: 600;
+  color: #f0f6fc;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Toolbar */
@@ -397,6 +533,7 @@ onUnmounted(() => {
 }
 
 .oxmq-zoom-level {
+  font-family: var(--vp-font-family-mono, monospace);
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -450,8 +587,8 @@ onUnmounted(() => {
 }
 
 .oxmq-modal-content-wrapper {
-  max-width: 92vw;
-  max-height: 82vh;
+  max-width: 95vw;
+  max-height: 84vh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -478,9 +615,30 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
+/* Video Rendering */
+.oxmq-video-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 94vw;
+  max-height: 82vh;
+}
+
+.oxmq-video-view {
+  max-width: 92vw;
+  max-height: 80vh;
+  width: auto;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  display: block;
+  outline: none;
+}
+
 /* Image Rendering */
 .oxmq-image-view {
-  max-width: 88vw;
+  max-width: 90vw;
   max-height: 80vh;
   object-fit: contain;
   border-radius: 8px;

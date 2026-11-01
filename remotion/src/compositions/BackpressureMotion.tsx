@@ -1,48 +1,47 @@
 import React from "react";
-import {
-  AbsoluteFill,
-  interpolate,
-  spring,
-  useCurrentFrame,
-  useVideoConfig,
-} from "remotion";
+import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
 import { THEME, BackgroundGrid, DiagramHeader } from "../theme";
 
 export const BackpressureMotion: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
 
-  // 300 frames total (10 seconds @ 30 fps)
-  // Phase 0 (0-80): High throughput ingestion, memory climbing (100MB -> 180MB)
-  // Phase 1 (80-160): Memory hits 190MB threshold; JobInterceptor admission gate activates
-  // Phase 2 (160-240): Ingestion diverted to moveToDelayed(skipAttempt: true); memory ceiling held
-  // Phase 3 (240-300): Workers process active queue; memory drops safely back to 140MB
+  // Simulate Redis memory climbing from 120MB -> 195MB (spike) -> 150MB (throttled drain)
+  let memoryMb = 120;
+  if (frame < 100) {
+    memoryMb = interpolate(frame, [0, 100], [120, 195], { extrapolateRight: "clamp" });
+  } else if (frame < 200) {
+    memoryMb = interpolate(frame, [100, 200], [195, 175], { extrapolateRight: "clamp" });
+  } else {
+    memoryMb = interpolate(frame, [200, 300], [175, 145], { extrapolateRight: "clamp" });
+  }
 
-  const memoryMb = Math.round(
-    interpolate(
-      frame,
-      [0, 80, 160, 240, 300],
-      [90, 182, 194, 165, 130],
-      { extrapolateRight: "clamp" }
-    )
-  );
+  const isThrottled = memoryMb >= 180;
+  const memoryPercent = Math.min(100, Math.round((memoryMb / 200) * 100));
 
-  const isThrottled = frame >= 80 && frame < 220;
-  const isRecovered = frame >= 220;
+  let statusText = "Normal Ingestion: Redis memory at healthy levels (below 180 MB ceiling)";
+  let statusColor = THEME.emerald;
+  let statusBadge = "HEALTHY (NORMAL)";
 
-  const statusColor = isThrottled ? THEME.ruby : isRecovered ? THEME.emerald : THEME.cyan;
-  const statusBadge = isThrottled ? "ADMISSION GATE: ACTIVE THROTTLE" : isRecovered ? "DRAINING NORMALLY" : "HEALTHY INGESTION";
+  if (isThrottled) {
+    statusText = "Admission Gate Active: Memory >= 180 MB -> Diverting crawl jobs to moveToDelayed(skipAttempt: true)";
+    statusColor = THEME.ruby;
+    statusBadge = "PACING BACKPRESSURE ACTIVE";
+  } else if (frame >= 200) {
+    statusText = "Recovery Hysteresis: Memory drained below recovery threshold -> Resuming full ingestion";
+    statusColor = THEME.cyan;
+    statusBadge = "AUTOMATIC RECOVERY";
+  }
 
   return (
-    <AbsoluteFill style={{ backgroundColor: THEME.bgDark, padding: "50px 70px", fontFamily: THEME.fontSans }}>
+    <AbsoluteFill style={{ backgroundColor: THEME.bgDark, padding: "45px 65px", fontFamily: THEME.fontSans }}>
       <BackgroundGrid />
 
       <DiagramHeader
-        category="Memory Protection & Admission Control"
-        title="Strict 200MB Redis Memory Ceiling & Zero-Data-Loss Backpressure"
-        subtitle="Application-layer admission gate using moveToDelayed(skipAttempt: true) prevents catastrophic Redis LRU evictions"
-        badgeText="ZERO-DATA-LOSS BACKPRESSURE"
-        badgeColor={THEME.ruby}
+        category="Memory Governance"
+        title="Zero-Data-Loss Backpressure & Strict 200MB Ceiling"
+        subtitle="Application-layer admission gate via JobInterceptor prevents catastrophic Redis LRU eviction and memory OOM"
+        badgeText="ZERO DATA LOSS"
+        badgeColor={THEME.emerald}
       />
 
       <div
@@ -50,66 +49,94 @@ export const BackpressureMotion: React.FC = () => {
           flex: 1,
           position: "relative",
           background: THEME.cardBg,
-          borderRadius: "20px",
-          border: `1px solid ${THEME.cardBorderSubtle}`,
-          padding: "36px",
+          borderRadius: "22px",
+          border: `1.5px solid ${THEME.cardBorderSubtle}`,
+          padding: "30px",
+          boxShadow: "0 20px 50px rgba(0, 0, 0, 0.6)",
+          zIndex: 1,
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          boxShadow: "0 20px 50px rgba(0, 0, 0, 0.6)",
-          zIndex: 1,
         }}
       >
-        <div style={{ display: "flex", gap: "36px", flex: 1, alignItems: "center" }}>
-          {/* Gauge & Metrics Card */}
+        {/* Main Display: Memory Gauge & Workflow Steps */}
+        <div style={{ display: "flex", gap: "32px", alignItems: "center", flex: 1 }}>
+          {/* Memory Gauge Card */}
           <div
             style={{
               flex: 1,
-              background: "rgba(15, 23, 42, 0.9)",
-              borderRadius: "16px",
-              border: `2px solid ${statusColor}`,
+              background: "rgba(24, 15, 30, 0.85)",
+              borderRadius: "18px",
+              border: `2.5px solid ${isThrottled ? THEME.ruby : THEME.cyan}`,
               padding: "26px",
               display: "flex",
               flexDirection: "column",
-              alignItems: "center",
-              boxShadow: `0 0 30px ${statusColor}33`,
+              justifyContent: "space-between",
+              height: "440px",
+              boxShadow: isThrottled ? `0 0 35px ${THEME.ruby}44` : "none",
+              transition: "all 0.3s ease",
             }}
           >
-            <span style={{ fontSize: "14px", fontWeight: 700, color: THEME.textSecondary, textTransform: "uppercase", marginBottom: "8px" }}>
-              REDIS CLUSTER MEMORY (200 MB CEILING)
-            </span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: "18px", fontWeight: 800, color: THEME.textPrimary }}>REDIS MEMORY GAUGE</span>
+              <span
+                style={{
+                  fontSize: "15px",
+                  fontWeight: 800,
+                  padding: "4px 12px",
+                  borderRadius: "10px",
+                  background: isThrottled ? `${THEME.ruby}26` : `${THEME.emerald}26`,
+                  color: isThrottled ? THEME.ruby : THEME.emerald,
+                }}
+              >
+                {isThrottled ? "PACING (DELAY)" : "NORMAL"}
+              </span>
+            </div>
 
-            <div style={{ fontSize: "64px", fontWeight: 900, color: statusColor, fontFamily: THEME.fontMono, margin: "10px 0" }}>
-              {memoryMb} <span style={{ fontSize: "28px", color: THEME.textMuted }}>MB</span>
+            <div style={{ textAlign: "center", margin: "14px 0" }}>
+              <div
+                style={{
+                  fontSize: "76px",
+                  fontWeight: 900,
+                  fontFamily: THEME.fontMono,
+                  color: isThrottled ? THEME.ruby : THEME.cyan,
+                  letterSpacing: "-2px",
+                }}
+              >
+                {Math.round(memoryMb)} <span style={{ fontSize: "32px", color: THEME.textMuted }}>MB</span>
+              </div>
+              <div style={{ fontSize: "17px", color: THEME.textSecondary, fontWeight: 600 }}>
+                Hard Budget: 200 MB &bull; {memoryPercent}% Used
+              </div>
             </div>
 
             {/* Gauge Progress Bar */}
-            <div style={{ width: "100%", height: "16px", background: "#334155", borderRadius: "8px", overflow: "hidden", margin: "14px 0" }}>
+            <div style={{ width: "100%", height: "20px", background: "rgba(255,255,255,0.08)", borderRadius: "10px", overflow: "hidden", position: "relative" }}>
               <div
                 style={{
-                  width: `${(memoryMb / 200) * 100}%`,
+                  width: `${memoryPercent}%`,
                   height: "100%",
-                  background: `linear-gradient(90deg, ${THEME.emerald}, ${memoryMb > 175 ? THEME.ruby : THEME.amber})`,
-                  boxShadow: `0 0 10px ${statusColor}`,
-                  transition: "width 0.2s ease",
+                  background: isThrottled ? `linear-gradient(90deg, ${THEME.amber}, ${THEME.ruby})` : `linear-gradient(90deg, ${THEME.cyan}, ${THEME.emerald})`,
+                  borderRadius: "10px",
+                  transition: "width 0.1s linear",
                 }}
               />
             </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", width: "100%", fontSize: "12px", color: THEME.textMuted }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "15px", color: THEME.textMuted, fontWeight: 600 }}>
               <span>0 MB</span>
-              <span style={{ color: THEME.amber, fontWeight: 700 }}>180 MB (Throttle)</span>
-              <span style={{ color: THEME.ruby, fontWeight: 700 }}>200 MB (Hard Ceiling)</span>
+              <span style={{ color: THEME.amber, fontWeight: 800 }}>180 MB (Throttle)</span>
+              <span style={{ color: THEME.ruby, fontWeight: 800 }}>200 MB (Hard Ceiling)</span>
             </div>
           </div>
 
           {/* Workflow Architecture Card */}
           <div
             style={{
-              flex: 1.2,
+              flex: 1.3,
               display: "flex",
               flexDirection: "column",
-              gap: "14px",
+              gap: "12px",
             }}
           >
             {[
@@ -141,28 +168,29 @@ export const BackpressureMotion: React.FC = () => {
               <div
                 key={i}
                 style={{
-                  background: "rgba(30, 41, 59, 0.7)",
-                  borderRadius: "12px",
-                  borderLeft: `4px solid ${st.color}`,
-                  padding: "12px 18px",
+                  background: "rgba(30, 41, 59, 0.8)",
+                  borderRadius: "14px",
+                  borderLeft: `5px solid ${st.color}`,
+                  padding: "14px 20px",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                 }}
               >
                 <div>
-                  <div style={{ fontSize: "15px", fontWeight: 700, color: THEME.textPrimary }}>{st.step}</div>
-                  <div style={{ fontSize: "12px", color: THEME.textSecondary }}>{st.desc}</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: THEME.textPrimary }}>{st.step}</div>
+                  <div style={{ fontSize: "15px", color: THEME.textSecondary, marginTop: "2px" }}>{st.desc}</div>
                 </div>
                 <span
                   style={{
-                    fontSize: "11px",
+                    fontSize: "13px",
                     fontWeight: 800,
-                    padding: "4px 10px",
-                    borderRadius: "6px",
-                    background: `${st.color}22`,
+                    padding: "4px 12px",
+                    borderRadius: "8px",
+                    background: `${st.color}26`,
                     color: st.color,
-                    fontFamily: THEME.fontMono,
+                    letterSpacing: "0.5px",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {st.state}
@@ -172,40 +200,37 @@ export const BackpressureMotion: React.FC = () => {
           </div>
         </div>
 
-        {/* Bottom Banner */}
+        {/* Bottom Explanatory Ribbon */}
         <div
           style={{
-            background: "rgba(15, 23, 42, 0.9)",
-            borderRadius: "14px",
-            borderLeft: `5px solid ${statusColor}`,
-            padding: "16px 24px",
+            background: "rgba(15, 23, 42, 0.95)",
+            borderRadius: "16px",
+            borderLeft: `6px solid ${statusColor}`,
+            border: `1px solid rgba(255, 255, 255, 0.12)`,
+            padding: "18px 28px",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginTop: "20px",
           }}
         >
           <div>
-            <div style={{ fontSize: "16px", fontWeight: 700, color: THEME.textPrimary, marginBottom: "3px" }}>
-              {isThrottled
-                ? "Memory threshold exceeded (190MB/200MB): Admission gate smoothly paused intake"
-                : isRecovered
-                ? "Virtual Thread workers drained backlog: Memory normalized, intake auto-resumed"
-                : "Queue operating within safe boundaries (nominal memory intake)"}
+            <div style={{ fontSize: "19px", fontWeight: 800, color: THEME.textPrimary, marginBottom: "4px" }}>
+              {statusText}
             </div>
-            <div style={{ fontSize: "13px", color: THEME.textSecondary }}>
-              Mechanism: <span style={{ fontFamily: THEME.fontMono, color: statusColor, fontWeight: 600 }}>JobInterceptor + moveToDelayed(skipAttempt: true)</span>
+            <div style={{ fontSize: "16px", color: THEME.textSecondary }}>
+              Admission Policy: <span style={{ color: statusColor, fontWeight: 700 }}>Skip Attempt Counting &bull; Zero Redis LRU Destructive Evictions</span>
             </div>
           </div>
           <div
             style={{
-              padding: "6px 14px",
-              borderRadius: "8px",
-              background: `${statusColor}22`,
-              border: `1px solid ${statusColor}44`,
+              padding: "8px 18px",
+              borderRadius: "10px",
+              background: `${statusColor}26`,
+              border: `1.5px solid ${statusColor}55`,
               color: statusColor,
               fontWeight: 800,
-              fontSize: "12px",
+              fontSize: "14px",
+              letterSpacing: "0.5px",
             }}
           >
             {statusBadge}

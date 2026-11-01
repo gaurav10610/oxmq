@@ -2,13 +2,13 @@
 
 This document details the architectural design, low-level Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and distributed tracing protocols implemented in **OxMQ**.
 
-<div style="text-align: center; margin: 2rem 0;">
-  <video controls autoplay loop muted playsinline style="width: 100%; max-width: 960px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid rgba(56, 189, 248, 0.3);">
+<div class="oxmq-motion-wrapper" style="text-align: center; margin: 2rem 0;">
+  <video autoplay loop muted playsinline style="width: 100%; max-width: 960px; border-radius: 12px; display: block; margin: 0 auto;">
     <source src="/assets/oxmq-architecture.mp4" type="video/mp4">
     <img src="/assets/oxmq-architecture.gif" alt="OxMQ Architecture Motion Diagram" style="width: 100%; border-radius: 12px;" />
   </video>
-  <p style="font-size: 0.9rem; color: #94a3b8; margin-top: 0.6rem;">
-    <em>🎬 Motion Architecture: OxMQ End-to-End Topology, Redis Key Lifecycle, and Loom Virtual Thread Execution</em>
+  <p style="font-size: 0.9rem; color: #94a3b8; margin: 0.8rem 0 0.4rem 0;">
+    <em>🎬 Motion Architecture: OxMQ End-to-End Topology, Redis Key Lifecycle, and Loom Virtual Thread Execution (Click to zoom / fullscreen)</em>
   </p>
 </div>
 
@@ -115,7 +115,7 @@ To guarantee that long-running jobs never lose their locks while healthy, and cr
 
 Every job dequeue operation in OxMQ executes BullMQ's official `moveToActive-11.lua` (and `OxmqBatchWorker` bulk dequeue scripts). This evaluates queue state, cluster concurrency caps, and sliding-window rate limits atomically in a single Redis roundtrip:
 
-<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+<div class="oxmq-motion-wrapper">
   <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-batch-dequeue.gif">
     <source src="/assets/oxmq-batch-dequeue.mp4" type="video/mp4" />
     <img src="/assets/oxmq-batch-dequeue.gif" alt="OxMQ Batch Dequeue Motion Diagram" style="width: 100%; display: block;" />
@@ -134,7 +134,7 @@ Every job dequeue operation in OxMQ executes BullMQ's official `moveToActive-11.
 
 OxMQ's `FlowProducer` orchestrates complex directed acyclic graphs (DAGs) without external workflow engines:
 
-<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+<div class="oxmq-motion-wrapper">
   <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-dag-workflow.gif">
     <source src="/assets/oxmq-dag-workflow.mp4" type="video/mp4" />
     <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Motion Diagram" style="width: 100%; display: block;" />

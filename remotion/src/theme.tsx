@@ -50,33 +50,33 @@ export const DiagramHeader: React.FC<{
   badgeText?: string;
   badgeColor?: string;
 }> = ({ title, subtitle, category, badgeText = "OXMQ ENGINE", badgeColor = THEME.cyan }) => (
-  <div style={{ marginBottom: "28px", zIndex: 1, position: "relative" }}>
+  <div style={{ marginBottom: "26px", zIndex: 1, position: "relative" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        <span style={{ fontSize: "13px", fontWeight: 700, letterSpacing: "1.5px", color: badgeColor, textTransform: "uppercase" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <span style={{ fontSize: "16px", fontWeight: 800, letterSpacing: "1.5px", color: badgeColor, textTransform: "uppercase" }}>
           {category}
         </span>
-        <span style={{ height: "2px", width: "32px", background: badgeColor }}></span>
+        <span style={{ height: "3px", width: "36px", background: badgeColor, borderRadius: "2px" }}></span>
       </div>
       <div
         style={{
-          fontSize: "12px",
-          fontWeight: 700,
-          padding: "4px 12px",
-          borderRadius: "16px",
-          background: `${badgeColor}1A`,
+          fontSize: "15px",
+          fontWeight: 800,
+          padding: "6px 16px",
+          borderRadius: "20px",
+          background: `${badgeColor}22`,
           color: badgeColor,
-          border: `1px solid ${badgeColor}4D`,
+          border: `1.5px solid ${badgeColor}66`,
           letterSpacing: "0.5px",
         }}
       >
         ● {badgeText}
       </div>
     </div>
-    <h2 style={{ fontSize: "38px", fontWeight: 800, margin: "0 0 6px 0", color: THEME.textPrimary, letterSpacing: "-0.5px" }}>
+    <h2 style={{ fontSize: "44px", fontWeight: 800, margin: "0 0 6px 0", color: THEME.textPrimary, letterSpacing: "-0.5px" }}>
       {title}
     </h2>
-    <p style={{ fontSize: "16px", color: THEME.textSecondary, margin: 0 }}>
+    <p style={{ fontSize: "21px", fontWeight: 500, color: THEME.textSecondary, margin: 0 }}>
       {subtitle}
     </p>
   </div>

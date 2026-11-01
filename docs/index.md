@@ -75,13 +75,13 @@ features:
 
 ## System Architecture in Motion
 
-<div style="text-align: center; margin: 1.5rem 0 2.5rem 0;">
-  <video controls autoplay loop muted playsinline style="width: 100%; max-width: 960px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid rgba(56, 189, 248, 0.3);">
+<div class="oxmq-motion-wrapper" style="text-align: center; margin: 1.5rem 0 2.5rem 0;">
+  <video autoplay loop muted playsinline style="width: 100%; max-width: 960px; border-radius: 12px; display: block; margin: 0 auto;">
     <source src="/assets/oxmq-architecture.mp4" type="video/mp4">
     <img src="/assets/oxmq-architecture.gif" alt="OxMQ Architecture Motion Diagram" style="width: 100%; border-radius: 12px;" />
   </video>
-  <p style="font-size: 0.9rem; color: #94a3b8; margin-top: 0.6rem;">
-    <em>🎬 OxMQ End-to-End Architecture: Redis 49 Lua Scripts, Project Loom Concurrency, and Atomic Job Lifecycle</em>
+  <p style="font-size: 0.9rem; color: #94a3b8; margin: 0.8rem 0 0.4rem 0;">
+    <em>🎬 OxMQ End-to-End Architecture: Redis 49 Lua Scripts, Project Loom Concurrency, and Atomic Job Lifecycle (Click to zoom / fullscreen)</em>
   </p>
 </div>
 

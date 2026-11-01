@@ -8,7 +8,7 @@ OxMQ includes a first-class **`FlowProducer`** engine for orchestrating complex 
 
 A parent task cannot execute until **all** of its dependent child tasks have completed successfully:
 
-<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+<div class="oxmq-motion-wrapper">
   <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-dag-workflow.gif">
     <source src="/assets/oxmq-dag-workflow.mp4" type="video/mp4" />
     <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ DAG Workflow Animation" style="width: 100%; display: block;" />
