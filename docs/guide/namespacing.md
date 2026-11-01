@@ -18,36 +18,9 @@ Developer ergonomics are paramount. Asking developers to repeat a `namespace` or
 
 OxMQ introduces the **"Define Once at Service Level, Inherit Everywhere"** pattern:
 
-```mermaid
-flowchart TD
-    subgraph Service Configuration [Service-Level Declaration]
-        Env["spring.application.name: billing-service<br/>or oxmq.prefix: billing-service"]
-    end
-
-    subgraph Automatic Inheritance [Inherit Everywhere]
-        T["OxmqTemplate<br/>(prefix: billing-service)"]
-        W1["@OxmqListener(queue='invoices')<br/>billing-service:invoices:*"]
-        W2["@OxmqBatchListener(queue='audit')<br/>billing-service:audit:*"]
-        DAG["FlowProducer<br/>billing-service:dag:*"]
-        ACT["Actuator HealthIndicator<br/>reports namespace: billing-service"]
-    end
-
-    subgraph Redis Cluster [Shared Redis Instance]
-        R1["{billing-service:invoices}:*"]
-        R2["{billing-service:audit}:*"]
-        R3["{shipping-service:invoices}:*"]
-    end
-
-    Env --> T
-    Env --> W1
-    Env --> W2
-    Env --> DAG
-    Env --> ACT
-
-    W1 --> R1
-    W2 --> R2
-    R3 -. Isolated from billing .- R1
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-namespace-hierarchy.png" alt="7-Tier Namespace Precedence & Cluster Hash-Tag Pinning" style="width: 100%; display: block;" />
+</div>
 
 1. **Auto-Detected from Spring Boot**: If your microservice defines `spring.application.name=billing-service`, OxMQ automatically uses `billing-service` as the Redis namespace prefix for every single queue, worker, batch processor, DAG workflow, and Actuator health check.
 2. **Global Property Override**: Set `oxmq.prefix=my-custom-prefix` in `application.yml` or via system property `-Doxmq.prefix=...` to override without touching application code.

@@ -34,6 +34,10 @@
 
 By directly executing BullMQ's official 49 Lua scripts and adhering to canonical Redis key topologies, OxMQ delivers **100% wire-format and script compatibility** with BullMQ while unlocking the massive concurrency of Java 21 Virtual Threads, enterprise multi-tenant context isolation, and high-throughput batch dequeuing.
 
+<p align="center">
+  <img src="docs/public/assets/oxmq-architecture.gif" alt="OxMQ Distributed Engine & Project Loom Architecture" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+</p>
+
 ## Key Capabilities
 
 - **Project Loom Virtual Threads**: Execute **10,000+ concurrent I/O-bound workers** per JVM node with ~1 KB heap per task and zero OS carrier thread starvation (with automatic platform thread pool fallback on Java 17 LTS).

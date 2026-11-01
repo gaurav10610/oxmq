@@ -130,24 +130,9 @@ future.thenAccept(output -> log.info("Job output: {}", output));
 
 ## 🔬 How It Works Under the Hood
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Caller as Producer / REST Controller
-    participant Events as QueueEvents (Redis Stream)
-    participant Lua as isFinished-3.lua (Redis)
-    participant Worker as OxMQ Worker
-
-    Caller->>Lua: Step 1: Execute isFinished-3.lua
-    alt Job Already Finished (COMPLETED / FAILED)
-        Lua-->>Caller: Returns immediately with returnvalue or failedReason
-    else Job Still In Flight (WAITING / ACTIVE)
-        Lua-->>Caller: Returns null (Not finished yet)
-        Caller->>Events: Step 2: Register one-shot listener for jobId
-        Worker->>Events: Step 3: Job completes -> Worker emits completed event (XADD)
-        Events-->>Caller: Step 4: Stream listener triggers and completes Future
-    end
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-request-reply.png" alt="Request-Reply & Dynamic Event Loop Architecture" style="width: 100%; display: block;" />
+</div>
 
 ### Race-Free Guarantees
 1. **Immediate Completion Check**: Before listening to Redis streams, OxMQ invokes official BullMQ `isFinished-3.lua`. If the job finished before the listener was registered, the result returns immediately ($O(1)$) with zero latency.

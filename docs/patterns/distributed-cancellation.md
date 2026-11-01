@@ -19,31 +19,9 @@ When an application node or administrator cancels a job, OxMQ:
 4. Blocking I/O or sleep calls throw `InterruptedException` / `JobCancelledException`, halting execution immediately.
 5. The worker cleans up Redis locks and marks the job as `FAILED` (or discarded).
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Admin as User / Admin / API
-    participant Queue as OxmqQueue (Pod A)
-    participant Redis as Redis Pub/Sub (<queue>:control)
-    participant WorkerB as Worker Pod B (Idle)
-    participant WorkerC as Worker Pod C (Executing Job #42)
-
-    Admin->>Queue: cancelJob("42", "Aborted by user")
-    Queue->>Redis: PUBLISH {action: CANCEL, jobId: 42, reason: ...}
-    
-    par Control Broadcast
-        Redis->>WorkerB: Received CANCEL(42)
-        Note over WorkerB: Job 42 not running on this pod.<br/>Ignored!
-    and
-        Redis->>WorkerC: Received CANCEL(42)
-        Note over WorkerC: Job 42 is ACTIVE on Virtual Thread 104!
-        WorkerC->>WorkerC: job.setCancelled(true, reason)
-        WorkerC->>WorkerC: thread.interrupt()
-    end
-
-    Note over WorkerC: Thread unblocks instantly<br/>Cleanly fails job in Redis
-    WorkerC->>Redis: moveToFinished(FAILED, "Aborted by user")
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-distributed-cancellation.png" alt="Distributed Job Cancellation & Virtual Thread Interruption" style="width: 100%; display: block;" />
+</div>
 
 ---
 

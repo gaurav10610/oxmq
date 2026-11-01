@@ -2,6 +2,16 @@
 
 This document details the architectural design, low-level Redis data structures, concurrency model, DAG execution engine, Batch Dequeue pipeline, and distributed tracing protocols implemented in **OxMQ**.
 
+<div style="text-align: center; margin: 2rem 0;">
+  <video controls autoplay loop muted playsinline style="width: 100%; max-width: 960px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid rgba(56, 189, 248, 0.3);">
+    <source src="/assets/oxmq-architecture.mp4" type="video/mp4">
+    <img src="/assets/oxmq-architecture.gif" alt="OxMQ Architecture Motion Diagram" style="width: 100%; border-radius: 12px;" />
+  </video>
+  <p style="font-size: 0.9rem; color: #94a3b8; margin-top: 0.6rem;">
+    <em>🎬 Motion Architecture: OxMQ End-to-End Topology, Redis Key Lifecycle, and Loom Virtual Thread Execution</em>
+  </p>
+</div>
+
 ---
 
 ## 1. High-Level System Architecture
@@ -92,32 +102,9 @@ Every job in OxMQ is stored in Redis as a Hash at the key `bull:<queue>:<jobId>`
 
 To guarantee that long-running jobs never lose their locks while healthy, and crashed worker nodes are swiftly recovered, OxMQ coordinates a **heartbeat lock timer** with a **stalled job sentinel**:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Worker as Worker (Virtual Thread)
-    participant Redis as Redis Storage
-    participant Sentinel as Stalled Sentinel (Watcher)
-
-    Note over Worker,Redis: Scenario A: Normal Execution (Auto-Heartbeat)
-    Worker->>Redis: 1. Claim job & acquire lock (TTL = 30s)
-    loop Every 15 seconds (lockDuration / 2)
-        Worker->>Redis: 2. extendLock-2.lua (Checks token, resets TTL to 30s)
-    end
-    Worker->>Redis: 3. Job finishes -> moveToFinished-14.lua (Saves result & clears lock)
-
-    Note over Worker,Redis: Scenario B: Worker Node Crash (SIGKILL / OOM)
-    Worker-xRedis: Node crashes abruptly -> Lock heartbeat ceases
-    Note over Redis: 30s TTL expires -> Lock key deleted automatically by Redis
-    Sentinel->>Redis: 4. moveStalledJobsToWait-9.lua (Runs every 30s)
-    Note over Redis: Detects active job with no lock key -> Increments stalledCounter
-    alt stalledCounter <= maxStalledCount (default: 1)
-        Redis->>Redis: Moves job from active back to wait queue
-        Redis-->>Sentinel: Emits 'stalled' event on Redis stream
-    else stalledCounter > maxStalledCount
-        Redis->>Redis: Moves job to failed set (Prevents crash loop)
-    end
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-lock-watchdog.png" alt="Lock Watchdog & Stalled Sentinel Architecture" style="width: 100%; display: block;" />
+</div>
 
 > [!NOTE]
 > The auto-heartbeat timer uses non-blocking Lettuce connections to multiplex heartbeat calls across all active tasks on a single TCP socket, preventing socket exhaustion.
@@ -126,23 +113,14 @@ sequenceDiagram
 
 ## 4. Atomic Polling & Rate Limiter Execution Pipeline
 
-Every job dequeue operation in OxMQ executes BullMQ's official `moveToActive-11.lua`. This script evaluates queue state, cluster concurrency caps, and sliding-window rate limits atomically in a single Redis roundtrip:
+Every job dequeue operation in OxMQ executes BullMQ's official `moveToActive-11.lua` (and `OxmqBatchWorker` bulk dequeue scripts). This evaluates queue state, cluster concurrency caps, and sliding-window rate limits atomically in a single Redis roundtrip:
 
-```mermaid
-flowchart LR
-    Queue[("Waiting Jobs")] --> Gate1{"1. Queue Status<br/>Paused or Maxed?"}
-    Gate1 -- No --> Gate2{"2. Rate Limit<br/>Quota Available?"}
-    Gate1 -- Yes (Paused/Maxed) --> Sleep["Wait Poll Interval"]
-    Gate2 -- Yes --> Dispatch["3. Atomically Pop Job<br/>Dispatch to Virtual Thread"]
-    Gate2 -- Quota Full --> SleepTTL["Sleep for Rate Limit TTL"]
-    
-    style Queue fill:#1e293b,stroke:#475569,color:#fff
-    style Gate1 fill:#334155,stroke:#64748b,color:#fff
-    style Gate2 fill:#334155,stroke:#64748b,color:#fff
-    style Dispatch fill:#047857,stroke:#10b981,color:#fff
-    style Sleep fill:#b91c1c,stroke:#ef4444,color:#fff
-    style SleepTTL fill:#b45309,stroke:#f59e0b,color:#fff
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-batch-dequeue.gif">
+    <source src="/assets/oxmq-batch-dequeue.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-batch-dequeue.gif" alt="OxMQ Batch Dequeue Motion Diagram" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 ### Execution Rules inside `moveToActive-11.lua`:
 1. **Queue Metadata Check**: Reads `concurrency`, `paused`, `max`, and `duration` from `bull:<queue>:meta`.
@@ -156,20 +134,12 @@ flowchart LR
 
 OxMQ's `FlowProducer` orchestrates complex directed acyclic graphs (DAGs) without external workflow engines:
 
-```mermaid
-graph TD
-    Parent["Parent Task: Generate Compliance Report<br/><i>State: WAITING_CHILDREN | Dependencies: 2</i>"]
-
-    ChildA["Child A: Audit Exchange Mailboxes<br/><i>Worker 1 (Virtual Thread)</i>"] -->|Returns Dataset A| Parent
-    ChildB["Child B: Audit SharePoint Files<br/><i>Worker 2 (Virtual Thread)</i>"] -->|Returns Dataset B| Parent
-
-    Parent -.->|Dependencies reach 0| ReadyQueue["bull:reports:wait<br/><i>Parent Claimed &amp; Executed with Child Data</i>"]
-
-    style Parent fill:#1e293b,stroke:#475569,color:#fff
-    style ChildA fill:#0f766e,stroke:#14b8a6,color:#fff
-    style ChildB fill:#0f766e,stroke:#14b8a6,color:#fff
-    style ReadyQueue fill:#1e3a8a,stroke:#3b82f6,color:#fff
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-dag-workflow.gif">
+    <source src="/assets/oxmq-dag-workflow.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Motion Diagram" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 ### Mechanical Steps during DAG Completion:
 1. **Atomic Leaf Execution**: Child jobs run concurrently across worker nodes.
@@ -185,24 +155,11 @@ graph TD
 
 Redis Cluster partitions keys across 16,384 hash slots. Multi-key Lua scripts (`moveToActive`, `moveToFinished`, `addBulk`) require that all evaluated keys belong to the **same hash slot**, or Redis aborts with a `CROSSSLOT Keys in request don't hash to the same slot` error.
 
-OxMQ guarantees cluster safety via automated hash-tags `{prefix:queue}`:
+OxMQ guarantees cluster safety via automated hash-tags `{prefix:queue}` and a deterministic 7-tier precedence hierarchy:
 
-```mermaid
-graph LR
-    subgraph Node1["Redis Cluster Node 1 (Slots 0 - 5460)"]
-        SlotA["CRC16('{billing:invoices}') = Slot 3842<br/>-------------------------------------------<br/>• {billing:invoices}:wait<br/>• {billing:invoices}:active<br/>• {billing:invoices}:meta<br/>• {billing:invoices}:limiter<br/>• {billing:invoices}:pc<br/>• {billing:invoices}:events"]
-    end
-
-    subgraph Node2["Redis Cluster Node 2 (Slots 5461 - 10922)"]
-        SlotB["CRC16('{shipping:orders}') = Slot 8914<br/>-------------------------------------------<br/>• {shipping:orders}:wait<br/>• {shipping:orders}:active<br/>• {shipping:orders}:meta<br/>• {shipping:orders}:limiter<br/>• {shipping:orders}:events"]
-    end
-
-    MultiKeyLua["Lua Script (moveToActive-11.lua)<br/>Evaluates 11 keys simultaneously"] -->|Guaranteed single-slot execution| SlotA
-
-    style Node1 fill:#1e293b,stroke:#334155,color:#fff
-    style Node2 fill:#1e293b,stroke:#334155,color:#fff
-    style MultiKeyLua fill:#047857,stroke:#10b981,color:#fff
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-namespace-hierarchy.png" alt="Redis Cluster Hash-Tag Routing & 7-Tier Precedence Ladder" style="width: 100%; display: block;" />
+</div>
 
 When building cross-queue DAG workflows, use `FlowProducer.forCluster("{myWorkflow}")` to ensure parents and children share the identical cluster slot.
 
@@ -212,29 +169,9 @@ When building cross-queue DAG workflows, use `FlowProducer.forCluster("{myWorkfl
 
 OxMQ natively propagates W3C Trace Context across queues, workers, and microservices:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Gateway as API Gateway / Upstream Service
-    participant Producer as OxmqQueue (Producer)
-    participant Redis as Redis Storage
-    participant Worker as OxmqWorker (Consumer)
-    participant Downstream as Downstream Database / HTTP API
-
-    Gateway->>Gateway: Receives HTTP request with traceparent header
-    Gateway->>Producer: queue.add("order", data, opts.traceparent(...))
-    Producer->>Redis: HSET bull:orders:101 traceparent 00-4bf92f...-01
-    
-    Note over Redis: Job persists with W3C trace context embedded
-    
-    Worker->>Redis: moveToActive-11.lua (Claims job)
-    Redis-->>Worker: Returns job hash with traceparent
-    Worker->>Worker: TraceContext.fromTraceparent(...)
-    Worker->>Worker: childSpan = traceContext.createChildSpan()
-    Worker->>Downstream: HTTP POST /v1/process (Header: traceparent: childSpan)
-    Downstream-->>Worker: HTTP 200 OK Response
-    Worker->>Redis: moveToFinished-14.lua (Saves result)
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-distributed-tracing.png" alt="OpenTelemetry W3C Distributed Tracing Protocol" style="width: 100%; display: block;" />
+</div>
 
 ---
 
@@ -256,3 +193,13 @@ Virtual Threads (Java 21 Loom):
 - **Memory Footprint**: ~1 KB heap per virtual thread vs ~1 MB stack per platform thread.
 - **Concurrency Limit**: 10,000+ concurrent workers on a single JVM node with zero carrier thread starvation.
 - **Graceful Fallback**: On Java 17 LTS runtimes, OxMQ's `DispatcherExecutorFactory` transparently falls back to an optimized dynamic platform thread pool.
+
+---
+
+## 9. Multi-Tenant Virtual Groups & Fair Share Scheduling
+
+In multi-tenant SaaS environments, noisy neighbors can flood queues with thousands of requests, starving smaller tenants. OxMQ's **Virtual Groups** engine solves this via deterministic round-robin arbitration:
+
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-virtual-groups.png" alt="Multi-Tenant Virtual Groups & Fair Circular Scheduling Architecture" style="width: 100%; display: block;" />
+</div>

@@ -8,34 +8,9 @@ This guide details OxMQ's **Disaster Recovery (DR) Architecture**, Kubernetes li
 
 ## 🏛️ Failure Modes & Recovery Architecture
 
-```mermaid
-flowchart TD
-    subgraph K8s ["Kubernetes Cluster / Cloud Infrastructure"]
-        Pod1["OxMQ Worker Pod (Active)"]
-        K8sSIG["K8s Autoscaler / Node Drain<br/>(SIGTERM)"]
-        PreStop["preStop Hook: sleep 10s<br/>(Deregister from Service)"]
-        Drain["Graceful Drain (30s)<br/>server.shutdown=graceful"]
-    end
-
-    subgraph RedisFault ["Redis Failure Scenarios"]
-        RedisCrash["Sudden Redis Crash / Restart<br/>(SIGKILL / Node Failure)"]
-        LettuceBuf["Lettuce Client:<br/>Buffers Commands & Retries"]
-        SentinelReclaim["StalledJobSentinel:<br/>Reclaims In-Flight Locks"]
-    end
-
-    subgraph CheckpointEngine ["CheckpointStatePlugin"]
-        CommitToken["Commit Delta Token<br/>oxmq:checkpoint:<namespace>"]
-        ResumeFromToken["Restarted Pod:<br/>Resumes from Token (0 Duplicates)"]
-    end
-
-    K8sSIG --> PreStop
-    PreStop --> Drain
-    Drain --> CommitToken
-    CommitToken --> ResumeFromToken
-
-    RedisCrash --> LettuceBuf
-    LettuceBuf --> SentinelReclaim
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-disaster-recovery.png" alt="Disaster Recovery & Cloud Chaos Resilience Architecture" style="width: 100%; display: block;" />
+</div>
 
 ---
 

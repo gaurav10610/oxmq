@@ -529,37 +529,23 @@ OxmqWorker<Object> worker = OxmqWorker.builder()
 ```
 
 ### Dynamic Flow Execution Sequence:
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client
-    participant Queue as Redis Queue
-    participant Worker as OxMQ Worker (Virtual Thread)
-    
-    Client->>Queue: Enqueue Parent Job
-    Queue->>Worker: Worker picks up Parent Job
-    Note over Worker: Evaluates runtime data<br/>Determines 3 dynamic children
-    Worker->>Queue: job.addChildren(3 children)
-    Worker->>Queue: moveToWaitingChildren()
-    Note over Worker: Throws WaitingChildrenException<br/>Virtual Thread yielded cleanly!
-    
-    par Child Execution
-        Queue->>Worker: Worker executes Child 1 (completed)
-        Queue->>Worker: Worker executes Child 2 (completed)
-        Queue->>Worker: Worker executes Child 3 (completed)
-    end
-    
-    Note over Queue: Last child completes<br/>moveToFinished unblocks Parent
-    Queue->>Queue: Parent promoted from waiting-children to wait
-    Queue->>Worker: Worker resumes Parent Job
-    Note over Worker: job.getChildrenValues() provides outputs<br/>Parent completes successfully!
-```
+
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-dag-workflow.gif">
+    <source src="/assets/oxmq-dag-workflow.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 ---
 
 ## OpenTelemetry Distributed Tracing (`TraceContext`)
 
-OxMQ natively supports W3C distributed tracing standards (`traceparent` and `tracestate`), allowing distributed traces to flow seamlessly across microservice boundaries, queues, and DAG dependencies.
+OxMQ natively supports W3C distributed tracing standards (`traceparent` and `tracestate`), allowing distributed traces to flow seamlessly across microservice boundaries, queues, and DAG dependencies:
+
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-distributed-tracing.png" alt="OpenTelemetry W3C Distributed Tracing Protocol" style="width: 100%; display: block;" />
+</div>
 
 ```java
 import io.oxmq.tracing.TraceContext;
