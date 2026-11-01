@@ -174,9 +174,12 @@ docker compose up -d
 
 Every OxMQ job transitions through a strictly enforced, atomic state machine managed by official BullMQ Lua scripts:
 
-<p align="center">
-  <img src="/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" width="100%">
-</p>
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-job-lifecycle.gif">
+    <source src="/assets/oxmq-job-lifecycle.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-job-lifecycle.gif" alt="OxMQ Job Lifecycle Animation" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 * **`WAITING`**: Ready to be claimed by an available worker.
 * **`ACTIVE`**: Locked and being executed by a worker Virtual Thread.
@@ -308,9 +311,12 @@ public class InvoiceConsumer {
 
 OxMQ includes a zero-dependency, atomic DAG workflow engine. A parent job automatically enters `WAITING_CHILDREN` and is activated in Redis only after all parallel child tasks succeed:
 
-<p align="center">
-  <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" width="100%">
-</p>
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-dag-workflow.gif">
+    <source src="/assets/oxmq-dag-workflow.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-dag-workflow.gif" alt="OxMQ Parent-Child DAG Workflow Resolution" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 ```java
 import io.oxmq.FlowProducer;

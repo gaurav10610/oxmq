@@ -10,27 +10,9 @@ This guide details the internal memory architecture of OxMQ, the built-in zero-a
 
 ## 🏗️ Architecture Overview: Two-Tier Memory Boundary
 
-```mermaid
-flowchart TD
-    subgraph JVM["☕ JVM Consumer / Worker Tier"]
-        direction TB
-        VThreads["Virtual Threads (Loom)<br/>Minimal stack footprint (~1KB vs 1MB)"]
-        Interning["Canonical Hash Key Interning<br/>Zero String allocations on hot path"]
-        LazyDAG["Lazy Child Values Supplier<br/>0 Redis roundtrips & 0 memory for standard jobs"]
-        Truncation["Stack Trace Truncator (8KB max)<br/>Guards heap against deep recursive crashes"]
-        Multiplex["Lettuce Multiplexing<br/>Watchdogs share single non-blocking connection"]
-    end
-
-    subgraph REDIS["⚡ Redis In-Memory Storage Tier"]
-        direction TB
-        StreamTrim["Stream Trimming (XADD MAXLEN ~ N)<br/>Bounds events stream key"]
-        DefaultRetention["Default Job Options (Queue-wide)<br/>Auto removeOnComplete / removeOnFail"]
-        CompactHash["Compact Job Hashes<br/>JSON payload storage in HASH"]
-        SortedSets["ZSET Compaction<br/>Evicts completed & failed entries by count/age"]
-    end
-
-    JVM <-->|Lettuce Command Multiplexing| REDIS
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-memory-optimization.png" alt="Two-Tier Memory Optimization Architecture" style="width: 100%; display: block;" />
+</div>
 
 ---
 
@@ -172,28 +154,12 @@ OxMQ provides native architectural primitives that enable applications to implem
 2. **Atomic Delay Postponement:** `bullScripts.moveToDelayed(..., delayMs, skipAttempt: true)`
 3. **[`CheckpointStatePlugin`](file:///Users/gaurav/git/oxmq/oxmq-core/src/main/java/io/oxmq/plugin/CheckpointStatePlugin.java)** for persistent cursor state
 
-```mermaid
-flowchart TD
-    subgraph AdmissionController ["Dual-Sensing Admission Gate"]
-        SenseRAM["Redis used_memory Sensor<br/>(INFO memory via Lettuce, cached 1,000ms)"]
-        SenseBacklog["Downstream Queue Backlog Sensor<br/>(Sum of waiting jobs across child queues)"]
-        Hysteresis["Hysteresis State Machine<br/>(Trigger: 85% RAM / 35k jobs | Recovery: 60% RAM / 10k jobs)"]
-    end
-
-    subgraph DecisionEngine ["OxMQ JobInterceptor Gate"]
-        CheckState{"State == PACING?"}
-        CheckPriority{"Priority == 1 (Real-Time)?"}
-        DelayContinuation["delay(2500ms, skipAttempt=true)<br/>(Next page postponed non-destructively)"]
-        ExecuteJob["Execute Job Business Logic<br/>(Commit Checkpoint & Emit Child DAG)"]
-    end
-
-    SenseRAM & SenseBacklog --> Hysteresis
-    Hysteresis --> CheckState
-    CheckState -- "Yes (PACING)" --> CheckPriority
-    CheckPriority -- "Priority > 1 (Crawl)" --> DelayContinuation
-    CheckPriority -- "Priority 1 (Forward Upload)" --> ExecuteJob
-    CheckState -- "No (NORMAL)" --> ExecuteJob
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <video autoplay loop muted playsinline style="width: 100%; display: block;" poster="/assets/oxmq-backpressure.gif">
+    <source src="/assets/oxmq-backpressure.mp4" type="video/mp4" />
+    <img src="/assets/oxmq-backpressure.gif" alt="OxMQ Strict Memory Ceiling & Backpressure Motion Diagram" style="width: 100%; display: block;" />
+  </video>
+</div>
 
 ### 3. Implementation Pattern (Proven in OxDoc 365)
 

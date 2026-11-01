@@ -14,28 +14,9 @@ OxMQ includes **`OxmqRelay`**: a lightweight, ultra-fast distributed pub/sub rou
 
 ## 1. Architectural Highlights
 
-```mermaid
-flowchart TD
-    subgraph Cluster ["OxMQ Distributed Cluster"]
-        NodeA["Node Alpha (Publisher)"]
-        NodeB["Node Beta (Subscriber: orders.*.status)"]
-        NodeC["Node Gamma (Subscriber: orders.>)"]
-    end
-
-    subgraph Redis ["Redis Infrastructure"]
-        PS["Pub/Sub Channel<br/>(bull:relay:events)"]
-        Retain["Retained Storage<br/>(bull:relay:retained:*)"]
-        Leases["Node Heartbeat Leases<br/>(bull:relay:nodes:*)"]
-    end
-
-    NodeA -- "publish('orders.101.status', payload)" --> PS
-    NodeA -- "publish(..., retain: 10m)" --> Retain
-    NodeA -- "heartbeat (5s TTL)" --> Leases
-
-    PS -- "Broadcasts" --> NodeB
-    PS -- "Broadcasts" --> NodeC
-    Retain -- "Instant catch-up on connect" --> NodeB
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-distributed-relay.png" alt="Distributed Relay & Hierarchical Topic Routing Engine" style="width: 100%; display: block;" />
+</div>
 
 ### Core Features:
 1. **Hierarchical Topic Pattern Matching:**

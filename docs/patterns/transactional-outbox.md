@@ -24,35 +24,11 @@ Result: Job runs and charges customer for an order that does not exist in DB!
 
 Distributed 2PC (Two-Phase Commit / XA) is notoriously fragile, slow, and unsupported by Redis. 
 
-The **Transactional Outbox Pattern** solves this without 2PC by writing the job into an **Outbox Table** inside the *same database transaction* as the business entity. A background publisher then reliably relays the jobs to Redis.
+The **Transactional Outbox Pattern** solves this without 2PC by writing the job into an **Outbox Table** inside the *same database transaction* as the business entity. A background publisher then reliably relays the jobs to Redis:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client
-    participant Service as OrderService
-    participant DB as PostgreSQL / MySQL
-    participant Publisher as OxmqOutboxPublisher
-    participant Redis as OxMQ Redis Queue
-    participant Worker as OxMQ Worker
-
-    Client->>Service: POST /orders
-    Note over Service,DB: Active @Transactional Boundary
-    Service->>DB: INSERT INTO orders ...
-    Service->>DB: INSERT INTO oxmq_outbox (status='PENDING') ...
-    Service->>DB: COMMIT Transaction
-    Service-->>Client: 201 Created (Order Placed)
-
-    loop Asynchronous Background Drain (Java 21 Virtual Thread)
-        Publisher->>DB: SELECT * FROM oxmq_outbox WHERE status='PENDING' LIMIT 50
-        Publisher->>Redis: OxmqQueue.add(jobName, payloadJson, opts)
-        Redis-->>Publisher: Redis ACK (jobId)
-        Publisher->>DB: UPDATE oxmq_outbox SET status='PUBLISHED' WHERE id = ...
-    end
-
-    Redis->>Worker: Dequeue Job
-    Worker->>Worker: Process Payment
-```
+<div style="margin: 24px 0; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+  <img src="/assets/oxmq-transactional-outbox.png" alt="Transactional Outbox Pattern & Zero-Dual-Write Ingestion" style="width: 100%; display: block;" />
+</div>
 
 ---
 
