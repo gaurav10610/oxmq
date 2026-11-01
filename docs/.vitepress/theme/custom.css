@@ -223,3 +223,60 @@
   box-shadow: 0 6px 28px rgba(0, 0, 0, 0.12);
   transform: translateY(-1px);
 }
+
+/* ==========================================================================
+   7. Motion Diagrams & Videos: Zoom Cue, Fullscreen & Interactive Hover Overlay
+   ========================================================================== */
+
+.vp-doc video,
+.oxmq-motion-wrapper video {
+  cursor: zoom-in;
+  border-radius: 12px;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+  display: block;
+}
+
+.oxmq-motion-wrapper {
+  position: relative;
+  margin: 28px 0;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
+  background: #0b0f19;
+  cursor: zoom-in;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.oxmq-motion-wrapper:hover {
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.65), 0 0 20px rgba(56, 189, 248, 0.15);
+}
+
+.oxmq-motion-wrapper::after {
+  content: '⛶ Click to zoom / expand in modal';
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 5px 14px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform: translateY(-4px);
+  pointer-events: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+
+.oxmq-motion-wrapper:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
